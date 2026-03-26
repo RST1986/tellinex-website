@@ -62,7 +62,7 @@ const TIERS = [
       "Tower fibre connectivity",
       "IRU & dark fibre leasing",
       "Colocation at carrier-neutral sites",
-      "International transit via TAM-1",
+      "International carrier-grade transit",
       "Open-access network model",
     ],
     price: "Volume-based",

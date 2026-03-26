@@ -26,7 +26,7 @@ const MILESTONES = [
   { year: "2025", text: "Hurricane Melissa (Cat 5) devastates Jamaica's aerial infrastructure" },
   { year: "2026", text: "Tellinex founded — Jamaica's first underground fibre ISP" },
   { year: "2026", text: "Pilot launch: New Kingston 8km micro-trenched network" },
-  { year: "2027", text: "TAM-1 subsea cable connection — 99% bandwidth cost reduction" },
+  { year: "2027", text: "National expansion — Portmore, Spanish Town, Montego Bay" },
   { year: "2030", text: "Target: 180,000 homes passed across 14 parishes" },
 ];
 

@@ -88,7 +88,7 @@ export default function Services() {
         </h1>
         <div style={{ height: "3px", width: "5rem", background: "linear-gradient(90deg, #00C7B1, #A3E635)", borderRadius: "2px", margin: "0 auto 16px", boxShadow: "0 0 12px rgba(0,199,177,0.5)" }} />
         <p style={{ fontFamily: '"Nunito", sans-serif', fontSize: "1.05rem", color: "rgba(255,255,255,0.5)", maxWidth: "600px", margin: "0 auto" }}>
-          From homes to hyperscale. Every connection is underground, hurricane-resilient, and built for the next generation.
+          From homes to businesses. Every connection is underground, hurricane-resilient, and built for the next generation.
         </p>
       </div>
 

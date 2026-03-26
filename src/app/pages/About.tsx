@@ -24,7 +24,7 @@ const TEAM = [
 const MILESTONES = [
   { year: "2005", text: "Rui Santos builds Portugal's first FTTH network at Cabovisão" },
   { year: "2025", text: "Hurricane Melissa (Cat 5) devastates Jamaica's aerial infrastructure" },
-  { year: "2026", text: "Tellinex founded — Jamaica's first underground fibre ISP" },
+  { year: "2026", text: "Tellinex established — Jamaica's first underground fibre ISP" },
   { year: "2026", text: "Pilot launch: New Kingston 8km micro-trenched network" },
   { year: "2027", text: "National expansion — Portmore, Spanish Town, Montego Bay" },
   { year: "2030", text: "Target: 180,000 homes passed across 14 parishes" },

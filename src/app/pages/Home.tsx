@@ -3,7 +3,7 @@ import { Link } from "react-router";
 import { gsap } from "gsap";
 import { Signal, Shield, Zap, Globe, ArrowRight, Wifi, Server, Users } from "lucide-react";
 
-const LAUNCH_DATE = new Date("2026-04-06T00:00:00").getTime();
+const LAUNCH_DATE = new Date("2026-12-31T00:00:00").getTime();
 const UNITS = ["days", "hours", "minutes", "seconds"] as const;
 const LABELS: Record<(typeof UNITS)[number], string> = { days: "DAYS", hours: "HRS", minutes: "MIN", seconds: "SEC" };
 
@@ -181,7 +181,7 @@ export default function Home() {
               margin: "0 auto 3rem",
             }}
           >
-            Jamaica's first underground fibre network. Launching April 2026.
+            Jamaica's first underground fibre network. Coming 2026.
             <span className="blink-cursor">_</span>
           </p>
 

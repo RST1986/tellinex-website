@@ -21,7 +21,7 @@ BUSINESS PLANS:
 - Enterprise Solutions: 10 Gbps+ dedicated circuits, dark fibre, 99.99% SLA, dual-path redundancy, MPLS/SD-WAN
 - Wholesale & Backhaul: 5G small cell backhaul, tower connectivity, IRU/dark fibre leasing, international carrier-grade transit
 
-COVERAGE (Phase 1 — launching April 2026):
+COVERAGE (Phase 1 — coming 2026):
 - New Kingston, Half Way Tree, Liguanea, Hope Pastures, Mona, Papine, Cross Roads, Constant Spring
 - Phase 2 (2027): Portmore, Spanish Town, Mandeville, Montego Bay
 - Phase 3 (2028-2030): All 14 parishes island-wide

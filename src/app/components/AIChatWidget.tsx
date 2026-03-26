@@ -19,7 +19,7 @@ RESIDENTIAL PLANS:
 BUSINESS PLANS:
 - Business Fibre from US$99/month: up to 2 Gbps, 99.9% SLA, static IPs, 4-hour priority fault response, dedicated account manager
 - Enterprise Solutions: 10 Gbps+ dedicated circuits, dark fibre, 99.99% SLA, dual-path redundancy, MPLS/SD-WAN
-- Wholesale & Backhaul: 5G small cell backhaul, tower connectivity, IRU/dark fibre leasing, international transit via TAM-1
+- Wholesale & Backhaul: 5G small cell backhaul, tower connectivity, IRU/dark fibre leasing, international carrier-grade transit
 
 COVERAGE (Phase 1 — launching April 2026):
 - New Kingston, Half Way Tree, Liguanea, Hope Pastures, Mona, Papine, Cross Roads, Constant Spring

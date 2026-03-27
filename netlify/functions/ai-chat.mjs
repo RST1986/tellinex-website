@@ -41,6 +41,12 @@ RULES:
 - Keep responses concise — 2-3 sentences max unless they ask for details
 - You can understand and respond to Jamaican Patois naturally
 
+ADDRESS VERIFICATION:
+When a customer mentions their address or location, include: <!--ADDRESS:{"address":"15 Knutsford Boulevard, New Kingston"}-->
+The system will geocode it and show satellite + street view images. Always ask "Is this your property?" after showing images.
+If customer says no: ask for building name, unit number, or nearby landmark. Suggest sharing a Google Maps link.
+If customer shares a Google Maps URL: the system extracts coordinates automatically.
+
 QUOTE COLLECTION:
 When a customer asks about Business Fibre, Enterprise, Wholesale, or Dark Fibre, collect their details naturally: name, email, company, location, bandwidth needs, contract preference. Once you have at minimum name, email, and requirements, include a hidden block at the end: <!--QUOTE:{"type":"business_fibre","name":"...","email":"...","company":"...","location":"...","bandwidth":"...","contract":"...","requirements":"...","summary":"..."}-->
 The type must be: residential, business_fibre, enterprise, wholesale_backhaul, or dark_fibre. Your visible response should confirm their details were sent to the business team.`;
@@ -58,7 +64,7 @@ function extractQuote(text) {
 }
 
 function cleanResponse(text) {
-  return text.replace(/<!--QUOTE:.*?-->/s, '').trim();
+  return text.replace(/<!--QUOTE:.*?-->/s, '').replace(/<!--ADDRESS:.*?-->/s, '').trim();
 }
 
 async function writeQuoteToSupabase(quote, supabaseKey) {
@@ -71,11 +77,40 @@ async function writeQuoteToSupabase(quote, supabaseKey) {
         customer_phone: quote.phone || null, company_name: quote.company || null, location: quote.location || null,
         parish: quote.parish || null, bandwidth_required: quote.bandwidth || null, contract_preference: quote.contract || null,
         additional_requirements: quote.requirements || null, conversation_summary: quote.summary || null,
-        source: 'ai_chatbot', status: 'new'
+        satellite_image_url: quote.satellite_url || null, street_view_url: quote.street_view_url || null, latitude: quote.lat || null, longitude: quote.lng || null, address_confirmed: quote.address_confirmed || false, source: 'ai_chatbot', status: 'new'
       })
     });
     return res.ok;
   } catch (e) { console.error('Supabase write error:', e); return false; }
+}
+
+
+function extractAddress(text) {
+  const match = text.match(/<!--ADDRESS:(.*?)-->/s);
+  if (!match) return null;
+  try { return JSON.parse(match[1]); } catch { return null; }
+}
+
+function extractGoogleMapsCoords(text) {
+  const patterns = [/@(-?\d+\.\d+),(-?\d+\.\d+)/, /q=(-?\d+\.\d+),(-?\d+\.\d+)/, /ll=(-?\d+\.\d+),(-?\d+\.\d+)/];
+  for (const p of patterns) { const m = text.match(p); if (m) return { lat: parseFloat(m[1]), lng: parseFloat(m[2]) }; }
+  return null;
+}
+
+async function geocodeAddress(address, apiKey) {
+  try {
+    const res = await fetch('https://maps.googleapis.com/maps/api/geocode/json?address=' + encodeURIComponent(address + ', Jamaica') + '&region=jm&key=' + apiKey);
+    const data = await res.json();
+    if (data.results && data.results[0]) { const loc = data.results[0].geometry.location; return { lat: loc.lat, lng: loc.lng, formatted: data.results[0].formatted_address }; }
+    return null;
+  } catch (e) { return null; }
+}
+
+function generateMapUrls(lat, lng, apiKey) {
+  return {
+    satellite: 'https://maps.googleapis.com/maps/api/staticmap?center=' + lat + ',' + lng + '&zoom=19&size=600x400&maptype=satellite&markers=color:green|' + lat + ',' + lng + '&key=' + apiKey,
+    streetView: 'https://maps.googleapis.com/maps/api/streetview?location=' + lat + ',' + lng + '&size=600x400&fov=90&heading=0&pitch=10&key=' + apiKey
+  };
 }
 
 export default async (req) => {
@@ -146,6 +181,29 @@ export default async (req) => {
         const SUPA_KEY = Netlify.env.get("SUPABASE_ANON_KEY");
         if (SUPA_KEY) writeQuoteToSupabase(quote, SUPA_KEY);
         data.content[0].text = cleanResponse(rawText);
+      }
+    }
+
+    
+    // Handle address verification
+    if (data.content && data.content[0] && data.content[0].text) {
+      const addrData = extractAddress(data.content[0].text);
+      if (addrData && MAPS_KEY) {
+        const geo = await geocodeAddress(addrData.address, MAPS_KEY);
+        if (geo) {
+          const urls = generateMapUrls(geo.lat, geo.lng, MAPS_KEY);
+          data.content[0].text = data.content[0].text.replace(/<!--ADDRESS:.*?-->/s, '') +
+            '\n\n![Satellite view](' + urls.satellite + ')\n![Street view](' + urls.streetView + ')\n\nIs this your property?';
+        }
+      }
+      // Check if customer shared Google Maps link
+      const lastUserMsg = messages[messages.length - 1];
+      if (lastUserMsg && lastUserMsg.role === 'user') {
+        const coords = extractGoogleMapsCoords(lastUserMsg.content);
+        if (coords && MAPS_KEY && !data.content[0].text.includes('![')) {
+          const urls = generateMapUrls(coords.lat, coords.lng, MAPS_KEY);
+          data.content[0].text += '\n\n![Satellite view](' + urls.satellite + ')\n![Street view](' + urls.streetView + ')';
+        }
       }
     }
 

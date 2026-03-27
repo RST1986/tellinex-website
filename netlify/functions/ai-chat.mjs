@@ -143,6 +143,7 @@ export default async (req) => {
     }
 
     const ANTHROPIC_API_KEY = Netlify.env.get("ANTHROPIC_API_KEY");
+    const MAPS_KEY = Netlify.env.get("GOOGLE_MAPS_API_KEY");
 
     if (!ANTHROPIC_API_KEY) {
       return new Response(

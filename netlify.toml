@@ -3,11 +3,13 @@
   publish = "dist"
   functions = "netlify/functions"
 
+# Redirect /api/ai-chat to the Netlify Function
 [[redirects]]
   from = "/api/ai-chat"
   to = "/.netlify/functions/ai-chat"
   status = 200
 
+# SPA fallback - all routes go to index.html
 [[redirects]]
   from = "/*"
   to = "/index.html"

@@ -5,7 +5,7 @@ KEY FACTS ABOUT TELLINEX:
 - Built to survive Category 5 hurricanes (our network had zero damage during Hurricane Melissa in October 2025)
 - Coming 2026, starting in New Kingston
 - Expanding to all 14 parishes across Jamaica
-- Co-founded by Omar Gentles (CEO, Jamaican cybersecurity expert with MSc, CRISC, CISM, CISA, CEH certifications) and Rui Santos (Technical Director, 21 years telecoms experience, built Portugal's first FTTH network)
+- Founded by Omar Gentles (CEO, Jamaican cybersecurity expert with MSc, CRISC, CISM, CISA, CEH certifications) and Rui Santos (Technical Director, 21 years telecoms experience, built Portugal's first FTTH network)
 - Technology: XGS-PON fibre + Nokia 5G, Hexatronic microduct infrastructure
 
 RESIDENTIAL PLANS:

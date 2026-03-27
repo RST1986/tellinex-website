@@ -104,7 +104,7 @@ export default function AIChatWidget() {
     {
       role: "assistant",
       content:
-        "Welcome to Tellinex! \ud83c\uddef\ud83c\uddf2 Our underground fibre network survived Hurricane Melissa with zero damage. How can I help you today?",
+        "Welcome to Tellinex! \ud83c\uddef\ud83c\uddf2 Jamaica's first underground fibre network — built to survive Category 5 hurricanes. How can I help you today?",
     },
   ]);
   const [input, setInput] = useState("");

@@ -1,3 +1,7 @@
+const SUPABASE_URL = 'https://egztpclpcnizcdtfugsv.supabase.co';
+
+const BUSINESS_KEYWORDS = ['backbone','dark fibre','dark fiber','IRU','enterprise','wholesale','backhaul','dedicated circuit','SLA','tower','5G backhaul','lease','corporate','data centre','data center','colocation','B2B','quote','pricing for business','business plan','business pricing','ethernet','MPLS','point to point','p2p','dedicated line','carrier','transit','peering','wavelength','CWDM','DWDM'];
+
 const TELLINEX_SYSTEM_PROMPT = `You are the Tellinex AI Assistant — Jamaica's first underground fibre broadband provider. You are friendly, knowledgeable, and proud of what Tellinex offers. You speak naturally and can understand Jamaican Patois as well as English.
 
 KEY FACTS ABOUT TELLINEX:
@@ -35,7 +39,44 @@ RULES:
 - Never make up information — if unsure, say "Let me connect you with our team"
 - Encourage registration at every opportunity
 - Keep responses concise — 2-3 sentences max unless they ask for details
-- You can understand and respond to Jamaican Patois naturally`;
+- You can understand and respond to Jamaican Patois naturally
+
+QUOTE COLLECTION:
+When a customer asks about Business Fibre, Enterprise, Wholesale, or Dark Fibre, collect their details naturally: name, email, company, location, bandwidth needs, contract preference. Once you have at minimum name, email, and requirements, include a hidden block at the end: <!--QUOTE:{"type":"business_fibre","name":"...","email":"...","company":"...","location":"...","bandwidth":"...","contract":"...","requirements":"...","summary":"..."}-->
+The type must be: residential, business_fibre, enterprise, wholesale_backhaul, or dark_fibre. Your visible response should confirm their details were sent to the business team.`;
+
+
+function isBusinessQuery(messages) {
+  const lastFew = messages.slice(-3).map(m => m.content.toLowerCase()).join(' ');
+  return BUSINESS_KEYWORDS.some(kw => lastFew.includes(kw.toLowerCase()));
+}
+
+function extractQuote(text) {
+  const match = text.match(/<!--QUOTE:(.*?)-->/s);
+  if (!match) return null;
+  try { return JSON.parse(match[1]); } catch { return null; }
+}
+
+function cleanResponse(text) {
+  return text.replace(/<!--QUOTE:.*?-->/s, '').trim();
+}
+
+async function writeQuoteToSupabase(quote, supabaseKey) {
+  try {
+    const res = await fetch(SUPABASE_URL + '/rest/v1/quote_requests', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'apikey': supabaseKey, 'Authorization': 'Bearer ' + supabaseKey, 'Prefer': 'return=minimal' },
+      body: JSON.stringify({
+        quote_type: quote.type || 'business_fibre', customer_name: quote.name || null, customer_email: quote.email || null,
+        customer_phone: quote.phone || null, company_name: quote.company || null, location: quote.location || null,
+        parish: quote.parish || null, bandwidth_required: quote.bandwidth || null, contract_preference: quote.contract || null,
+        additional_requirements: quote.requirements || null, conversation_summary: quote.summary || null,
+        source: 'ai_chatbot', status: 'new'
+      })
+    });
+    return res.ok;
+  } catch (e) { console.error('Supabase write error:', e); return false; }
+}
 
 export default async (req) => {
   if (req.method === "OPTIONS") {
@@ -88,14 +129,25 @@ export default async (req) => {
         "anthropic-version": "2023-06-01",
       },
       body: JSON.stringify({
-        model: "claude-haiku-4-5-20251001",
-        max_tokens: 512,
+        model: isBusinessQuery(messages) ? "claude-sonnet-4-20250514" : "claude-haiku-4-5-20251001",
+        max_tokens: isBusinessQuery(messages) ? 1024 : 512,
         system: TELLINEX_SYSTEM_PROMPT,
         messages: messages,
       }),
     });
 
     const data = await response.json();
+
+    // Extract and save quote if present
+    if (data.content && data.content[0] && data.content[0].text) {
+      const rawText = data.content[0].text;
+      const quote = extractQuote(rawText);
+      if (quote) {
+        const SUPA_KEY = Netlify.env.get("SUPABASE_ANON_KEY");
+        if (SUPA_KEY) writeQuoteToSupabase(quote, SUPA_KEY);
+        data.content[0].text = cleanResponse(rawText);
+      }
+    }
 
     return new Response(JSON.stringify(data), {
       status: response.status,

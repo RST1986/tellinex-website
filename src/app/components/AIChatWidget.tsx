@@ -73,6 +73,32 @@ function OrbitalIcon({ size = 44 }: { size?: number }) {
   );
 }
 
+function renderMessage(text: string) {
+  const parts = text.split(/(!\[.*?\]\(.*?\))/g);
+  return parts.map((part: string, i: number) => {
+    const imgMatch = part.match(/!\[(.*?)\]\((.*?)\)/);
+    if (imgMatch) {
+      return (
+        <img
+          key={"img-"+i}
+          src={imgMatch[2]}
+          alt={imgMatch[1]}
+          style={{ width: "100%", borderRadius: "8px", marginTop: "8px", marginBottom: "4px" }}
+          onError={(e: any) => { e.target.style.display = "none"; }}
+        />
+      );
+    }
+    // Handle bold **text**
+    const boldParts = part.split(/(\*\*.*?\*\*)/g);
+    return boldParts.map((bp: string, j: number) => {
+      if (bp.startsWith("**") && bp.endsWith("**")) {
+        return <strong key={i+"-"+j} style={{ color: "#fff" }}>{bp.slice(2, -2)}</strong>;
+      }
+      return <span key={i+"-"+j}>{bp}</span>;
+    });
+  });
+}
+
 function TypingIndicator() {
   return (
     <div style={{ display: "flex", gap: "4px", padding: "8px 0" }}>
@@ -308,7 +334,7 @@ export default function AIChatWidget() {
                           whiteSpace: "pre-wrap",
                         }}
                       >
-                        {msg.content}
+                        {renderMessage(msg.content)}
                       </p>
                     </div>
                   </div>

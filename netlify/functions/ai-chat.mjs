@@ -77,7 +77,7 @@ async function writeQuoteToSupabase(quote, supabaseKey) {
         customer_phone: quote.phone || null, company_name: quote.company || null, location: quote.location || null,
         parish: quote.parish || null, bandwidth_required: quote.bandwidth || null, contract_preference: quote.contract || null,
         additional_requirements: quote.requirements || null, conversation_summary: quote.summary || null,
-        satellite_image_url: quote.satellite_url || null, street_view_url: quote.street_view_url || null, latitude: quote.lat || null, longitude: quote.lng || null, address_confirmed: quote.address_confirmed || false, source: 'ai_chatbot', status: 'new'
+        satellite_image_url: quote.satellite_url || null, street_view_url: quote.street_view_url || null, latitude: quote.lat || null, longitude: quote.lng || null, address_confirmed: quote.address_confirmed || false, status: 'new'
       })
     });
     return res.ok;
@@ -215,8 +215,6 @@ export default async (req) => {
                   satellite_image_url: urls.satellite,
                   street_view_url: urls.streetView,
                   address_confirmed: false,
-                  source: 'ai_chatbot',
-                  status: 'new',
                   conversation_summary: messages[messages.length - 1] ? messages[messages.length - 1].content : ''
                 })
               });

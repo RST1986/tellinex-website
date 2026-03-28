@@ -195,6 +195,33 @@ export default async (req) => {
           const urls = generateMapUrls(geo.lat, geo.lng, MAPS_KEY);
           data.content[0].text = data.content[0].text.replace(/<!--ADDRESS:.*?-->/s, '') +
             '\n\n![Satellite view](' + urls.satellite + ')\n![Street view](' + urls.streetView + ')\n\nIs this your property?';
+          // Write address verification to Supabase immediately
+          const SUPA_KEY_ADDR = Netlify.env.get("SUPABASE_ANON_KEY");
+          if (SUPA_KEY_ADDR) {
+            try {
+              await fetch(SUPABASE_URL + '/rest/v1/quote_requests', {
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/json',
+                  'apikey': SUPA_KEY_ADDR,
+                  'Authorization': 'Bearer ' + SUPA_KEY_ADDR,
+                  'Prefer': 'return=minimal'
+                },
+                body: JSON.stringify({
+                  quote_type: 'address_verification',
+                  location: geo.formatted || addrData.address,
+                  latitude: geo.lat,
+                  longitude: geo.lng,
+                  satellite_image_url: urls.satellite,
+                  street_view_url: urls.streetView,
+                  address_confirmed: false,
+                  source: 'ai_chatbot',
+                  status: 'new',
+                  conversation_summary: messages[messages.length - 1] ? messages[messages.length - 1].content : ''
+                })
+              });
+            } catch(e) { console.error('Supabase address write error:', e); }
+          }
         }
       }
       // Check if customer shared Google Maps link

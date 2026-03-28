@@ -199,7 +199,7 @@ export default async (req) => {
           const SUPA_KEY_ADDR = Netlify.env.get("SUPABASE_ANON_KEY");
           if (SUPA_KEY_ADDR) {
             try {
-              await fetch(SUPABASE_URL + '/rest/v1/quote_requests', {
+              const supaRes = await fetch(SUPABASE_URL + '/rest/v1/quote_requests', {
                 method: 'POST',
                 headers: {
                   'Content-Type': 'application/json',
@@ -214,10 +214,10 @@ export default async (req) => {
                   longitude: geo.lng,
                   satellite_image_url: urls.satellite,
                   street_view_url: urls.streetView,
-                  address_confirmed: false,
-                  conversation_summary: messages[messages.length - 1] ? messages[messages.length - 1].content : ''
+                  address_confirmed: false
                 })
               });
+              if (!supaRes.ok) console.error('Supabase address write failed:', supaRes.status, await supaRes.text());
             } catch(e) { console.error('Supabase address write error:', e); }
           }
         }

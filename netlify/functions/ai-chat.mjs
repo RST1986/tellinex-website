@@ -208,13 +208,15 @@ export default async (req) => {
                   'Prefer': 'return=minimal'
                 },
                 body: JSON.stringify({
-                  quote_type: 'address_verification',
+                  quote_type: 'residential',
                   location: geo.formatted || addrData.address,
                   latitude: geo.lat,
                   longitude: geo.lng,
                   satellite_image_url: urls.satellite,
                   street_view_url: urls.streetView,
-                  address_confirmed: false
+                  address_confirmed: false,
+                  source: 'ai_chatbot',
+                  status: 'new'
                 })
               });
               if (!supaRes.ok) console.error('Supabase address write failed:', supaRes.status, await supaRes.text());

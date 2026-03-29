@@ -27,11 +27,20 @@ BUSINESS PLANS:
 RULES:
 - Be enthusiastic but professional about Tellinex
 - If asked about coverage, say "We're launching in New Kingston first, then expanding across all 14 parishes"
-- For residential quotes: collect name, email, phone, address, desired plan
-- For business/enterprise: collect company name, contact person, email, phone, address, bandwidth needs
 - Always mention hurricane resilience â it's our biggest differentiator
-- When a customer provides an address, include it in your response with <!--ADDRESS:their address--> tag
-- Never reveal internal pricing structures or competitor analysis`;
+- Never reveal internal pricing structures or competitor analysis
+- When a customer provides an address, include it in your response with <!--ADDRESS:their address, Jamaica--> tag (always append Jamaica to help geocoding)
+
+COLLECTING CUSTOMER DETAILS:
+- For residential: collect name, email, phone, address, desired plan
+- For business/enterprise: collect company name, contact person, email, phone, address, bandwidth needs
+- When asking for details, suggest this format: "Just share your name, email, phone and address and we'll get your quote ready!"
+- Accept details in ANY format: comma-separated, dash-separated, one per line, or natural sentences
+- CRITICAL: Once you have at least an email OR phone number, output a hidden JSON block at the END of your response in this exact format:
+<!--CUSTOMER:{"name":"Their Name","email":"their@email.com","phone":"876-555-1234","address":"123 Street, Kingston, Jamaica","service":"residential","bandwidth":"500 Mbps"}-->
+- Only include fields you actually have. Always include "service" as one of: residential, business, enterprise, wholesale, dark_fibre
+- Do NOT output the CUSTOMER block if you don't have at least an email or phone number
+- The CUSTOMER block must be the very last thing in your response`;
 
 function isBusinessQuery(messages) {
   const last = messages[messages.length - 1]?.content?.toLowerCase() || '';
@@ -52,6 +61,31 @@ function extractAddress(text) {
   const match = text.match(/<!--ADDRESS:(.*?)-->/);
   if (match) return { address: match[1].trim() };
   return null;
+}
+
+function extractCustomerJSON(text) {
+  const match = text.match(/<!--CUSTOMER:(.*?)-->/);
+  if (!match) return null;
+  try {
+    const data = JSON.parse(match[1]);
+    if (!data.email && !data.phone) return null;
+    const serviceMap = { residential: 'residential', business: 'business_fibre', enterprise: 'enterprise', wholesale: 'wholesale_backhaul', dark_fibre: 'dark_fibre' };
+    return {
+      customer_name: data.name || 'Unknown',
+      customer_email: data.email || '',
+      customer_phone: data.phone || '',
+      location: data.address || '',
+      quote_type: serviceMap[data.service] || 'residential',
+      bandwidth_required: data.bandwidth || null,
+      service_requested: data.service || 'residential',
+      source: 'chatbot',
+      status: 'new'
+    };
+  } catch { return null; }
+}
+
+function cleanCustomerTag(text) {
+  return text.replace(/<!--CUSTOMER:.*?-->/g, '').trim();
 }
 
 async function geocodeAddress(address, apiKey) {
@@ -105,12 +139,12 @@ function extractCustomerFromMessages(messages) {
 
   const emailMatch = allText.match(/[\w.-]+@[\w.-]+\.[a-z]{2,}/i);
   const phoneMatch = allText.match(/\b(\+?1?[-.]?\(?\d{3}\)?[-.]?\d{3}[-.]?\d{4})\b/) || allText.match(/\b(876[-.]?\d{3}[-.]?\d{4})\b/);
-  const nameMatch = allText.match(/(?:my name is|i'm|i am)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,2})/i);
+  const nameMatch = allText.match(/(?:my name is|i'm|i am)\s+([A-Z][a-z]{2,}(?:\s+[A-Z][a-z]+){0,2})/i);
   const addrMatch = allText.match(/(?:I live at|my address is|located at|address is)\s+(.+?)(?:\.|,\s*(?:Jamaica|kingston)|$)/i);
 
   let name = nameMatch?.[1] || null;
   if (!name) {
-    const formalMatch = allText.match(/(?:name:\s*|name\s+is\s+)([A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,2})/i);
+    const formalMatch = allText.match(/(?:name:\s*|name\s+is\s+)([A-Z][a-z]{2,}(?:\s+[A-Z][a-z]+){0,2})/i);
     if (formalMatch) name = formalMatch[1];
   }
 
@@ -169,13 +203,18 @@ export default async (req) => {
         data.content[0].text = cleanResponse(rawText);
       }
 
-      // UNIFIED WRITE: customer + geocode + one row to Supabase
+      // UNIFIED WRITE: AI-driven extraction first, regex fallback second
       const SUPA_KEY = Netlify.env.get('SUPABASE_ANON_KEY');
       const MAPS_KEY = Netlify.env.get('GOOGLE_MAPS_API_KEY');
       if (SUPA_KEY) {
-        const cd = extractCustomerFromMessages(messages);
+        // Try AI structured output first (from <!--CUSTOMER:{}-->), then fall back to regex
+        const cd = extractCustomerJSON(rawText) || extractCustomerFromMessages(messages);
+        // Clean hidden tags from visible response
+        data.content[0].text = cleanCustomerTag(data.content[0].text);
+        data.content[0].text = data.content[0].text.replace(/<!--ADDRESS:.*?-->/g, '');
+
         const addr = cd?.location || null;
-        const hasContactData = cd && (cd.customer_email || cd.customer_phone || (cd.customer_name && cd.customer_name !== 'Unknown'));
+        const hasContactData = cd && (cd.customer_email || cd.customer_phone);
         let geoData = null, satUrl = null, streetUrl = null;
 
         if (hasContactData && addr && MAPS_KEY) {
@@ -199,7 +238,6 @@ export default async (req) => {
                 const urls = generateMapUrls(geoData.lat, geoData.lng, MAPS_KEY);
                 satUrl = urls.satellite;
                 streetUrl = urls.streetView;
-                data.content[0].text = data.content[0].text.replace(/<!--ADDRESS:.*?-->/, '');
                 data.content[0].text += '\n\n![Satellite view](' + urls.satellite + ')\n![Street view](' + urls.streetView + ')';
               }
             } catch (e) { console.error('Geocode fallback:', e.message); }

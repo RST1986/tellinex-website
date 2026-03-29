@@ -70,7 +70,10 @@ function extractCustomerFromMessages(messages) {
   for (const p of namePatterns) { const m = userText.match(p); if (m) { name = m[1].trim(); break; } }
   const addrMatch = userText.match(/\b(\d+\s+[A-Z][\w\s]+(?:Road|Street|Avenue|Drive|Lane|Way|Crescent|Close|Place|Boulevard)[\w\s,]*(?:Kingston|Montego Bay|Spanish Town|Portmore|Mandeville|May Pen|Half Way Tree)[\s\d]*)/i);
   if (emailMatch || phoneMatch) {
-    return { customer_name: name || 'Unknown', customer_email: emailMatch?.[0] || '', customer_phone: phoneMatch?.[0] || '', location: addrMatch?.[1]?.trim() || '', quote_type: 'residential', source: 'chatbot', status: 'new' };
+      // Extract service plan/speed
+  const speedMatch = allText.match(/(?:100|500|1000|1s*g)s*(?:mb|mbps|gb|gbps)/i) || allText.match(/(?:starter|performance|ultra)/i);
+  const serviceMatch = allText.match(/(?:residential|business|enterprise|wholesale|darks*fibre)/i);
+  return { customer_name: name || 'Unknown', customer_email: emailMatch?.[0] || '', customer_phone: phoneMatch?.[0] || '', location: addrMatch?.[1]?.trim() || '', quote_type: 'residential', source: 'chatbot', status: 'new' };
   }
   return null;
 }
@@ -259,7 +262,9 @@ export default async (req) => {
             street_view_url: streetUrl,
             address_confirmed: false,
             source: 'chatbot',
-            status: 'new'
+            status: 'new',
+            bandwidth_required: cd?.bandwidth_required || null,
+            service_requested: cd?.service_requested || null
           })
         });
       } catch(e) { console.error('Supabase write error:', e.message); }

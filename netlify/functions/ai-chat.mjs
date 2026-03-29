@@ -76,6 +76,8 @@ function extractCustomerFromMessages(messages) {
     // Extract service plan/speed requested
   const speedMatch = allText.match(/\b(100\s*(?:mb|mbps)|500\s*(?:mb|mbps)|1\s*(?:gb|gbps)|1000\s*(?:mb|mbps)|starter|performance|ultra)\b/i);
   const serviceType = allText.match(/\b(residential|business|enterprise|wholesale|dark\s*fibre|dark\s*fiber)\b/i);
+  const speedMatch = allText.match(/\b(100\s*(?:mb|mbps)|500\s*(?:mb|mbps)|1\s*(?:gb|gbps)|1000\s*(?:mb|mbps)|starter|performance|ultra)\b/i);
+  const serviceType = allText.match(/\b(residential|business|enterprise|wholesale|dark\s*fibre|dark\s*fiber)\b/i);
   return { customer_name: name || 'Unknown', customer_email: emailMatch?.[0] || '', customer_phone: phoneMatch?.[0] || '', location: addrMatch?.[1]?.trim() || '', quote_type: 'residential', source: 'chatbot', status: 'new' };
   }
   return null;
@@ -91,26 +93,7 @@ function cleanResponse(text) {
   return text.replace(/<!--QUOTE:.*?-->/s, '').replace(/<!--ADDRESS:.*?-->/s, '').trim();
 }
 
-async function writeQuoteToSupabase(quote, supabaseKey) {
-  try {
-    const payload = {
-      quote_type: quote.quote_type || quote.type || quote.service_type || 'residential',
-      customer_name: quote.customer_name || quote.name || null,
-      customer_email: quote.customer_email || quote.email || null,
-      customer_phone: quote.customer_phone || quote.phone || null,
-      location: quote.location || quote.address || null,
-      source: quote.source || 'chatbot',
-      status: quote.status || 'new'
-    };
-    console.log('TELLINEX: Writing quote to Supabase:', JSON.stringify(payload));
-    const res = await fetch(SUPABASE_URL + '/rest/v1/quote_requests', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'apikey': supabaseKey, 'Authorization': 'Bearer ' + supabaseKey, 'Prefer': 'return=minimal' },
-      body: JSON.stringify(payload)
-    });
-    console.log('TELLINEX: Supabase response:', res.status);
-  } catch (e) { console.error('TELLINEX: Quote save error:', e.message); }
-}
+
 
 
 function extractAddress(text) {
@@ -266,6 +249,8 @@ export default async (req) => {
             address_confirmed: false,
             source: 'chatbot',
             status: 'new',
+            bandwidth_required: cd?.bandwidth_required || null,
+            service_requested: cd?.service_requested || null,
             bandwidth_required: cd?.bandwidth_required || null,
             service_requested: cd?.service_requested || null,
             bandwidth_required: cd?.bandwidth_required || null,

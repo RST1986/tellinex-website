@@ -233,6 +233,9 @@ export default async (req) => {
                 },
                 body: JSON.stringify({
                   quote_type: 'residential',
+                  customer_name: (() => { const cd = extractCustomerFromMessages(messages); return cd?.customer_name || null; })(),
+                  customer_email: (() => { const cd = extractCustomerFromMessages(messages); return cd?.customer_email || null; })(),
+                  customer_phone: (() => { const cd = extractCustomerFromMessages(messages); return cd?.customer_phone || null; })(),
                   location: geo.formatted || addrData.address,
                   latitude: geo.lat,
                   longitude: geo.lng,

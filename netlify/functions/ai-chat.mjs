@@ -48,7 +48,9 @@ If customer says no: ask for building name, unit number, or nearby landmark. Sug
 If customer shares a Google Maps URL: the system extracts coordinates automatically.
 
 QUOTE COLLECTION:
-When a customer asks about Business Fibre, Enterprise, Wholesale, or Dark Fibre, collect their details naturally: name, email, company, location, bandwidth needs, contract preference. Once you have at minimum name, email, and requirements, include a hidden block at the end: <!--QUOTE:{"type":"business_fibre","name":"...","email":"...","company":"...","location":"...","bandwidth":"...","contract":"...","requirements":"...","summary":"..."}-->
+When a customer asks about ANY service including Residential, Business Fibre, Enterprise, Wholesale, or Dark Fibre, collect their details naturally: name, email, company, location, bandwidth needs, contract preference. Once you have at minimum name, email, and requirements, include a hidden block at the end: <!--QUOTE:{"type":"business_fibre","name":"...","email":"...","company":"...","location":"...","bandwidth":"...","contract":"...","requirements":"...","summary":"..."}-->
+
+For RESIDENTIAL quotes, when you have name, email, phone, and address, include: <!--QUOTE:{"type":"residential","name":"...","email":"...","phone":"...","address":"...","service":"residential","plan":"...","source":"chatbot","status":"new"}-->
 The type must be: residential, business_fibre, enterprise, wholesale_backhaul, or dark_fibre. Your visible response should confirm their details were sent to the business team.`;
 
 

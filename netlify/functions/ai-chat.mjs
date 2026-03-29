@@ -1,137 +1,121 @@
 const SUPABASE_URL = 'https://egztpclpcnizcdtfugsv.supabase.co';
 
-const BUSINESS_KEYWORDS = ['backbone','dark fibre','dark fiber','IRU','enterprise','wholesale','backhaul','dedicated circuit','SLA','tower','5G backhaul','lease','corporate','data centre','data center','colocation','B2B','quote','pricing for business','business plan','business pricing','ethernet','MPLS','point to point','p2p','dedicated line','carrier','transit','peering','wavelength','CWDM','DWDM'];
+const BUSINESS_KEYWORDS = ['backbone','dark fibre','dark fiber','IRU','enterprise','wholesale','backhaul','colocation','peering','transit','SLA','dedicated','leased line','MPLS','wavelength'];
 
-const TELLINEX_SYSTEM_PROMPT = `You are the Tellinex AI Assistant — Jamaica's first underground fibre broadband provider. You are friendly, knowledgeable, and proud of what Tellinex offers. You speak naturally and can understand Jamaican Patois as well as English.
+const TELLINEX_SYSTEM_PROMPT = `You are the Tellinex AI Assistant — Jamaica's first underground fibre broadband provider.
 
 KEY FACTS ABOUT TELLINEX:
-- Jamaica's first 100% underground micro-trenched fibre network
-- Built to survive Category 5 hurricanes (our network had zero damage during Hurricane Melissa in October 2025)
-- Coming 2026, starting in New Kingston
-- Expanding to all 14 parishes across Jamaica
-- Founded by Omar Gentles (CEO, Jamaican cybersecurity expert with MSc, CRISC, CISM, CISA, CEH certifications) and Rui Santos (Technical Director, 21 years telecoms experience, built Portugal's first FTTH network)
-- Technology: XGS-PON fibre + Nokia 5G, Hexatronic microduct infrastructure
+  - Jamaica's first 100% underground micro-trenched fibre network
+  - Built to survive Category 5 hurricanes (our network had zero damage during Hurricane Melissa in October 2024)
+  - Coming 2026, starting in New Kingston
+  - Expanding to all 14 parishes across Jamaica
+  - Founded by Omar Gentles (CEO, Jamaican cybersecurity expert with MSc, CRISC, CISM, CISA, CEH certifications) and Rui Santos (COO/Technical Director, 21 years building fibre networks across Europe)
+  - Technology: XGS-PON fibre + Nokia 5G, Hexatronic microduct infrastructure
 
 RESIDENTIAL PLANS:
-- Starter 100 Mbps symmetrical: US$45/month
-- Performance 500 Mbps symmetrical: US$65/month
-- Ultra 1 Gbps symmetrical: US$95/month
-- All plans include: free professional installation, Wi-Fi 6E router included, no data caps, no throttling, 24/7 Jamaican-based support, underground hurricane-proof connection
+  - Starter 100 Mbps symmetrical: US$45/month
+  - Performance 500 Mbps symmetrical: US$65/month
+  - Ultra 1 Gbps symmetrical: US$95/month
+  - All plans include: free professional installation, Wi-Fi 6E router included, no data caps, no throttling, 24/7 support
 
 BUSINESS PLANS:
-- Business Fibre from US$99/month: up to 2 Gbps, 99.9% SLA, static IPs, 4-hour priority fault response
-- Enterprise Solutions: 10 Gbps+ dedicated circuits, dark fibre, 99.99% SLA, dual-path redundancy
-- Wholesale & Backhaul: 5G small cell backhaul, tower connectivity, IRU/dark fibre leasing, international carrier-grade transit
-
-COVERAGE (Phase 1 — coming 2026):
-- New Kingston, Half Way Tree, Liguanea, Hope Pastures, Mona, Papine, Cross Roads, Constant Spring
-- Phase 2 (2027): Portmore, Spanish Town, Mandeville, Montego Bay
-- Phase 3 (2028-2030): All 14 parishes island-wide
-
-COMPETITORS:
-- Flow (Liberty Latin America): aerial copper/coax network, vulnerable to hurricanes, speeds up to 150 Mbps
-- Digicel: primarily mobile, limited fixed broadband, aerial infrastructure also vulnerable
-- Tellinex advantage: underground fibre = hurricane proof, symmetrical speeds, newer technology, better service
+  - Business Fibre 500 Mbps: US$150/month (static IP, SLA)
+  - Business Fibre 1 Gbps: US$250/month (static IP, SLA)
+  - Enterprise 10 Gbps: Custom pricing
+  - Wholesale/Backhaul: Custom pricing
 
 RULES:
-- Always be helpful, warm, and professional
-- If someone asks about coverage in an area not in Phase 1, tell them the phase and encourage registration
-- Never make up information — if unsure, say "Let me connect you with our team"
-- Encourage registration at every opportunity
-- Keep responses concise — 2-3 sentences max unless they ask for details
-- You can understand and respond to Jamaican Patois naturally
-
-ADDRESS VERIFICATION:
-When a customer mentions their address or location, include: <!--ADDRESS:{"address":"15 Knutsford Boulevard, New Kingston"}-->
-The system will geocode it and show satellite + street view images. Always ask "Is this your property?" after showing images.
-If customer says no: ask for building name, unit number, or nearby landmark. Suggest sharing a Google Maps link.
-If customer shares a Google Maps URL: the system extracts coordinates automatically.
-
-QUOTE COLLECTION:
-When a customer asks about ANY service including Residential, Business Fibre, Enterprise, Wholesale, or Dark Fibre, collect their details naturally: name, email, company, location, bandwidth needs, contract preference. Once you have at minimum name, email, and requirements, include a hidden block at the end: <!--QUOTE:{"type":"business_fibre","name":"...","email":"...","company":"...","location":"...","bandwidth":"...","contract":"...","requirements":"...","summary":"..."}-->
-
-For RESIDENTIAL quotes, when you have name, email, phone, and address, include: <!--QUOTE:{"type":"residential","name":"...","email":"...","phone":"...","address":"...","service":"residential","plan":"...","source":"chatbot","status":"new"}-->
-The type must be: residential, business_fibre, enterprise, wholesale_backhaul, or dark_fibre. Your visible response should confirm their details were sent to the business team.`;
-
+- Be enthusiastic but professional about Tellinex
+- If asked about coverage, say "We're launching in New Kingston first, then expanding across all 14 parishes"
+- For residential quotes: collect name, email, phone, address, desired plan
+- For business/enterprise: collect company name, contact person, email, phone, address, bandwidth needs
+- Always mention hurricane resilience — it's our biggest differentiator
+- When a customer provides an address, include it in your response with <!--ADDRESS:their address--> tag
+- Never reveal internal pricing structures or competitor analysis`;
 
 function isBusinessQuery(messages) {
-  const lastFew = messages.slice(-3).map(m => m.content.toLowerCase()).join(' ');
-  return BUSINESS_KEYWORDS.some(kw => lastFew.includes(kw.toLowerCase()));
-}
-
-
-// SERVER-SIDE: Extract customer details from conversation (doesn't rely on AI generating hidden blocks)
-function extractCustomerFromMessages(messages) {
-  const userText = messages.filter(m => m.role === 'user').map(m => m.content).join(' ');
-  const emailMatch = userText.match(/[\w.-]+@[\w.-]+\.[a-z]{2,}/i);
-  const phoneMatch = userText.match(/\b(\+?1?[-.]?\(?\d{3}\)?[-.]?\d{3}[-.]?\d{4})\b/) || userText.match(/\b(876[-.]?\d{3}[-.]?\d{4})\b/);
-  const namePatterns = [/(?:my name is|i'm|i am)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,2})/i, /(?:name:?\s*)([A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,2})/i];
-  let name = null;
-  for (const p of namePatterns) { const m = userText.match(p); if (m) { name = m[1].trim(); break; } }
-  const addrMatch = userText.match(/\b(\d+\s+[A-Z][\w\s]+(?:Road|Street|Avenue|Drive|Lane|Way|Crescent|Close|Place|Boulevard)[\w\s,]*(?:Kingston|Montego Bay|Spanish Town|Portmore|Mandeville|May Pen|Half Way Tree)[\s\d]*)/i);
-  if (emailMatch || phoneMatch) {
-    const speedMatch = allText.match(/\b(100\s*(?:mb|mbps)|500\s*(?:mb|mbps)|1\s*(?:gb|gbps)|1000\s*(?:mb|mbps)|starter|performance|ultra)\b/i);
-  const serviceType = allText.match(/\b(residential|business|enterprise|wholesale|dark\s*fibre|dark\s*fiber)\b/i);
-  return { customer_name: name || 'Unknown', customer_email: emailMatch?.[0] || '', customer_phone: phoneMatch?.[0] || '', location: addrMatch?.[1]?.trim() || '', quote_type: 'residential', source: 'chatbot', status: 'new', bandwidth_required: speedMatch?.[1] || null, service_requested: serviceType?.[1]?.toLowerCase() || null };
-  }
-  return null;
+  const last = messages[messages.length - 1]?.content?.toLowerCase() || '';
+  return BUSINESS_KEYWORDS.some(kw => last.toLowerCase().includes(kw.toLowerCase()));
 }
 
 function extractQuote(text) {
-  const match = text.match(/<!--QUOTE:(.*?)-->/s);
+  const match = text.match(/```json\s*(\{[\s\S]*?\})\s*```/);
   if (!match) return null;
   try { return JSON.parse(match[1]); } catch { return null; }
 }
 
 function cleanResponse(text) {
-  return text.replace(/<!--QUOTE:.*?-->/s, '').replace(/<!--ADDRESS:.*?-->/s, '').trim();
+  return text.replace(/```json\s*\{[\s\S]*?\}\s*```/g, '').trim();
 }
-
 
 function extractAddress(text) {
-  const match = text.match(/<!--ADDRESS:(.*?)-->/s);
-  if (!match) return null;
-  try { return JSON.parse(match[1]); } catch { return null; }
-}
-
-function extractGoogleMapsCoords(text) {
-  const patterns = [/@(-?\d+\.\d+),(-?\d+\.\d+)/, /q=(-?\d+\.\d+),(-?\d+\.\d+)/, /ll=(-?\d+\.\d+),(-?\d+\.\d+)/];
-  for (const p of patterns) { const m = text.match(p); if (m) return { lat: parseFloat(m[1]), lng: parseFloat(m[2]) }; }
+  const match = text.match(/<!--ADDRESS:(.*?)-->/);
+  if (match) return { address: match[1].trim() };
   return null;
 }
 
 async function geocodeAddress(address, apiKey) {
   try {
-    const res = await fetch('https://maps.googleapis.com/maps/api/geocode/json?address=' + encodeURIComponent(address + ', Jamaica') + '&region=jm&key=' + apiKey);
+    const res = await fetch(`https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(address)}&key=${apiKey}`);
     const data = await res.json();
-    if (data.results && data.results[0]) { const loc = data.results[0].geometry.location; return { lat: loc.lat, lng: loc.lng, formatted: data.results[0].formatted_address }; }
-    return null;
-  } catch (e) { return null; }
+    if (data.results && data.results[0]) {
+      const loc = data.results[0].geometry.location;
+      return { lat: loc.lat, lng: loc.lng, formatted: data.results[0].formatted_address };
+    }
+  } catch (e) { console.error('Geocode error:', e); }
+  return null;
 }
 
 function generateMapUrls(lat, lng, apiKey) {
   return {
-    satellite: 'https://maps.googleapis.com/maps/api/staticmap?center=' + lat + ',' + lng + '&zoom=19&size=600x400&maptype=satellite&markers=color:green|' + lat + ',' + lng + '&key=' + apiKey,
-    streetView: 'https://maps.googleapis.com/maps/api/streetview?location=' + lat + ',' + lng + '&size=600x400&fov=90&heading=0&pitch=10&key=' + apiKey
+    satellite: `https://maps.googleapis.com/maps/api/staticmap?center=${lat},${lng}&zoom=18&size=600x400&maptype=satellite&markers=color:red%7C${lat},${lng}&key=${apiKey}`,
+    streetView: `https://maps.googleapis.com/maps/api/streetview?size=600x400&location=${lat},${lng}&fov=90&heading=235&pitch=10&key=${apiKey}`
   };
 }
 
+function extractGoogleMapsCoords(text) {
+  const patterns = [
+    /@(-?\d+\.\d+),(-?\d+\.\d+)/,
+    /maps\?q=(-?\d+\.\d+),(-?\d+\.\d+)/,
+    /place\/.*\/@(-?\d+\.\d+),(-?\d+\.\d+)/
+  ];
+  for (const p of patterns) {
+    const m = text.match(p);
+    if (m) return { lat: parseFloat(m[1]), lng: parseFloat(m[2]) };
+  }
+  return null;
+}
+
+function extractCustomerFromMessages(messages) {
+  const userMessages = messages.filter(m => m.role === 'user');
+  if (userMessages.length === 0) return null;
+  const allText = userMessages.map(m => m.content).join(' ');
+
+  const emailMatch = allText.match(/[\w.-]+@[\w.-]+\.[a-z]{2,}/i);
+  const phoneMatch = allText.match(/\b(\+?1?[-.]?\(?\d{3}\)?[-.]?\d{3}[-.]?\d{4})\b/) || allText.match(/\b(876[-.]?\d{3}[-.]?\d{4})\b/);
+  const nameMatch = allText.match(/(?:my name is|i'm|i am)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,2})/i);
+  const addrMatch = allText.match(/(?:I live at|my address is|located at|address is|at)\s+(.+?)(?:\.|,\s*(?:Jamaica|kingston)|$)/i);
+
+  let name = nameMatch?.[1] || null;
+  if (!name) {
+    const formalMatch = allText.match(/(?:name:\s*|name\s+is\s+)([A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,2})/i);
+    if (formalMatch) name = formalMatch[1];
+  }
+
+  const speedMatch = allText.match(/\b(100\s*(?:mb|mbps)|500\s*(?:mb|mbps)|1\s*(?:gb|gbps)|1000\s*(?:mb|mbps)|starter|performance|ultra)\b/i);
+  const serviceType = allText.match(/\b(residential|business|enterprise|wholesale|dark\s*fibre|dark\s*fiber)\b/i);
+
+  return { customer_name: name || 'Unknown', customer_email: emailMatch?.[0] || '', customer_phone: phoneMatch?.[0] || '', location: addrMatch?.[1]?.trim() || '', quote_type: 'residential', source: 'chatbot', status: 'new', bandwidth_required: speedMatch?.[1] || null, service_requested: serviceType?.[1]?.toLowerCase() || null };
+}
 export default async (req) => {
-  if (req.method === "OPTIONS") {
+  if (req.method === 'OPTIONS') {
     return new Response(null, {
       status: 204,
       headers: {
-        "Access-Control-Allow-Origin": "*",
-        "Access-Control-Allow-Methods": "POST, OPTIONS",
-        "Access-Control-Allow-Headers": "Content-Type",
+        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Methods': 'POST, OPTIONS',
+        'Access-Control-Allow-Headers': 'Content-Type',
       },
-    });
-  }
-
-  if (req.method !== "POST") {
-    return new Response(JSON.stringify({ error: "Method not allowed" }), {
-      status: 405,
-      headers: { "Content-Type": "application/json" },
     });
   }
 
@@ -139,37 +123,26 @@ export default async (req) => {
     const { messages } = await req.json();
 
     if (!messages || !Array.isArray(messages)) {
-      return new Response(JSON.stringify({ error: "Messages array required" }), {
+      return new Response(JSON.stringify({ error: 'Messages array required' }), {
         status: 400,
-        headers: { "Content-Type": "application/json" },
+        headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' },
       });
     }
 
-    const ANTHROPIC_API_KEY = Netlify.env.get("ANTHROPIC_API_KEY");
-    const MAPS_KEY = Netlify.env.get("GOOGLE_MAPS_API_KEY");
+    const API_KEY = Netlify.env.get('ANTHROPIC_API_KEY');
+    const model = isBusinessQuery(messages) ? 'claude-sonnet-4-20250514' : 'claude-haiku-4-5-20251001';
+    const maxTokens = isBusinessQuery(messages) ? 1024 : 512;
 
-    if (!ANTHROPIC_API_KEY) {
-      return new Response(
-        JSON.stringify({
-          content: [{ type: "text", text: "Our AI assistant is being set up. Please email us at info@tellinex.com and we'll help you right away!" }],
-        }),
-        {
-          status: 200,
-          headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" },
-        }
-      );
-    }
-
-    const response = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
+    const response = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
       headers: {
-        "Content-Type": "application/json",
-        "x-api-key": ANTHROPIC_API_KEY,
-        "anthropic-version": "2023-06-01",
+        'Content-Type': 'application/json',
+        'x-api-key': API_KEY,
+        'anthropic-version': '2023-06-01',
       },
       body: JSON.stringify({
-        model: isBusinessQuery(messages) ? "claude-sonnet-4-20250514" : "claude-haiku-4-5-20251001",
-        max_tokens: isBusinessQuery(messages) ? 1024 : 512,
+        model: model,
+        max_tokens: maxTokens,
         system: TELLINEX_SYSTEM_PROMPT,
         messages: messages,
       }),
@@ -177,75 +150,84 @@ export default async (req) => {
 
     const data = await response.json();
 
-    // Extract and save quote if present
     if (data.content && data.content[0] && data.content[0].text) {
       const rawText = data.content[0].text;
-    const quote = extractQuote(rawText);
-    if (quote) { data.content[0].text = cleanResponse(rawText); }
-
-    const SUPA_KEY = Netlify.env.get('SUPABASE_ANON_KEY');
-    const MAPS_KEY = Netlify.env.get('GOOGLE_MAPS_API_KEY');
-    if (SUPA_KEY) {
-      const cd = extractCustomerFromMessages(messages);
-      const addr = cd?.location || null;
-      let geoData = null, satUrl = null, streetUrl = null;
-      if (addr && MAPS_KEY) {
-        try {
-          geoData = await geocodeAddress(addr, MAPS_KEY);
-          if (geoData) {
-            const urls = generateMapUrls(geoData.lat, geoData.lng, MAPS_KEY);
-            satUrl = urls.satellite; streetUrl = urls.streetView;
-            data.content[0].text += '\n\n![Satellite view](' + urls.satellite + ')\n![Street view](' + urls.streetView + ')';
-          }
-        } catch (e) { console.error('Geocode error:', e.message); }
+      const quote = extractQuote(rawText);
+      if (quote) {
+        data.content[0].text = cleanResponse(rawText);
       }
-      if (!geoData && MAPS_KEY) {
-        const addrData = extractAddress(rawText);
-        if (addrData) {
+
+      // UNIFIED WRITE: customer + geocode + one row to Supabase
+      const SUPA_KEY = Netlify.env.get('SUPABASE_ANON_KEY');
+      const MAPS_KEY = Netlify.env.get('GOOGLE_MAPS_API_KEY');
+      if (SUPA_KEY) {
+        const cd = extractCustomerFromMessages(messages);
+        const addr = cd?.location || null;
+        let geoData = null, satUrl = null, streetUrl = null;
+
+        if (addr && MAPS_KEY) {
           try {
-            geoData = await geocodeAddress(addrData.address, MAPS_KEY);
+            geoData = await geocodeAddress(addr, MAPS_KEY);
             if (geoData) {
               const urls = generateMapUrls(geoData.lat, geoData.lng, MAPS_KEY);
-              satUrl = urls.satellite; streetUrl = urls.streetView;
-              data.content[0].text = data.content[0].text.replace(/<!--ADDRESS:.*?-->/, '');
+              satUrl = urls.satellite;
+              streetUrl = urls.streetView;
               data.content[0].text += '\n\n![Satellite view](' + urls.satellite + ')\n![Street view](' + urls.streetView + ')';
             }
-          } catch (e) { console.error('Geocode fallback:', e.message); }
+          } catch (e) { console.error('Geocode error:', e.message); }
+        }
+
+        if (!geoData && MAPS_KEY) {
+          const addrData = extractAddress(rawText);
+          if (addrData) {
+            try {
+              geoData = await geocodeAddress(addrData.address, MAPS_KEY);
+              if (geoData) {
+                const urls = generateMapUrls(geoData.lat, geoData.lng, MAPS_KEY);
+                satUrl = urls.satellite;
+                streetUrl = urls.streetView;
+                data.content[0].text = data.content[0].text.replace(/<!--ADDRESS:.*?-->/, '');
+                data.content[0].text += '\n\n![Satellite view](' + urls.satellite + ')\n![Street view](' + urls.streetView + ')';
+              }
+            } catch (e) { console.error('Geocode fallback:', e.message); }
+          }
+        }
+
+        try {
+          const supaRes = await fetch(SUPABASE_URL + '/rest/v1/quote_requests', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'apikey': SUPA_KEY, 'Authorization': 'Bearer ' + SUPA_KEY, 'Prefer': 'return=minimal' },
+            body: JSON.stringify({
+              quote_type: cd?.quote_type || 'residential',
+              customer_name: cd?.customer_name || null,
+              customer_email: cd?.customer_email || null,
+              customer_phone: cd?.customer_phone || null,
+              location: geoData?.formatted || addr || null,
+              latitude: geoData?.lat || null,
+              longitude: geoData?.lng || null,
+              satellite_image_url: satUrl,
+              street_view_url: streetUrl,
+              address_confirmed: false,
+              source: 'chatbot',
+              status: 'new',
+              bandwidth_required: cd?.bandwidth_required || null,
+              service_requested: cd?.service_requested || null
+            })
+          });
+          console.log('TELLINEX: Supabase response:', supaRes.status);
+        } catch (e) { console.error('Supabase write error:', e.message); }
+      }
+
+      // Google Maps link sharing
+      const lastUserMsg = messages[messages.length - 1];
+      if (lastUserMsg && lastUserMsg.role === 'user') {
+        const coords = extractGoogleMapsCoords(lastUserMsg.content);
+        const MK = Netlify.env.get('GOOGLE_MAPS_API_KEY');
+        if (coords && MK && !data.content[0].text.includes('![')) {
+          const urls = generateMapUrls(coords.lat, coords.lng, MK);
+          data.content[0].text += '\n\n![Satellite view](' + urls.satellite + ')\n![Street view](' + urls.streetView + ')';
         }
       }
-      try {
-        await fetch(SUPABASE_URL + '/rest/v1/quote_requests', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'apikey': SUPA_KEY, 'Authorization': 'Bearer ' + SUPA_KEY, 'Prefer': 'return=minimal' },
-          body: JSON.stringify({
-            quote_type: cd?.quote_type || 'residential',
-            customer_name: cd?.customer_name || null,
-            customer_email: cd?.customer_email || null,
-            customer_phone: cd?.customer_phone || null,
-            location: geoData?.formatted || addr || null,
-            latitude: geoData?.lat || null,
-            longitude: geoData?.lng || null,
-            satellite_image_url: satUrl,
-            street_view_url: streetUrl,
-            address_confirmed: false,
-            source: 'chatbot',
-            status: 'new',
-            bandwidth_required: cd?.bandwidth_required || null,
-            service_requested: cd?.service_requested || null
-          })
-        });
-        console.log('TELLINEX: Quote saved');
-      } catch (e) { console.error('Supabase write error:', e.message); }
-    }
-    const lastUserMsg = messages[messages.length - 1];
-    if (lastUserMsg && lastUserMsg.role === 'user') {
-      const coords = extractGoogleMapsCoords(lastUserMsg.content);
-      const MK = Netlify.env.get('GOOGLE_MAPS_API_KEY');
-      if (coords && MK && !data.content[0].text.includes('![')) {
-        const urls = generateMapUrls(coords.lat, coords.lng, MK);
-        data.content[0].text += '\n\n![Satellite view](' + urls.satellite + ')\n![Street view](' + urls.streetView + ')';
-      }
-    }
     }
 
     return new Response(JSON.stringify(data), {

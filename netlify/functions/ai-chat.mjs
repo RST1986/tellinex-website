@@ -163,9 +163,10 @@ export default async (req) => {
       if (SUPA_KEY) {
         const cd = extractCustomerFromMessages(messages);
         const addr = cd?.location || null;
+        const hasContactData = cd && ((cd.customer_name && cd.customer_name !== 'Unknown') || cd.customer_email || cd.customer_phone || addr);
         let geoData = null, satUrl = null, streetUrl = null;
 
-        if (addr && MAPS_KEY) {
+        if (hasContactData && addr && MAPS_KEY) {
           try {
             geoData = await geocodeAddress(addr, MAPS_KEY);
             if (geoData) {
@@ -177,7 +178,7 @@ export default async (req) => {
           } catch (e) { console.error('Geocode error:', e.message); }
         }
 
-        if (!geoData && MAPS_KEY) {
+        if (hasContactData && !geoData && MAPS_KEY) {
           const addrData = extractAddress(rawText);
           if (addrData) {
             try {
@@ -193,6 +194,7 @@ export default async (req) => {
           }
         }
 
+        if (hasContactData) {
         try {
           const supaRes = await fetch(SUPABASE_URL + '/rest/v1/quote_requests', {
             method: 'POST',
@@ -216,6 +218,7 @@ export default async (req) => {
           });
           console.log('TELLINEX: Supabase response:', supaRes.status);
         } catch (e) { console.error('Supabase write error:', e.message); }
+        }
       }
 
       // Google Maps link sharing

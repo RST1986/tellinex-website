@@ -70,12 +70,8 @@ function extractCustomerFromMessages(messages) {
   for (const p of namePatterns) { const m = userText.match(p); if (m) { name = m[1].trim(); break; } }
   const addrMatch = userText.match(/\b(\d+\s+[A-Z][\w\s]+(?:Road|Street|Avenue|Drive|Lane|Way|Crescent|Close|Place|Boulevard)[\w\s,]*(?:Kingston|Montego Bay|Spanish Town|Portmore|Mandeville|May Pen|Half Way Tree)[\s\d]*)/i);
   if (emailMatch || phoneMatch) {
-      // Extract service plan/speed
-  const speedMatch = allText.match(/(?:100|500|1000|1s*g)s*(?:mb|mbps|gb|gbps)/i) || allText.match(/(?:starter|performance|ultra)/i);
-  const serviceMatch = allText.match(/(?:residential|business|enterprise|wholesale|darks*fibre)/i);
-    // Extract service plan/speed requested
-  const speedMatch = allText.match(/\b(100\s*(?:mb|mbps)|500\s*(?:mb|mbps)|1\s*(?:gb|gbps)|1000\s*(?:mb|mbps)|starter|performance|ultra)\b/i);
-  const serviceType = allText.match(/\b(residential|business|enterprise|wholesale|dark\s*fibre|dark\s*fiber)\b/i);
+
+  // Extract speed/plan and service type
   const speedMatch = allText.match(/\b(100\s*(?:mb|mbps)|500\s*(?:mb|mbps)|1\s*(?:gb|gbps)|1000\s*(?:mb|mbps)|starter|performance|ultra)\b/i);
   const serviceType = allText.match(/\b(residential|business|enterprise|wholesale|dark\s*fibre|dark\s*fiber)\b/i);
   return { customer_name: name || 'Unknown', customer_email: emailMatch?.[0] || '', customer_phone: phoneMatch?.[0] || '', location: addrMatch?.[1]?.trim() || '', quote_type: 'residential', source: 'chatbot', status: 'new', bandwidth_required: speedMatch?.[1] || null, service_requested: serviceType?.[1]?.toLowerCase() || null };

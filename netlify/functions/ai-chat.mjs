@@ -205,13 +205,7 @@ export default async (req) => {
         if (SUPA_KEY) writeQuoteToSupabase(quote, SUPA_KEY);
         data.content[0].text = cleanResponse(rawText);
       }
-    // ALWAYS extract customer details from messages and save
-    const extracted = extractCustomerFromMessages(messages);
-    if (extracted && !quote) {
-      const SK = Netlify.env.get('SUPABASE_ANON_KEY');
-      console.log('TELLINEX: Fallback extraction:', JSON.stringify(extracted), 'Key exists:', !!SK);
-      if (SK) { await writeQuoteToSupabase(extracted, SK); }
-    }
+    // Customer details now extracted in address verification block
 
     }
 

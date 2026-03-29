@@ -73,6 +73,9 @@ function extractCustomerFromMessages(messages) {
       // Extract service plan/speed
   const speedMatch = allText.match(/(?:100|500|1000|1s*g)s*(?:mb|mbps|gb|gbps)/i) || allText.match(/(?:starter|performance|ultra)/i);
   const serviceMatch = allText.match(/(?:residential|business|enterprise|wholesale|darks*fibre)/i);
+    // Extract service plan/speed requested
+  const speedMatch = allText.match(/\b(100\s*(?:mb|mbps)|500\s*(?:mb|mbps)|1\s*(?:gb|gbps)|1000\s*(?:mb|mbps)|starter|performance|ultra)\b/i);
+  const serviceType = allText.match(/\b(residential|business|enterprise|wholesale|dark\s*fibre|dark\s*fiber)\b/i);
   return { customer_name: name || 'Unknown', customer_email: emailMatch?.[0] || '', customer_phone: phoneMatch?.[0] || '', location: addrMatch?.[1]?.trim() || '', quote_type: 'residential', source: 'chatbot', status: 'new' };
   }
   return null;
@@ -263,6 +266,8 @@ export default async (req) => {
             address_confirmed: false,
             source: 'chatbot',
             status: 'new',
+            bandwidth_required: cd?.bandwidth_required || null,
+            service_requested: cd?.service_requested || null,
             bandwidth_required: cd?.bandwidth_required || null,
             service_requested: cd?.service_requested || null
           })

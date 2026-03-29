@@ -106,7 +106,7 @@ function extractCustomerFromMessages(messages) {
   const emailMatch = allText.match(/[\w.-]+@[\w.-]+\.[a-z]{2,}/i);
   const phoneMatch = allText.match(/\b(\+?1?[-.]?\(?\d{3}\)?[-.]?\d{3}[-.]?\d{4})\b/) || allText.match(/\b(876[-.]?\d{3}[-.]?\d{4})\b/);
   const nameMatch = allText.match(/(?:my name is|i'm|i am)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,2})/i);
-  const addrMatch = allText.match(/(?:I live at|my address is|located at|address is|at)\s+(.+?)(?:\.|,\s*(?:Jamaica|kingston)|$)/i);
+  const addrMatch = allText.match(/(?:I live at|my address is|located at|address is)\s+(.+?)(?:\.|,\s*(?:Jamaica|kingston)|$)/i);
 
   let name = nameMatch?.[1] || null;
   if (!name) {
@@ -175,7 +175,7 @@ export default async (req) => {
       if (SUPA_KEY) {
         const cd = extractCustomerFromMessages(messages);
         const addr = cd?.location || null;
-        const hasContactData = cd && ((cd.customer_name && cd.customer_name !== 'Unknown') || cd.customer_email || cd.customer_phone || addr);
+        const hasContactData = cd && (cd.customer_email || cd.customer_phone || (cd.customer_name && cd.customer_name !== 'Unknown'));
         let geoData = null, satUrl = null, streetUrl = null;
 
         if (hasContactData && addr && MAPS_KEY) {

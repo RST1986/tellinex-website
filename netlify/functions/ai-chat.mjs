@@ -70,9 +70,7 @@ function extractCustomerFromMessages(messages) {
   for (const p of namePatterns) { const m = userText.match(p); if (m) { name = m[1].trim(); break; } }
   const addrMatch = userText.match(/\b(\d+\s+[A-Z][\w\s]+(?:Road|Street|Avenue|Drive|Lane|Way|Crescent|Close|Place|Boulevard)[\w\s,]*(?:Kingston|Montego Bay|Spanish Town|Portmore|Mandeville|May Pen|Half Way Tree)[\s\d]*)/i);
   if (emailMatch || phoneMatch) {
-
-  // Extract speed/plan and service type
-  const speedMatch = allText.match(/\b(100\s*(?:mb|mbps)|500\s*(?:mb|mbps)|1\s*(?:gb|gbps)|1000\s*(?:mb|mbps)|starter|performance|ultra)\b/i);
+    const speedMatch = allText.match(/\b(100\s*(?:mb|mbps)|500\s*(?:mb|mbps)|1\s*(?:gb|gbps)|1000\s*(?:mb|mbps)|starter|performance|ultra)\b/i);
   const serviceType = allText.match(/\b(residential|business|enterprise|wholesale|dark\s*fibre|dark\s*fiber)\b/i);
   return { customer_name: name || 'Unknown', customer_email: emailMatch?.[0] || '', customer_phone: phoneMatch?.[0] || '', location: addrMatch?.[1]?.trim() || '', quote_type: 'residential', source: 'chatbot', status: 'new', bandwidth_required: speedMatch?.[1] || null, service_requested: serviceType?.[1]?.toLowerCase() || null };
   }
@@ -88,8 +86,6 @@ function extractQuote(text) {
 function cleanResponse(text) {
   return text.replace(/<!--QUOTE:.*?-->/s, '').replace(/<!--ADDRESS:.*?-->/s, '').trim();
 }
-
-
 
 
 function extractAddress(text) {
@@ -185,33 +181,24 @@ export default async (req) => {
     if (data.content && data.content[0] && data.content[0].text) {
       const rawText = data.content[0].text;
     const quote = extractQuote(rawText);
-    if (quote) {
-      data.content[0].text = cleanResponse(rawText);
-    }
+    if (quote) { data.content[0].text = cleanResponse(rawText); }
 
-    // UNIFIED WRITE: Extract customer + geocode + write ONE row
     const SUPA_KEY = Netlify.env.get('SUPABASE_ANON_KEY');
     const MAPS_KEY = Netlify.env.get('GOOGLE_MAPS_API_KEY');
     if (SUPA_KEY) {
       const cd = extractCustomerFromMessages(messages);
-      const addr = cd?.location || (quote?.address) || null;
-      
-      let geoData = null;
-      let satUrl = null;
-      let streetUrl = null;
-      
+      const addr = cd?.location || null;
+      let geoData = null, satUrl = null, streetUrl = null;
       if (addr && MAPS_KEY) {
         try {
           geoData = await geocodeAddress(addr, MAPS_KEY);
           if (geoData) {
             const urls = generateMapUrls(geoData.lat, geoData.lng, MAPS_KEY);
-            satUrl = urls.satellite;
-            streetUrl = urls.streetView;
+            satUrl = urls.satellite; streetUrl = urls.streetView;
             data.content[0].text += '\n\n![Satellite view](' + urls.satellite + ')\n![Street view](' + urls.streetView + ')';
           }
-        } catch(e) { console.error('Geocode error:', e.message); }
+        } catch (e) { console.error('Geocode error:', e.message); }
       }
-      
       if (!geoData && MAPS_KEY) {
         const addrData = extractAddress(rawText);
         if (addrData) {
@@ -219,24 +206,22 @@ export default async (req) => {
             geoData = await geocodeAddress(addrData.address, MAPS_KEY);
             if (geoData) {
               const urls = generateMapUrls(geoData.lat, geoData.lng, MAPS_KEY);
-              satUrl = urls.satellite;
-              streetUrl = urls.streetView;
+              satUrl = urls.satellite; streetUrl = urls.streetView;
               data.content[0].text = data.content[0].text.replace(/<!--ADDRESS:.*?-->/, '');
               data.content[0].text += '\n\n![Satellite view](' + urls.satellite + ')\n![Street view](' + urls.streetView + ')';
             }
-          } catch(e) { console.error('Geocode fallback error:', e.message); }
+          } catch (e) { console.error('Geocode fallback:', e.message); }
         }
       }
-      
       try {
         await fetch(SUPABASE_URL + '/rest/v1/quote_requests', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', 'apikey': SUPA_KEY, 'Authorization': 'Bearer ' + SUPA_KEY, 'Prefer': 'return=minimal' },
           body: JSON.stringify({
-            quote_type: quote?.quote_type || cd?.quote_type || 'residential',
-            customer_name: cd?.customer_name || quote?.customer_name || null,
-            customer_email: cd?.customer_email || quote?.customer_email || null,
-            customer_phone: cd?.customer_phone || quote?.customer_phone || null,
+            quote_type: cd?.quote_type || 'residential',
+            customer_name: cd?.customer_name || null,
+            customer_email: cd?.customer_email || null,
+            customer_phone: cd?.customer_phone || null,
             location: geoData?.formatted || addr || null,
             latitude: geoData?.lat || null,
             longitude: geoData?.lng || null,
@@ -246,16 +231,12 @@ export default async (req) => {
             source: 'chatbot',
             status: 'new',
             bandwidth_required: cd?.bandwidth_required || null,
-            service_requested: cd?.service_requested || null,
-            bandwidth_required: cd?.bandwidth_required || null,
-            service_requested: cd?.service_requested || null,
-            bandwidth_required: cd?.bandwidth_required || null,
             service_requested: cd?.service_requested || null
           })
         });
-      } catch(e) { console.error('Supabase write error:', e.message); }
+        console.log('TELLINEX: Quote saved');
+      } catch (e) { console.error('Supabase write error:', e.message); }
     }
-
     const lastUserMsg = messages[messages.length - 1];
     if (lastUserMsg && lastUserMsg.role === 'user') {
       const coords = extractGoogleMapsCoords(lastUserMsg.content);
@@ -264,6 +245,7 @@ export default async (req) => {
         const urls = generateMapUrls(coords.lat, coords.lng, MK);
         data.content[0].text += '\n\n![Satellite view](' + urls.satellite + ')\n![Street view](' + urls.streetView + ')';
       }
+    }
     }
 
     return new Response(JSON.stringify(data), {

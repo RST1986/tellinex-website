@@ -78,7 +78,7 @@ function extractCustomerFromMessages(messages) {
   const serviceType = allText.match(/\b(residential|business|enterprise|wholesale|dark\s*fibre|dark\s*fiber)\b/i);
   const speedMatch = allText.match(/\b(100\s*(?:mb|mbps)|500\s*(?:mb|mbps)|1\s*(?:gb|gbps)|1000\s*(?:mb|mbps)|starter|performance|ultra)\b/i);
   const serviceType = allText.match(/\b(residential|business|enterprise|wholesale|dark\s*fibre|dark\s*fiber)\b/i);
-  return { customer_name: name || 'Unknown', customer_email: emailMatch?.[0] || '', customer_phone: phoneMatch?.[0] || '', location: addrMatch?.[1]?.trim() || '', quote_type: 'residential', source: 'chatbot', status: 'new' };
+  return { customer_name: name || 'Unknown', customer_email: emailMatch?.[0] || '', customer_phone: phoneMatch?.[0] || '', location: addrMatch?.[1]?.trim() || '', quote_type: 'residential', source: 'chatbot', status: 'new', bandwidth_required: speedMatch?.[1] || null, service_requested: serviceType?.[1]?.toLowerCase() || null };
   }
   return null;
 }

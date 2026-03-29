@@ -87,19 +87,23 @@ function cleanResponse(text) {
 
 async function writeQuoteToSupabase(quote, supabaseKey) {
   try {
+    const payload = {
+      quote_type: quote.quote_type || quote.type || quote.service_type || 'residential',
+      customer_name: quote.customer_name || quote.name || null,
+      customer_email: quote.customer_email || quote.email || null,
+      customer_phone: quote.customer_phone || quote.phone || null,
+      location: quote.location || quote.address || null,
+      source: quote.source || 'chatbot',
+      status: quote.status || 'new'
+    };
+    console.log('TELLINEX: Writing quote to Supabase:', JSON.stringify(payload));
     const res = await fetch(SUPABASE_URL + '/rest/v1/quote_requests', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'apikey': supabaseKey, 'Authorization': 'Bearer ' + supabaseKey, 'Prefer': 'return=minimal' },
-      body: JSON.stringify({
-        quote_type: quote.type || 'business_fibre', customer_name: quote.name || null, customer_email: quote.email || null,
-        customer_phone: quote.phone || null, company_name: quote.company || null, location: quote.location || null,
-        parish: quote.parish || null, bandwidth_required: quote.bandwidth || null, contract_preference: quote.contract || null,
-        additional_requirements: quote.requirements || null, conversation_summary: quote.summary || null,
-        satellite_image_url: quote.satellite_url || null, street_view_url: quote.street_view_url || null, latitude: quote.lat || null, longitude: quote.lng || null, address_confirmed: quote.address_confirmed || false, status: 'new'
-      })
+      body: JSON.stringify(payload)
     });
-    return res.ok;
-  } catch (e) { console.error('Supabase write error:', e); return false; }
+    console.log('TELLINEX: Supabase response:', res.status);
+  } catch (e) { console.error('TELLINEX: Quote save error:', e.message); }
 }
 
 
@@ -201,13 +205,12 @@ export default async (req) => {
         if (SUPA_KEY) writeQuoteToSupabase(quote, SUPA_KEY);
         data.content[0].text = cleanResponse(rawText);
       }
-    // FALLBACK: If AI didn't generate QUOTE block, extract from messages server-side
-    if (!quote) {
-      const extracted = extractCustomerFromMessages(messages);
-      if (extracted) {
-        const supabaseKey = Netlify.env.get('SUPABASE_ANON_KEY');
-        if (supabaseKey) { writeQuoteToSupabase(extracted, supabaseKey); }
-      }
+    // ALWAYS extract customer details from messages and save
+    const extracted = extractCustomerFromMessages(messages);
+    if (extracted && !quote) {
+      const SK = Netlify.env.get('SUPABASE_ANON_KEY');
+      console.log('TELLINEX: Fallback extraction:', JSON.stringify(extracted), 'Key exists:', !!SK);
+      if (SK) { await writeQuoteToSupabase(extracted, SK); }
     }
 
     }

@@ -70,7 +70,7 @@ function extractCustomerFromMessages(messages) {
   for (const p of namePatterns) { const m = userText.match(p); if (m) { name = m[1].trim(); break; } }
   const addrMatch = userText.match(/\b(\d+\s+[A-Z][\w\s]+(?:Road|Street|Avenue|Drive|Lane|Way|Crescent|Close|Place|Boulevard)[\w\s,]*(?:Kingston|Montego Bay|Spanish Town|Portmore|Mandeville|May Pen|Half Way Tree)[\s\d]*)/i);
   if (emailMatch || phoneMatch) {
-    return { name: name || 'Unknown', email: emailMatch?.[0] || '', phone: phoneMatch?.[0] || '', address: addrMatch?.[1]?.trim() || '', service_type: 'residential', source: 'chatbot', status: 'new' };
+    return { customer_name: name || 'Unknown', customer_email: emailMatch?.[0] || '', customer_phone: phoneMatch?.[0] || '', location: addrMatch?.[1]?.trim() || '', quote_type: 'residential', source: 'chatbot', status: 'new' };
   }
   return null;
 }

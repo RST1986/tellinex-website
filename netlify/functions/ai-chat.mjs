@@ -59,6 +59,22 @@ function isBusinessQuery(messages) {
   return BUSINESS_KEYWORDS.some(kw => lastFew.includes(kw.toLowerCase()));
 }
 
+
+// SERVER-SIDE: Extract customer details from conversation (doesn't rely on AI generating hidden blocks)
+function extractCustomerFromMessages(messages) {
+  const userText = messages.filter(m => m.role === 'user').map(m => m.content).join(' ');
+  const emailMatch = userText.match(/[\w.-]+@[\w.-]+\.[a-z]{2,}/i);
+  const phoneMatch = userText.match(/\b(\+?1?[-.]?\(?\d{3}\)?[-.]?\d{3}[-.]?\d{4})\b/) || userText.match(/\b(876[-.]?\d{3}[-.]?\d{4})\b/);
+  const namePatterns = [/(?:my name is|i'm|i am)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,2})/i, /(?:name:?\s*)([A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,2})/i];
+  let name = null;
+  for (const p of namePatterns) { const m = userText.match(p); if (m) { name = m[1].trim(); break; } }
+  const addrMatch = userText.match(/\b(\d+\s+[A-Z][\w\s]+(?:Road|Street|Avenue|Drive|Lane|Way|Crescent|Close|Place|Boulevard)[\w\s,]*(?:Kingston|Montego Bay|Spanish Town|Portmore|Mandeville|May Pen|Half Way Tree)[\s\d]*)/i);
+  if (emailMatch || phoneMatch) {
+    return { name: name || 'Unknown', email: emailMatch?.[0] || '', phone: phoneMatch?.[0] || '', address: addrMatch?.[1]?.trim() || '', service_type: 'residential', source: 'chatbot', status: 'new' };
+  }
+  return null;
+}
+
 function extractQuote(text) {
   const match = text.match(/<!--QUOTE:(.*?)-->/s);
   if (!match) return null;
@@ -185,6 +201,15 @@ export default async (req) => {
         if (SUPA_KEY) writeQuoteToSupabase(quote, SUPA_KEY);
         data.content[0].text = cleanResponse(rawText);
       }
+    // FALLBACK: If AI didn't generate QUOTE block, extract from messages server-side
+    if (!quote) {
+      const extracted = extractCustomerFromMessages(messages);
+      if (extracted) {
+        const supabaseKey = Netlify.env.get('SUPABASE_ANON_KEY');
+        if (supabaseKey) { writeQuoteToSupabase(extracted, supabaseKey); }
+      }
+    }
+
     }
 
     

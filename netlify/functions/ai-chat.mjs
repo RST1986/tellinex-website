@@ -199,66 +199,79 @@ export default async (req) => {
     // Extract and save quote if present
     if (data.content && data.content[0] && data.content[0].text) {
       const rawText = data.content[0].text;
-      const quote = extractQuote(rawText);
-      if (quote) {
-        const SUPA_KEY = Netlify.env.get("SUPABASE_ANON_KEY");
-        if (SUPA_KEY) writeQuoteToSupabase(quote, SUPA_KEY);
-        data.content[0].text = cleanResponse(rawText);
-      }
-    // Customer details now extracted in address verification block
-
+    const quote = extractQuote(rawText);
+    if (quote) {
+      data.content[0].text = cleanResponse(rawText);
     }
 
-    
-    // Handle address verification
-    if (data.content && data.content[0] && data.content[0].text) {
-      const addrData = extractAddress(data.content[0].text);
-      if (addrData && MAPS_KEY) {
-        const geo = await geocodeAddress(addrData.address, MAPS_KEY);
-        if (geo) {
-          const urls = generateMapUrls(geo.lat, geo.lng, MAPS_KEY);
-          data.content[0].text = data.content[0].text.replace(/<!--ADDRESS:.*?-->/s, '') +
-            '\n\n![Satellite view](' + urls.satellite + ')\n![Street view](' + urls.streetView + ')\n\nIs this your property?';
-          // Write address verification to Supabase immediately
-          const SUPA_KEY_ADDR = Netlify.env.get("SUPABASE_ANON_KEY");
-          if (SUPA_KEY_ADDR) {
-            try {
-              const supaRes = await fetch(SUPABASE_URL + '/rest/v1/quote_requests', {
-                method: 'POST',
-                headers: {
-                  'Content-Type': 'application/json',
-                  'apikey': SUPA_KEY_ADDR,
-                  'Authorization': 'Bearer ' + SUPA_KEY_ADDR,
-                  'Prefer': 'return=minimal'
-                },
-                body: JSON.stringify({
-                  quote_type: 'residential',
-                  customer_name: (() => { const cd = extractCustomerFromMessages(messages); return cd?.customer_name || null; })(),
-                  customer_email: (() => { const cd = extractCustomerFromMessages(messages); return cd?.customer_email || null; })(),
-                  customer_phone: (() => { const cd = extractCustomerFromMessages(messages); return cd?.customer_phone || null; })(),
-                  location: geo.formatted || addrData.address,
-                  latitude: geo.lat,
-                  longitude: geo.lng,
-                  satellite_image_url: urls.satellite,
-                  street_view_url: urls.streetView,
-                  address_confirmed: false,
-                  source: 'ai_chatbot',
-                  status: 'new'
-                })
-              });
-              if (!supaRes.ok) console.error('Supabase address write failed:', supaRes.status, await supaRes.text());
-            } catch(e) { console.error('Supabase address write error:', e); }
+    // UNIFIED WRITE: Extract customer + geocode + write ONE row
+    const SUPA_KEY = Netlify.env.get('SUPABASE_ANON_KEY');
+    const MAPS_KEY = Netlify.env.get('GOOGLE_MAPS_API_KEY');
+    if (SUPA_KEY) {
+      const cd = extractCustomerFromMessages(messages);
+      const addr = cd?.location || (quote?.address) || null;
+      
+      let geoData = null;
+      let satUrl = null;
+      let streetUrl = null;
+      
+      if (addr && MAPS_KEY) {
+        try {
+          geoData = await geocodeAddress(addr, MAPS_KEY);
+          if (geoData) {
+            const urls = generateMapUrls(geoData.lat, geoData.lng, MAPS_KEY);
+            satUrl = urls.satellite;
+            streetUrl = urls.streetView;
+            data.content[0].text += '\n\n![Satellite view](' + urls.satellite + ')\n![Street view](' + urls.streetView + ')';
           }
+        } catch(e) { console.error('Geocode error:', e.message); }
+      }
+      
+      if (!geoData && MAPS_KEY) {
+        const addrData = extractAddress(rawText);
+        if (addrData) {
+          try {
+            geoData = await geocodeAddress(addrData.address, MAPS_KEY);
+            if (geoData) {
+              const urls = generateMapUrls(geoData.lat, geoData.lng, MAPS_KEY);
+              satUrl = urls.satellite;
+              streetUrl = urls.streetView;
+              data.content[0].text = data.content[0].text.replace(/<!--ADDRESS:.*?-->/, '');
+              data.content[0].text += '\n\n![Satellite view](' + urls.satellite + ')\n![Street view](' + urls.streetView + ')';
+            }
+          } catch(e) { console.error('Geocode fallback error:', e.message); }
         }
       }
-      // Check if customer shared Google Maps link
-      const lastUserMsg = messages[messages.length - 1];
-      if (lastUserMsg && lastUserMsg.role === 'user') {
-        const coords = extractGoogleMapsCoords(lastUserMsg.content);
-        if (coords && MAPS_KEY && !data.content[0].text.includes('![')) {
-          const urls = generateMapUrls(coords.lat, coords.lng, MAPS_KEY);
-          data.content[0].text += '\n\n![Satellite view](' + urls.satellite + ')\n![Street view](' + urls.streetView + ')';
-        }
+      
+      try {
+        await fetch(SUPABASE_URL + '/rest/v1/quote_requests', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'apikey': SUPA_KEY, 'Authorization': 'Bearer ' + SUPA_KEY, 'Prefer': 'return=minimal' },
+          body: JSON.stringify({
+            quote_type: quote?.quote_type || cd?.quote_type || 'residential',
+            customer_name: cd?.customer_name || quote?.customer_name || null,
+            customer_email: cd?.customer_email || quote?.customer_email || null,
+            customer_phone: cd?.customer_phone || quote?.customer_phone || null,
+            location: geoData?.formatted || addr || null,
+            latitude: geoData?.lat || null,
+            longitude: geoData?.lng || null,
+            satellite_image_url: satUrl,
+            street_view_url: streetUrl,
+            address_confirmed: false,
+            source: 'chatbot',
+            status: 'new'
+          })
+        });
+      } catch(e) { console.error('Supabase write error:', e.message); }
+    }
+
+    const lastUserMsg = messages[messages.length - 1];
+    if (lastUserMsg && lastUserMsg.role === 'user') {
+      const coords = extractGoogleMapsCoords(lastUserMsg.content);
+      const MK = Netlify.env.get('GOOGLE_MAPS_API_KEY');
+      if (coords && MK && !data.content[0].text.includes('![')) {
+        const urls = generateMapUrls(coords.lat, coords.lng, MK);
+        data.content[0].text += '\n\n![Satellite view](' + urls.satellite + ')\n![Street view](' + urls.streetView + ')';
       }
     }
 

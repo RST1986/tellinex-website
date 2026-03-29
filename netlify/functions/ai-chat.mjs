@@ -2,34 +2,34 @@ const SUPABASE_URL = 'https://egztpclpcnizcdtfugsv.supabase.co';
 
 const BUSINESS_KEYWORDS = ['backbone','dark fibre','dark fiber','IRU','enterprise','wholesale','backhaul','colocation','peering','transit','SLA','dedicated','leased line','MPLS','wavelength'];
 
-const TELLINEX_SYSTEM_PROMPT = `You are the Tellinex AI Assistant — Jamaica's first underground fibre broadband provider.
+const TELLINEX_SYSTEM_PROMPT = `You are the Tellinex AI Assistant â Jamaica's first underground fibre broadband provider.
 
 KEY FACTS ABOUT TELLINEX:
-  - Jamaica's first 100% underground micro-trenched fibre network
-  - Built to survive Category 5 hurricanes (our network had zero damage during Hurricane Melissa in October 2024)
-  - Coming 2026, starting in New Kingston
-  - Expanding to all 14 parishes across Jamaica
-  - Founded by Omar Gentles (CEO, Jamaican cybersecurity expert with MSc, CRISC, CISM, CISA, CEH certifications) and Rui Santos (COO/Technical Director, 21 years building fibre networks across Europe)
-  - Technology: XGS-PON fibre + Nokia 5G, Hexatronic microduct infrastructure
+ - Jamaica's first 100% underground micro-trenched fibre network
+ - Built to survive Category 5 hurricanes (our network had zero damage during Hurricane Melissa in October 2024)
+ - Coming 2026, starting in New Kingston
+ - Expanding to all 14 parishes across Jamaica
+ - Founded by Omar Gentles (CEO, Jamaican cybersecurity expert with MSc, CRISC, CISM, CISA, CEH certifications) and Rui Santos (COO/Technical Director, 21 years building fibre networks across Europe)
+ - Technology: XGS-PON fibre + Nokia 5G, Hexatronic microduct infrastructure
 
 RESIDENTIAL PLANS:
-  - Starter 100 Mbps symmetrical: US$45/month
-  - Performance 500 Mbps symmetrical: US$65/month
-  - Ultra 1 Gbps symmetrical: US$95/month
-  - All plans include: free professional installation, Wi-Fi 6E router included, no data caps, no throttling, 24/7 support
+ - Starter 100 Mbps symmetrical: US$45/month
+ - Performance 500 Mbps symmetrical: US$65/month
+ - Ultra 1 Gbps symmetrical: US$95/month
+ - All plans include: free professional installation, Wi-Fi 6E router included, no data caps, no throttling, 24/7 support
 
 BUSINESS PLANS:
-  - Business Fibre 500 Mbps: US$150/month (static IP, SLA)
-  - Business Fibre 1 Gbps: US$250/month (static IP, SLA)
-  - Enterprise 10 Gbps: Custom pricing
-  - Wholesale/Backhaul: Custom pricing
+ - Business Fibre 500 Mbps: US$150/month (static IP, SLA)
+ - Business Fibre 1 Gbps: US$250/month (static IP, SLA)
+ - Enterprise 10 Gbps: Custom pricing
+ - Wholesale/Backhaul: Custom pricing
 
 RULES:
 - Be enthusiastic but professional about Tellinex
 - If asked about coverage, say "We're launching in New Kingston first, then expanding across all 14 parishes"
 - For residential quotes: collect name, email, phone, address, desired plan
 - For business/enterprise: collect company name, contact person, email, phone, address, bandwidth needs
-- Always mention hurricane resilience — it's our biggest differentiator
+- Always mention hurricane resilience â it's our biggest differentiator
 - When a customer provides an address, include it in your response with <!--ADDRESS:their address--> tag
 - Never reveal internal pricing structures or competitor analysis`;
 
@@ -86,6 +86,18 @@ function extractGoogleMapsCoords(text) {
   return null;
 }
 
+// Maps service_requested to valid Supabase quote_type enum values:
+// residential, business_fibre, enterprise, wholesale_backhaul, dark_fibre
+function mapQuoteType(serviceStr) {
+  if (!serviceStr) return 'residential';
+  const s = serviceStr.toLowerCase().replace(/\s+/g, '');
+  if (s === 'business') return 'business_fibre';
+  if (s === 'enterprise') return 'enterprise';
+  if (s === 'wholesale') return 'wholesale_backhaul';
+  if (s.includes('darkfi')) return 'dark_fibre';
+  return 'residential';
+}
+
 function extractCustomerFromMessages(messages) {
   const userMessages = messages.filter(m => m.role === 'user');
   if (userMessages.length === 0) return null;
@@ -105,7 +117,7 @@ function extractCustomerFromMessages(messages) {
   const speedMatch = allText.match(/\b(100\s*(?:mb|mbps)|500\s*(?:mb|mbps)|1\s*(?:gb|gbps)|1000\s*(?:mb|mbps)|starter|performance|ultra)\b/i);
   const serviceType = allText.match(/\b(residential|business|enterprise|wholesale|dark\s*fibre|dark\s*fiber)\b/i);
 
-  return { customer_name: name || 'Unknown', customer_email: emailMatch?.[0] || '', customer_phone: phoneMatch?.[0] || '', location: addrMatch?.[1]?.trim() || '', quote_type: 'residential', source: 'chatbot', status: 'new', bandwidth_required: speedMatch?.[1] || null, service_requested: serviceType?.[1]?.toLowerCase() || null };
+  return { customer_name: name || 'Unknown', customer_email: emailMatch?.[0] || '', customer_phone: phoneMatch?.[0] || '', location: addrMatch?.[1]?.trim() || '', quote_type: mapQuoteType(serviceType?.[1]), source: 'chatbot', status: 'new', bandwidth_required: speedMatch?.[1] || null, service_requested: serviceType?.[1]?.toLowerCase() || null };
 }
 export default async (req) => {
   if (req.method === 'OPTIONS') {
@@ -195,29 +207,29 @@ export default async (req) => {
         }
 
         if (hasContactData) {
-        try {
-          const supaRes = await fetch(SUPABASE_URL + '/rest/v1/quote_requests', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'apikey': SUPA_KEY, 'Authorization': 'Bearer ' + SUPA_KEY, 'Prefer': 'return=minimal' },
-            body: JSON.stringify({
-              quote_type: cd?.quote_type || 'residential',
-              customer_name: cd?.customer_name || null,
-              customer_email: cd?.customer_email || null,
-              customer_phone: cd?.customer_phone || null,
-              location: geoData?.formatted || addr || null,
-              latitude: geoData?.lat || null,
-              longitude: geoData?.lng || null,
-              satellite_image_url: satUrl,
-              street_view_url: streetUrl,
-              address_confirmed: false,
-              source: 'chatbot',
-              status: 'new',
-              bandwidth_required: cd?.bandwidth_required || null,
-              service_requested: cd?.service_requested || null
-            })
-          });
-          console.log('TELLINEX: Supabase response:', supaRes.status);
-        } catch (e) { console.error('Supabase write error:', e.message); }
+          try {
+            const supaRes = await fetch(SUPABASE_URL + '/rest/v1/quote_requests', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', 'apikey': SUPA_KEY, 'Authorization': 'Bearer ' + SUPA_KEY, 'Prefer': 'return=minimal' },
+              body: JSON.stringify({
+                quote_type: cd?.quote_type || 'residential',
+                customer_name: cd?.customer_name || null,
+                customer_email: cd?.customer_email || null,
+                customer_phone: cd?.customer_phone || null,
+                location: geoData?.formatted || addr || null,
+                latitude: geoData?.lat || null,
+                longitude: geoData?.lng || null,
+                satellite_image_url: satUrl,
+                street_view_url: streetUrl,
+                address_confirmed: false,
+                source: 'chatbot',
+                status: 'new',
+                bandwidth_required: cd?.bandwidth_required || null,
+                service_requested: cd?.service_requested || null
+              })
+            });
+            console.log('TELLINEX: Supabase response:', supaRes.status);
+          } catch (e) { console.error('Supabase write error:', e.message); }
         }
       }
 

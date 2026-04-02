@@ -121,7 +121,6 @@ function extractCustomerJSON(text) {
       source: 'chatbot',
       status: 'new'
     };
-    logEvent('chat_query', 'Chat completed', {});
   } catch { return null; }
 }
 
@@ -324,6 +323,7 @@ export default async (req) => {
       }
     }
 
+    try { await logEvent('chat_query', (messages[messages.length-1]?.content || 'chat').substring(0, 100), { model }); } catch(e) {}
     return new Response(JSON.stringify(data), {
       status: response.status,
       headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" },

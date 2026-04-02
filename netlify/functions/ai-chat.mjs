@@ -121,6 +121,7 @@ function extractCustomerJSON(text) {
       source: 'chatbot',
       status: 'new'
     };
+    await logEvent('chat_query', 'Chat completed', {});
   } catch { return null; }
 }
 

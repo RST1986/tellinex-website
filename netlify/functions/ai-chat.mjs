@@ -1,4 +1,15 @@
 const SUPABASE_URL = 'https://egztpclpcnizcdtfugsv.supabase.co';
+const SUPA_KEY = process.env.VITE_SUPABASE_ANON_KEY || Netlify.env.get('VITE_SUPABASE_ANON_KEY');
+
+async function logEvent(type, msg, details) {
+  try {
+    await fetch(SUPABASE_URL + '/rest/v1/system_events', {
+      method: 'POST',
+      headers: { 'apikey': SUPA_KEY, 'Authorization': 'Bearer ' + SUPA_KEY, 'Content-Type': 'application/json', 'Prefer': 'return=minimal' },
+      body: JSON.stringify({ platform: 'website', event_type: type, severity: 'info', message: msg, details: details || {} })
+    });
+  } catch(e) {}
+}
 
 const BUSINESS_KEYWORDS = ['backbone','dark fibre','dark fiber','IRU','enterprise','wholesale','backhaul','colocation','peering','transit','SLA','dedicated','leased line','MPLS','wavelength'];
 

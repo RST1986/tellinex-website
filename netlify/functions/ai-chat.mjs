@@ -1,5 +1,5 @@
 const SUPABASE_URL = 'https://egztpclpcnizcdtfugsv.supabase.co';
-const SUPA_KEY = process.env.VITE_SUPABASE_ANON_KEY || Netlify.env.get('VITE_SUPABASE_ANON_KEY');
+const SUPA_KEY = process.env.SUPABASE_ANON_KEY || Netlify.env.get('SUPABASE_ANON_KEY');
 
 async function logEvent(type, msg, details) {
   try {

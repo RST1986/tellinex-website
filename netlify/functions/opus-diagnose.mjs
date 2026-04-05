@@ -18,7 +18,7 @@ async function logOpusEvent(severity, message, metadata) {
 
 // ─── AUTO-FIX ACTIONS ──────────────────────────────────────
 async function triggerNetlifyRedeploy(siteId) {
-  const token = env('NETLIFY_TOKEN');
+  const token = env('OPUS_NETLIFY_TOKEN');
   if (!token) return { success: false, reason: 'NETLIFY_TOKEN not set' };
   try {
     const r = await fetch(`https://api.netlify.com/api/v1/sites/${siteId}/builds`, {

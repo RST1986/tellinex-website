@@ -1,11 +1,11 @@
 -- Tellinex prod public-schema baseline (auto-generated via pg_catalog introspection)
--- Generated: 2026-05-06 13:30:03.389708+00
+-- Generated: 2026-05-06 14:56:08.20274+00
 -- Server: PostgreSQL 17.6 / project egztpclpcnizcdtfugsv
--- Method: pg_catalog scan (pg_dump 17 unavailable: client is v16, no DB credentials)
+-- Filters: extension-owned tables AND any constraint/index/trigger on extension-owned tables are excluded (e.g. postgis spatial_ref_sys)
 
--- =========
+SET check_function_bodies = false;
+
 -- Extensions
--- =========
 CREATE EXTENSION IF NOT EXISTS pg_cron WITH SCHEMA pg_catalog;
 CREATE EXTENSION IF NOT EXISTS pg_net WITH SCHEMA public;
 CREATE EXTENSION IF NOT EXISTS pg_stat_statements WITH SCHEMA extensions;
@@ -15,18 +15,6999 @@ CREATE EXTENSION IF NOT EXISTS supabase_vault WITH SCHEMA vault;
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp" WITH SCHEMA extensions;
 CREATE EXTENSION IF NOT EXISTS vector WITH SCHEMA extensions;
 
--- =======
 -- Schemas
--- =======
 
--- =========
 -- Sequences
--- =========
+CREATE SEQUENCE IF NOT EXISTS public.audit_log_id_seq START 1 INCREMENT 1 MINVALUE 1 MAXVALUE 9223372036854775807 CACHE 1 NO CYCLE;
+CREATE SEQUENCE IF NOT EXISTS public.i18n_translations_id_seq START 1 INCREMENT 1 MINVALUE 1 MAXVALUE 9223372036854775807 CACHE 1 NO CYCLE;
 CREATE SEQUENCE IF NOT EXISTS public.invoice_seq START 1 INCREMENT 1 MINVALUE 1 MAXVALUE 9223372036854775807 CACHE 1 NO CYCLE;
 
--- ======
+-- Functions (early)
+CREATE OR REPLACE FUNCTION public.rls_auto_enable()
+ RETURNS event_trigger
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'pg_catalog'
+AS $function$
+DECLARE
+  cmd record;
+BEGIN
+  FOR cmd IN
+    SELECT *
+    FROM pg_event_trigger_ddl_commands()
+    WHERE command_tag IN ('CREATE TABLE', 'CREATE TABLE AS', 'SELECT INTO')
+      AND object_type IN ('table','partitioned table')
+  LOOP
+     IF cmd.schema_name IS NOT NULL AND cmd.schema_name IN ('public') AND cmd.schema_name NOT IN ('pg_catalog','information_schema') AND cmd.schema_name NOT LIKE 'pg_toast%' AND cmd.schema_name NOT LIKE 'pg_temp%' THEN
+      BEGIN
+        EXECUTE format('alter table if exists %s enable row level security', cmd.object_identity);
+        RAISE LOG 'rls_auto_enable: enabled RLS on %', cmd.object_identity;
+      EXCEPTION
+        WHEN OTHERS THEN
+          RAISE LOG 'rls_auto_enable: failed to enable RLS on %', cmd.object_identity;
+      END;
+     ELSE
+        RAISE LOG 'rls_auto_enable: skip % (either system schema or not in enforced list: %.)', cmd.object_identity, cmd.schema_name;
+     END IF;
+  END LOOP;
+END;
+$function$
+;
+
+CREATE OR REPLACE FUNCTION public.handle_new_user()
+ RETURNS trigger
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public', 'pg_catalog', 'extensions'
+AS $function$
+begin
+  insert into public.profiles (id, email, full_name)
+  values (new.id, new.email, coalesce(new.raw_user_meta_data->>'full_name', split_part(new.email, '@', 1)));
+  return new;
+end;
+$function$
+;
+
+CREATE OR REPLACE FUNCTION public.update_updated_at()
+ RETURNS trigger
+ LANGUAGE plpgsql
+ SET search_path TO 'public', 'pg_catalog', 'extensions'
+AS $function$
+BEGIN
+  NEW.updated_at = NOW();
+  RETURN NEW;
+END;
+$function$
+;
+
+CREATE OR REPLACE FUNCTION public.set_document_title()
+ RETURNS trigger
+ LANGUAGE plpgsql
+ SET search_path TO 'public', 'pg_catalog', 'extensions'
+AS $function$
+BEGIN
+  IF NEW.title IS NULL OR NEW.title = '' THEN
+    NEW.title := NEW.name;
+  END IF;
+  RETURN NEW;
+END;
+$function$
+;
+
+CREATE OR REPLACE FUNCTION public.update_quote_updated_at()
+ RETURNS trigger
+ LANGUAGE plpgsql
+ SET search_path TO 'public', 'pg_catalog', 'extensions'
+AS $function$ BEGIN NEW.updated_at = NOW(); RETURN NEW; END; $function$
+;
+
+CREATE OR REPLACE FUNCTION public.dedupe_quote_by_email()
+ RETURNS trigger
+ LANGUAGE plpgsql
+ SET search_path TO 'public', 'pg_catalog', 'extensions'
+AS $function$
+DECLARE
+  existing_id INTEGER;
+BEGIN
+  -- Clean garbage locations (not real addresses)
+  IF NEW.location IS NOT NULL AND NEW.location != '' THEN
+    IF NOT (
+      NEW.location ~ '[0-9]' OR
+      NEW.location ~* '(road|rd|street|st|avenue|ave|drive|dr|way|lane|crescent|close|kingston|jamaica|parish|boulevard|blvd)'
+    ) THEN
+      NEW.location = NULL;
+    END IF;
+  END IF;
+
+  -- If we have an email, check for existing row
+  IF NEW.customer_email IS NOT NULL AND NEW.customer_email != '' THEN
+    SELECT id INTO existing_id FROM quote_requests 
+    WHERE customer_email = NEW.customer_email 
+    ORDER BY created_at DESC LIMIT 1;
+    
+    IF existing_id IS NOT NULL THEN
+      -- Update existing row with better data
+      UPDATE quote_requests SET
+        customer_name = CASE WHEN NEW.customer_name IS NOT NULL AND NEW.customer_name != 'Unknown' AND NEW.customer_name != '' THEN NEW.customer_name ELSE quote_requests.customer_name END,
+        customer_phone = COALESCE(NULLIF(NEW.customer_phone, ''), quote_requests.customer_phone),
+        location = COALESCE(NEW.location, quote_requests.location),
+        latitude = COALESCE(NEW.latitude, quote_requests.latitude),
+        longitude = COALESCE(NEW.longitude, quote_requests.longitude),
+        satellite_image_url = COALESCE(NEW.satellite_image_url, quote_requests.satellite_image_url),
+        street_view_url = COALESCE(NEW.street_view_url, quote_requests.street_view_url),
+        bandwidth_required = COALESCE(NULLIF(NEW.bandwidth_required, ''), quote_requests.bandwidth_required),
+        service_requested = COALESCE(NULLIF(NEW.service_requested, ''), quote_requests.service_requested),
+        updated_at = NOW()
+      WHERE id = existing_id;
+      RETURN NULL; -- Prevent the INSERT
+    END IF;
+  END IF;
+
+  -- If we have a phone but no email, check for existing row by phone
+  IF (NEW.customer_email IS NULL OR NEW.customer_email = '') AND NEW.customer_phone IS NOT NULL AND NEW.customer_phone != '' THEN
+    SELECT id INTO existing_id FROM quote_requests 
+    WHERE customer_phone = NEW.customer_phone 
+    ORDER BY created_at DESC LIMIT 1;
+    
+    IF existing_id IS NOT NULL THEN
+      UPDATE quote_requests SET
+        customer_name = CASE WHEN NEW.customer_name IS NOT NULL AND NEW.customer_name != 'Unknown' AND NEW.customer_name != '' THEN NEW.customer_name ELSE quote_requests.customer_name END,
+        customer_email = COALESCE(NULLIF(NEW.customer_email, ''), quote_requests.customer_email),
+        location = COALESCE(NEW.location, quote_requests.location),
+        latitude = COALESCE(NEW.latitude, quote_requests.latitude),
+        longitude = COALESCE(NEW.longitude, quote_requests.longitude),
+        satellite_image_url = COALESCE(NEW.satellite_image_url, quote_requests.satellite_image_url),
+        street_view_url = COALESCE(NEW.street_view_url, quote_requests.street_view_url),
+        bandwidth_required = COALESCE(NULLIF(NEW.bandwidth_required, ''), quote_requests.bandwidth_required),
+        service_requested = COALESCE(NULLIF(NEW.service_requested, ''), quote_requests.service_requested),
+        updated_at = NOW()
+      WHERE id = existing_id;
+      RETURN NULL;
+    END IF;
+  END IF;
+
+  -- New customer - allow INSERT
+  RETURN NEW;
+END;
+$function$
+;
+
+CREATE OR REPLACE FUNCTION public.calculate_expansion_forecast(p_route_id uuid)
+ RETURNS TABLE(route_name text, distance_m numeric, juf_count integer, estimated_days numeric, estimated_cost numeric, completion_date date, stock_warnings text[])
+ LANGUAGE plpgsql
+ SET search_path TO 'public', 'pg_catalog', 'extensions'
+AS $function$
+DECLARE
+  v_route planned_routes%ROWTYPE;
+  v_velocity numeric;
+  v_days numeric;
+  v_cost numeric;
+  v_warnings text[] := '{}';
+  v_stock stock_levels%ROWTYPE;
+BEGIN
+  SELECT * INTO v_route FROM planned_routes WHERE id = p_route_id;
+  IF NOT FOUND THEN RAISE EXCEPTION 'Route not found'; END IF;
+
+  -- Get average velocity (metres per crew per week)
+  SELECT COALESCE(AVG(b.metres_built), 500) INTO v_velocity FROM build_logs b;
+
+  -- Calculate days (assuming current crew count from latest log)
+  v_days := ROUND(v_route.distance_m / NULLIF(v_velocity, 0) * 7, 1);
+
+  -- Calculate cost (material + labour)
+  SELECT v_route.distance_m * COALESCE(s.unit_cost, 3.20) INTO v_cost
+  FROM stock_levels s WHERE s.item_key = 'viper288f';
+  v_cost := v_cost + (v_route.distance_m * 8.50); -- microduct
+  v_cost := v_cost + (v_route.juf_count * 605);    -- JUF + splice labour
+  v_cost := v_cost + (v_route.distance_m * 4.50);  -- HDPE
+
+  -- Check stock warnings
+  FOR v_stock IN SELECT * FROM stock_levels LOOP
+    IF v_stock.item_key IN ('viper288f','microduct12','hdpe_50mm')
+       AND v_stock.current_qty < v_route.distance_m THEN
+      v_warnings := array_append(v_warnings, v_stock.item_name || ': need ' || v_route.distance_m || v_stock.unit || ', have ' || v_stock.current_qty || v_stock.unit);
+    END IF;
+    IF v_stock.item_key = 'juf_chambers' AND v_stock.current_qty < v_route.juf_count THEN
+      v_warnings := array_append(v_warnings, v_stock.item_name || ': need ' || v_route.juf_count || ', have ' || v_stock.current_qty);
+    END IF;
+  END LOOP;
+
+  RETURN QUERY SELECT
+    v_route.name, v_route.distance_m, v_route.juf_count,
+    v_days, v_cost,
+    (CURRENT_DATE + (v_days || ' days')::interval)::date,
+    v_warnings;
+END;
+$function$
+;
+
+CREATE OR REPLACE FUNCTION public.get_stock_forecast()
+ RETURNS TABLE(item_key text, item_name text, current_qty numeric, unit text, weekly_usage numeric, weeks_left numeric, reorder_in_weeks numeric, needs_order boolean, supplier text, lead_time_days integer)
+ LANGUAGE plpgsql
+ SET search_path TO 'public', 'pg_catalog', 'extensions'
+AS $function$
+DECLARE
+  v_avg_metres numeric;
+  v_avg_jufs numeric;
+BEGIN
+  SELECT COALESCE(AVG(b.metres_built), 500) INTO v_avg_metres FROM build_logs b;
+  SELECT COALESCE(AVG(b.jufs_installed), 4) INTO v_avg_jufs FROM build_logs b;
+
+  RETURN QUERY
+  SELECT
+    s.item_key, s.item_name, s.current_qty, s.unit,
+    CASE
+      WHEN s.item_key IN ('viper288f','microduct12','hdpe_50mm') THEN v_avg_metres
+      WHEN s.item_key = 'juf_chambers' THEN v_avg_jufs
+      WHEN s.item_key = 'onts' THEN ROUND(v_avg_metres / 1000 * 625 * 0.3, 1)
+      ELSE v_avg_jufs
+    END as weekly_usage,
+    CASE
+      WHEN s.item_key IN ('viper288f','microduct12','hdpe_50mm') THEN ROUND(s.current_qty / NULLIF(v_avg_metres, 0), 1)
+      WHEN s.item_key = 'juf_chambers' THEN ROUND(s.current_qty / NULLIF(v_avg_jufs, 0), 1)
+      ELSE ROUND(s.current_qty / NULLIF(v_avg_jufs, 0), 1)
+    END as weeks_left,
+    GREATEST(0, CASE
+      WHEN s.item_key IN ('viper288f','microduct12','hdpe_50mm') THEN ROUND(s.current_qty / NULLIF(v_avg_metres, 0) - CEIL(s.lead_time_days::numeric / 7), 1)
+      ELSE ROUND(s.current_qty / NULLIF(v_avg_jufs, 0) - CEIL(s.lead_time_days::numeric / 7), 1)
+    END) as reorder_in_weeks,
+    CASE
+      WHEN s.item_key IN ('viper288f','microduct12','hdpe_50mm') THEN s.current_qty / NULLIF(v_avg_metres, 0) - CEIL(s.lead_time_days::numeric / 7) <= 2
+      ELSE s.current_qty / NULLIF(v_avg_jufs, 0) - CEIL(s.lead_time_days::numeric / 7) <= 2
+    END as needs_order,
+    s.supplier, s.lead_time_days
+  FROM stock_levels s
+  ORDER BY weeks_left ASC;
+END;
+$function$
+;
+
+CREATE OR REPLACE FUNCTION public.get_average_velocity(p_soil_type text DEFAULT NULL::text)
+ RETURNS TABLE(soil text, avg_metres_per_day numeric, avg_jufs_per_day numeric, sample_weeks bigint)
+ LANGUAGE plpgsql
+ SET search_path TO 'public', 'pg_catalog', 'extensions'
+AS $function$
+BEGIN
+  IF p_soil_type IS NOT NULL THEN
+    RETURN QUERY SELECT b.soil_type, ROUND(AVG(b.metres_built/NULLIF(b.crew_size,0)),1), ROUND(AVG(b.jufs_installed::numeric/NULLIF(b.crew_size,0)),2), COUNT(*) FROM build_logs b WHERE b.soil_type=p_soil_type GROUP BY b.soil_type;
+  ELSE
+    RETURN QUERY SELECT b.soil_type, ROUND(AVG(b.metres_built/NULLIF(b.crew_size,0)),1), ROUND(AVG(b.jufs_installed::numeric/NULLIF(b.crew_size,0)),2), COUNT(*) FROM build_logs b GROUP BY b.soil_type;
+  END IF;
+END;
+$function$
+;
+
+CREATE OR REPLACE FUNCTION public.update_asset_from_validation()
+ RETURNS trigger
+ LANGUAGE plpgsql
+ SET search_path TO 'public', 'pg_catalog', 'extensions'
+AS $function$
+BEGIN
+  IF NEW.verdict = 'pass' THEN
+    UPDATE work_orders SET status = 'validated', updated_at = now() WHERE id = NEW.work_order_id;
+    INSERT INTO asset_register (work_order_id, validation_id, asset_type, asset_reference, metres, cost_usd, valuation_usd, status, commissioned_at)
+    SELECT NEW.work_order_id, NEW.id, 'fibre_route', wo.reference, wo.executed_metres, wo.executed_metres * 25, wo.executed_metres * 25 * 2.5, 'asset', now()
+    FROM work_orders wo WHERE wo.id = NEW.work_order_id
+    ON CONFLICT DO NOTHING;
+  ELSIF NEW.verdict = 'fail' THEN
+    UPDATE work_orders SET status = 'rejected', deviation_flag = true, updated_at = now() WHERE id = NEW.work_order_id;
+  END IF;
+  RETURN NEW;
+END;
+$function$
+;
+
+CREATE OR REPLACE FUNCTION public.award_xp(p_email text, p_xp integer)
+ RETURNS void
+ LANGUAGE plpgsql
+ SET search_path TO 'public', 'pg_catalog', 'extensions'
+AS $function$
+BEGIN
+  INSERT INTO technician_stats (technician_email, date, xp_earned)
+  VALUES (p_email, CURRENT_DATE, p_xp)
+  ON CONFLICT (technician_email, date)
+  DO UPDATE SET xp_earned = technician_stats.xp_earned + p_xp,
+    level = GREATEST(1, (technician_stats.xp_earned + p_xp) / 500 + 1);
+END;
+$function$
+;
+
+CREATE OR REPLACE FUNCTION public.award_inspection_xp()
+ RETURNS trigger
+ LANGUAGE plpgsql
+ SET search_path TO 'public', 'pg_catalog', 'extensions'
+AS $function$
+BEGIN
+  IF NEW.ai_verdict = 'pass' THEN
+    PERFORM award_xp(NEW.technician_email, 50);
+  ELSIF NEW.ai_verdict = 'warning' THEN
+    PERFORM award_xp(NEW.technician_email, 20);
+  END IF;
+  RETURN NEW;
+END;
+$function$
+;
+
+CREATE OR REPLACE FUNCTION public.check_golden_seal()
+ RETURNS trigger
+ LANGUAGE plpgsql
+ SET search_path TO 'public', 'pg_catalog', 'extensions'
+AS $function$
+DECLARE
+  inv_num TEXT;
+BEGIN
+  -- Check if all three gates passed
+  IF NEW.scan_status = 'SCAN_APPROVED' 
+     AND NEW.quality_status = 'QUALITY_PASSED' 
+     AND NEW.network_status = 'NETWORK_LIVE' 
+     AND NEW.golden_seal = false THEN
+    
+    -- Calculate financials
+    NEW.approved_amount_usd := NEW.validated_metres * NEW.unit_price_usd;
+    NEW.savings_usd := NEW.claimed_amount_usd - NEW.approved_amount_usd;
+    NEW.escrow_amount_usd := NEW.approved_amount_usd * (NEW.escrow_hold_pct / 100);
+    NEW.escrow_release_date := CURRENT_DATE + 30;
+    NEW.golden_seal := true;
+    NEW.seal_granted_at := now();
+    
+    -- Auto-generate invoice
+    inv_num := 'TLX-INV-' || LPAD(nextval('invoice_seq')::TEXT, 5, '0');
+    INSERT INTO invoices (invoice_number, work_order_id, payment_approval_id, contractor_name, description, metres, unit_price_usd, subtotal_usd, escrow_held_usd, net_payable_usd)
+    VALUES (inv_num, NEW.work_order_id, NEW.id, NEW.contractor_name,
+      'Fibre build: ' || NEW.validated_metres || 'm validated by Opus AI',
+      NEW.validated_metres, NEW.unit_price_usd, NEW.approved_amount_usd,
+      NEW.escrow_amount_usd, NEW.approved_amount_usd - NEW.escrow_amount_usd);
+    
+    -- Update work order
+    UPDATE work_orders SET status = 'completed', updated_at = now() WHERE id = NEW.work_order_id;
+  END IF;
+  RETURN NEW;
+END;
+$function$
+;
+
+CREATE OR REPLACE FUNCTION public.link_ddaa_to_payment()
+ RETURNS trigger
+ LANGUAGE plpgsql
+ SET search_path TO 'public', 'pg_catalog', 'extensions'
+AS $function$
+BEGIN
+  UPDATE payment_approvals 
+  SET digital_acceptance_signed = true,
+      digital_acceptance_hash = NEW.evidence_seal_hash,
+      digital_acceptance_at = NEW.terms_accepted_at,
+      gps_at_signature_lat = NEW.gps_lat,
+      gps_at_signature_lng = NEW.gps_lng,
+      updated_at = now()
+  WHERE id = NEW.payment_approval_id;
+  RETURN NEW;
+END;
+$function$
+;
+
+CREATE OR REPLACE FUNCTION public.notify_golden_seal()
+ RETURNS trigger
+ LANGUAGE plpgsql
+ SET search_path TO 'public', 'pg_catalog', 'extensions'
+AS $function$
+DECLARE
+  wo_ref TEXT;
+  tech_name TEXT;
+BEGIN
+  IF NEW.golden_seal = true AND (OLD.golden_seal = false OR OLD.golden_seal IS NULL) THEN
+    SELECT reference INTO wo_ref FROM work_orders WHERE id = NEW.work_order_id;
+    tech_name := NEW.contractor_name;
+    
+    -- CEO notification (Omar)
+    INSERT INTO notification_queue (event_type, work_order_ref, recipient_type, recipient_phone, channel, message, amount_usd)
+    VALUES ('golden_seal', wo_ref, 'ceo', '+18764825866', 'imessage',
+      'Tellinex Alpha: ' || wo_ref || ' validated with ' || ROUND(NEW.lidar_accuracy::numeric * 100, 1) || '% LiDAR precision. $' || ROUND(NEW.approved_amount_usd::numeric, 2) || ' approved for billing. Savings: $' || ROUND(NEW.savings_usd::numeric, 2) || '. Great work!',
+      NEW.approved_amount_usd);
+    
+    -- Contractor notification
+    INSERT INTO notification_queue (event_type, work_order_ref, recipient_type, recipient_email, channel, message, amount_usd)
+    VALUES ('golden_seal', wo_ref, 'contractor', NEW.contractor_email, 'email',
+      'Tellinex Golden Seal: Work order ' || wo_ref || ' has been validated by Opus AI. Amount approved: $' || ROUND(NEW.approved_amount_usd::numeric, 2) || ' (escrow held: $' || ROUND(NEW.escrow_amount_usd::numeric, 2) || '). Invoice will be generated automatically.',
+      NEW.approved_amount_usd);
+    
+    -- Management WhatsApp (Rui)
+    INSERT INTO notification_queue (event_type, work_order_ref, recipient_type, recipient_phone, channel, message, amount_usd)
+    VALUES ('golden_seal', wo_ref, 'management', '+351911793045', 'whatsapp',
+      '🏆 GOLDEN SEAL: ' || wo_ref || ' | ' || NEW.validated_metres || 'm validated | $' || ROUND(NEW.approved_amount_usd::numeric, 2) || ' approved | Saved $' || ROUND(NEW.savings_usd::numeric, 2) || ' vs claimed',
+      NEW.approved_amount_usd);
+    
+    -- TCC push notification
+    INSERT INTO notification_queue (event_type, work_order_ref, recipient_type, channel, message, amount_usd, metadata)
+    VALUES ('golden_seal', wo_ref, 'management', 'tcc_push',
+      wo_ref || ' validated — $' || ROUND(NEW.approved_amount_usd::numeric, 2) || ' approved',
+      NEW.approved_amount_usd,
+      jsonb_build_object('contractor', tech_name, 'metres', NEW.validated_metres, 'savings', NEW.savings_usd, 'deviation_cm', NEW.deviation_cm));
+  END IF;
+  RETURN NEW;
+END;
+$function$
+;
+
+CREATE OR REPLACE FUNCTION public.award_training_xp()
+ RETURNS trigger
+ LANGUAGE plpgsql
+ SET search_path TO 'public', 'pg_catalog', 'extensions'
+AS $function$
+BEGIN
+  IF NEW.completed = true AND (OLD.completed = false OR OLD.completed IS NULL) THEN
+    PERFORM award_xp(NEW.technician_email, 100);
+  END IF;
+  RETURN NEW;
+END;
+$function$
+;
+
+CREATE OR REPLACE FUNCTION public.smart_dispatch(p_work_order_id uuid)
+ RETURNS TABLE(assigned_email text, assigned_name text, reason text)
+ LANGUAGE plpgsql
+ SET search_path TO 'public', 'pg_catalog', 'extensions'
+AS $function$
+DECLARE
+  best_tech RECORD;
+  req_role TEXT;
+BEGIN
+  SELECT required_role INTO req_role FROM work_orders WHERE id = p_work_order_id;
+  
+  SELECT tp.email, tp.name, COALESCE(ts.first_time_pass_rate, 80) as pass_rate, 
+         COALESCE(ts.xp_earned, 0) as xp, COALESCE(ts.streak_days, 0) as streak
+  INTO best_tech
+  FROM technician_profiles tp
+  LEFT JOIN technician_stats ts ON tp.email = ts.technician_email AND ts.date = CURRENT_DATE
+  WHERE tp.role = req_role AND tp.available = true AND tp.gold_standard_completed = true
+  ORDER BY COALESCE(ts.first_time_pass_rate, 80) DESC, COALESCE(ts.xp_earned, 0) DESC
+  LIMIT 1;
+
+  IF best_tech IS NULL THEN
+    SELECT tp.email, tp.name, 80::double precision, 0, 0 INTO best_tech
+    FROM technician_profiles tp WHERE tp.role = req_role AND tp.available = true LIMIT 1;
+  END IF;
+
+  IF best_tech IS NULL THEN
+    RETURN QUERY SELECT 'unassigned'::TEXT, 'No available technician'::TEXT, 
+      format('No %s available with Gold Standard certification', req_role);
+    RETURN;
+  END IF;
+
+  UPDATE work_orders SET assigned_email = best_tech.email, assigned_technician = best_tech.name,
+    status = 'dispatched', dispatched_at = now(), updated_at = now() WHERE id = p_work_order_id;
+
+  RETURN QUERY SELECT best_tech.email, best_tech.name,
+    format('%s | %s%% pass | %s XP', req_role, ROUND(best_tech.pass_rate::numeric), best_tech.xp);
+END;
+$function$
+;
+
+CREATE OR REPLACE FUNCTION public.auto_penalty_depth()
+ RETURNS trigger
+ LANGUAGE plpgsql
+ SET search_path TO 'public', 'pg_catalog', 'extensions'
+AS $function$
+DECLARE
+  wo RECORD;
+BEGIN
+  IF NEW.verdict = 'non_compliant' AND NEW.min_depth_cm < NEW.required_depth_cm THEN
+    SELECT * INTO wo FROM work_orders WHERE id = NEW.work_order_id;
+    INSERT INTO sla_penalties (work_order_id, contractor_name, penalty_type, violation_details,
+      measured_value, required_value, penalty_pct, penalty_amount_usd, original_amount_usd, evidence_hash)
+    VALUES (NEW.work_order_id, 'Contractor', 'depth_violation',
+      format('Min depth %scm below required %scm on route %s', NEW.min_depth_cm, NEW.required_depth_cm, NEW.route_name),
+      NEW.min_depth_cm, NEW.required_depth_cm, 20,
+      COALESCE(wo.executed_metres, 0) * 25 * 0.20,
+      COALESCE(wo.executed_metres, 0) * 25,
+      md5(NEW.id::TEXT || NEW.min_depth_cm::TEXT || now()::TEXT));
+  END IF;
+  RETURN NEW;
+END;
+$function$
+;
+
+CREATE OR REPLACE FUNCTION public.notify_scan_approved()
+ RETURNS trigger
+ LANGUAGE plpgsql
+ SET search_path TO 'public', 'pg_catalog', 'extensions'
+AS $function$
+DECLARE
+  tech_xp INTEGER; tech_rank INTEGER; tech_name TEXT; xp_award INTEGER;
+BEGIN
+  IF NEW.status = 'approved' AND (OLD.status IS NULL OR OLD.status != 'approved') THEN
+    xp_award := CASE WHEN NEW.lidar_precision >= 98 THEN 500 WHEN NEW.lidar_precision >= 95 THEN 350 WHEN NEW.lidar_precision >= 90 THEN 200 ELSE 100 END;
+    UPDATE technician_stats SET xp_earned = xp_earned + xp_award, scans_completed = scans_completed + 1
+    WHERE technician_email = NEW.technician_email AND date = CURRENT_DATE
+    RETURNING xp_earned, technician_name INTO tech_xp, tech_name;
+    SELECT COUNT(*) + 1 INTO tech_rank FROM technician_stats WHERE date = CURRENT_DATE AND xp_earned > COALESCE(tech_xp, 0);
+    INSERT INTO notification_queue (event_type, recipient_type, recipient_email, channel, message, metadata)
+    VALUES ('scan_approved', 'technician', NEW.technician_email, 'tcc_push',
+      '🏆 ' || COALESCE(tech_name, 'Technician') || ': Scan approved with ' || ROUND(NEW.lidar_precision::numeric, 1) || '% precision! +' || xp_award || ' XP. You are now #' || tech_rank || ' in Kingston rankings.',
+      jsonb_build_object('xp_awarded', xp_award, 'total_xp', tech_xp, 'rank', tech_rank, 'precision', NEW.lidar_precision));
+  END IF;
+  RETURN NEW;
+END;
+$function$
+;
+
+CREATE OR REPLACE FUNCTION public.check_wo_dependency()
+ RETURNS trigger
+ LANGUAGE plpgsql
+ SET search_path TO 'public', 'pg_catalog', 'extensions'
+AS $function$
+DECLARE dep_wo RECORD;
+BEGIN
+  IF NEW.depends_on IS NOT NULL AND NEW.status = 'dispatched' THEN
+    SELECT * INTO dep_wo FROM work_orders WHERE id = NEW.depends_on;
+    IF dep_wo.status NOT IN ('completed','validated','approved') THEN
+      NEW.blocked := true;
+      NEW.blocked_reason := format('Blocked: %s must be %s first', dep_wo.reference, COALESCE(NEW.dependency_type, 'must_complete'));
+      NEW.status := 'blocked';
+    END IF;
+  END IF;
+  RETURN NEW;
+END;
+$function$
+;
+
+CREATE OR REPLACE FUNCTION public.unblock_dependents()
+ RETURNS trigger
+ LANGUAGE plpgsql
+ SET search_path TO 'public', 'pg_catalog', 'extensions'
+AS $function$
+BEGIN
+  IF NEW.status IN ('completed','validated','approved') AND OLD.status NOT IN ('completed','validated','approved') THEN
+    UPDATE work_orders SET blocked = false, blocked_reason = null, status = 'pending'
+    WHERE depends_on = NEW.id AND blocked = true;
+  END IF;
+  RETURN NEW;
+END;
+$function$
+;
+
+CREATE OR REPLACE FUNCTION public.can_auto_approve(log_id uuid)
+ RETURNS boolean
+ LANGUAGE plpgsql
+ SET search_path TO 'public', 'pg_catalog', 'extensions'
+AS $function$
+DECLARE
+  log_rec RECORD;
+  rule_rec RECORD;
+  severity_rank integer;
+  max_severity_rank integer;
+BEGIN
+  SELECT * INTO log_rec FROM ai_evolution_logs WHERE id = log_id;
+  IF NOT FOUND THEN RETURN false; END IF;
+
+  SELECT * INTO rule_rec FROM ai_auto_approval_rules
+    WHERE component = log_rec.system_component
+      AND category = log_rec.category
+      AND enabled = true
+    LIMIT 1;
+  IF NOT FOUND THEN RETURN false; END IF;
+
+  -- Severity ranking
+  severity_rank := CASE log_rec.severity
+    WHEN 'low' THEN 1 WHEN 'medium' THEN 2
+    WHEN 'high' THEN 3 WHEN 'critical' THEN 4 ELSE 5 END;
+  max_severity_rank := CASE rule_rec.max_severity
+    WHEN 'low' THEN 1 WHEN 'medium' THEN 2
+    WHEN 'high' THEN 3 WHEN 'critical' THEN 4 ELSE 0 END;
+
+  RETURN severity_rank <= max_severity_rank
+    AND log_rec.impact_score <= rule_rec.max_impact_score
+    AND log_rec.confidence >= rule_rec.min_confidence;
+END;
+$function$
+;
+
+CREATE OR REPLACE FUNCTION public.validate_material_usage(p_job_id uuid)
+ RETURNS jsonb
+ LANGUAGE plpgsql
+ SET search_path TO 'public', 'pg_catalog', 'extensions'
+AS $function$
+DECLARE
+  scan_length float;
+  reported_cable float;
+  slack float := 1.15;
+BEGIN
+  SELECT COALESCE(SUM(
+    CASE WHEN s.scan_type = 'trench' THEN 
+      COALESCE((s.metadata->>'trench_length_m')::float, 0) 
+    ELSE 0 END
+  ), 0) INTO scan_length
+  FROM lidar_scans s WHERE s.job_id = p_job_id;
+
+  SELECT COALESCE(SUM(
+    COALESCE((m.metadata->>'cable_metres')::float, 0)
+  ), 0) INTO reported_cable
+  FROM material_logs m WHERE m.job_id = p_job_id;
+
+  IF scan_length = 0 THEN
+    RETURN jsonb_build_object('status', 'NO_SCAN', 'message', 'No LiDAR trench scan found for this job');
+  END IF;
+
+  IF reported_cable > scan_length * slack THEN
+    RETURN jsonb_build_object(
+      'status', 'BLOCKED',
+      'scan_length_m', scan_length,
+      'reported_cable_m', reported_cable,
+      'max_allowed_m', round((scan_length * slack)::numeric, 1),
+      'overage_m', round((reported_cable - scan_length * slack)::numeric, 1),
+      'message', 'Material over-report detected: ' || reported_cable || 'm cable vs ' || round(scan_length::numeric,1) || 'm trench. Photo of surplus required.',
+      'action', 'PHOTO_REQUIRED'
+    );
+  END IF;
+
+  RETURN jsonb_build_object('status', 'PASSED', 'scan_length_m', scan_length, 'reported_cable_m', reported_cable);
+END;
+$function$
+;
+
+CREATE OR REPLACE FUNCTION public.smart_dispatch_v3(p_job_latitude double precision, p_job_longitude double precision, p_terrain_type text DEFAULT 'urban_dense'::text)
+ RETURNS TABLE(technician_name text, distance_score double precision, terrain_score double precision, combined_score double precision)
+ LANGUAGE plpgsql
+ SET search_path TO 'public', 'pg_catalog', 'extensions'
+AS $function$
+BEGIN
+  RETURN QUERY
+  SELECT 
+    ta.technician_name,
+    1.0::float as distance_score,
+    COALESCE(ta.affinity_score, 1.0) as terrain_score,
+    (1.0 * COALESCE(ta.affinity_score, 1.0))::float as combined_score
+  FROM technician_terrain_affinity ta
+  WHERE ta.terrain_type = p_terrain_type
+  ORDER BY ta.affinity_score DESC
+  LIMIT 5;
+END;
+$function$
+;
+
+CREATE OR REPLACE FUNCTION public.trigger_optical_failover(p_switch_ref text, p_trigger_type text DEFAULT 'das_alert'::text, p_trigger_event_id uuid DEFAULT NULL::uuid)
+ RETURNS jsonb
+ LANGUAGE plpgsql
+ SET search_path TO 'public', 'pg_catalog', 'extensions'
+AS $function$
+DECLARE
+  sw RECORD;
+  new_path text;
+BEGIN
+  SELECT * INTO sw FROM optical_switches WHERE switch_ref = p_switch_ref;
+  IF NOT FOUND THEN RETURN jsonb_build_object('status', 'ERROR', 'message', 'Switch not found'); END IF;
+
+  new_path := CASE WHEN sw.current_path = 'primary' THEN 'secondary' ELSE 'primary' END;
+
+  UPDATE optical_switches SET
+    current_path = new_path,
+    last_failover_at = now(),
+    failover_count = failover_count + 1
+  WHERE switch_ref = p_switch_ref;
+
+  INSERT INTO network_failover_events (switch_id, trigger_type, trigger_event_id, from_path, to_path, switchover_time_ms, client_impact, opus_decision_log)
+  VALUES (sw.id, p_trigger_type, p_trigger_event_id, sw.current_path, new_path, 0.5, 'zero', 'Opus 4 auto-failover: DAS threat detected on ' || sw.current_path || ' path. Switched to ' || new_path);
+
+  RETURN jsonb_build_object('status', 'FAILOVER_COMPLETE', 'switch', p_switch_ref, 'from', sw.current_path, 'to', new_path, 'time_ms', 0.5);
+END;
+$function$
+;
+
+CREATE OR REPLACE FUNCTION public.notify_preflight_activity()
+ RETURNS trigger
+ LANGUAGE plpgsql
+ SET search_path TO 'public', 'pg_catalog', 'extensions'
+AS $function$
+BEGIN
+  INSERT INTO activity_log (entity_type, entity_id, action, actor_id, details)
+  VALUES (
+    'system',
+    NEW.id,
+    CASE WHEN NEW.exterior_damage_detected THEN 'alert' ELSE 'health_check' END,
+    COALESCE(NEW.technician_id, gen_random_uuid()),
+    jsonb_build_object(
+      'vehicle_id', NEW.vehicle_id,
+      'technician', COALESCE(NEW.technician_name, 'Unknown'),
+      'status', NEW.overall_status,
+      'damage', NEW.exterior_damage_detected,
+      'message', CASE
+        WHEN NEW.exterior_damage_detected THEN '⚠️ DAMAGE on ' || NEW.vehicle_id || ' by ' || COALESCE(NEW.technician_name, 'Unknown') || ' — ' || COALESCE(LEFT(NEW.damage_description, 80), 'See photos')
+        WHEN NEW.overall_status = 'pass' THEN '✅ ' || NEW.vehicle_id || ' PASSED — ' || COALESCE(NEW.technician_name, 'Unknown') || ' ready for work'
+        ELSE '🟡 ' || NEW.vehicle_id || ' ' || UPPER(NEW.overall_status) || ' — ' || COALESCE(NEW.technician_name, 'Unknown')
+      END
+    )
+  );
+  RETURN NEW;
+END;
+$function$
+;
+
+CREATE OR REPLACE FUNCTION public.notify_violation_activity()
+ RETURNS trigger
+ LANGUAGE plpgsql
+ SET search_path TO 'public', 'pg_catalog', 'extensions'
+AS $function$
+BEGIN
+  INSERT INTO activity_log (entity_type, entity_id, action, actor_id, details)
+  VALUES (
+    'system',
+    NEW.id,
+    'alert',
+    gen_random_uuid(),
+    jsonb_build_object(
+      'vehicle_id', NEW.vehicle_id,
+      'message', '🚨 ' || NEW.vehicle_id || ' GEOFENCE ' || UPPER(NEW.violation_type) || COALESCE(' — ' || NEW.notes, '')
+    )
+  );
+  RETURN NEW;
+END;
+$function$
+;
+
+CREATE OR REPLACE FUNCTION public.notify_restock_activity()
+ RETURNS trigger
+ LANGUAGE plpgsql
+ SET search_path TO 'public', 'pg_catalog', 'extensions'
+AS $function$
+BEGIN
+  INSERT INTO activity_log (entity_type, entity_id, action, actor_id, details)
+  VALUES (
+    'system',
+    NEW.id,
+    'alert',
+    gen_random_uuid(),
+    jsonb_build_object(
+      'vehicle_id', NEW.vehicle_id,
+      'message', '📦 ' || NEW.vehicle_id || ' LOW STOCK — ' || NEW.quantity_requested || ' ' || NEW.material_name
+    )
+  );
+  RETURN NEW;
+END;
+$function$
+;
+
+CREATE OR REPLACE FUNCTION public.fn_auto_ticket_from_asset()
+ RETURNS trigger
+ LANGUAGE plpgsql
+ SET search_path TO 'public', 'pg_catalog', 'extensions'
+AS $function$
+DECLARE
+  v_task TEXT;
+  v_notes TEXT;
+BEGIN
+  IF OLD.status = NEW.status THEN RETURN NEW; END IF;
+
+  IF NEW.status = 'installed' THEN
+    IF NEW.asset_type IN ('chamber', 'joint_closure', 'splitter') THEN
+      v_task := 'splice'; v_notes := NEW.asset_type || ' ' || COALESCE(NEW.asset_ref, '') || ' — Splicing at ' || COALESCE(NEW.address, 'TBD');
+    ELSIF NEW.asset_type IN ('dp', 'ont', 'toby_box') THEN
+      v_task := 'install'; v_notes := NEW.asset_type || ' ' || COALESCE(NEW.asset_ref, '') || ' — Install at ' || COALESCE(NEW.address, 'TBD');
+    ELSE
+      v_task := 'commission'; v_notes := NEW.asset_type || ' ' || COALESCE(NEW.asset_ref, '') || ' — Commission at ' || COALESCE(NEW.address, 'TBD');
+    END IF;
+  ELSIF NEW.status = 'active' AND OLD.status = 'installed' THEN
+    v_task := 'test'; v_notes := NEW.asset_type || ' ' || COALESCE(NEW.asset_ref, '') || ' — OTDR test at ' || COALESCE(NEW.address, 'TBD');
+  ELSIF NEW.status = 'faulty' THEN
+    v_task := 'repair'; v_notes := 'URGENT: ' || NEW.asset_type || ' ' || COALESCE(NEW.asset_ref, '') || ' — Fault at ' || COALESCE(NEW.address, 'TBD');
+  ELSE
+    RETURN NEW;
+  END IF;
+
+  INSERT INTO dispatch_queue (task_type, customer_name, address, latitude, longitude, notes, status, created_at)
+  VALUES (v_task, COALESCE(NEW.asset_ref, 'AUTO'), NEW.address, NEW.latitude, NEW.longitude, v_notes, 'pending', now());
+
+  INSERT INTO activity_log (entity_type, entity_id, action, details, created_at)
+  VALUES ('network_asset', NEW.id, v_task || '_task_created', jsonb_build_object('message', v_notes, 'asset_ref', NEW.asset_ref, 'asset_type', NEW.asset_type, 'old_status', OLD.status, 'new_status', NEW.status), now());
+
+  RETURN NEW;
+END;
+$function$
+;
+
+CREATE OR REPLACE FUNCTION public.fn_auto_ticket_new_asset()
+ RETURNS trigger
+ LANGUAGE plpgsql
+ SET search_path TO 'public', 'pg_catalog', 'extensions'
+AS $function$
+BEGIN
+  IF NEW.status = 'planned' THEN
+    INSERT INTO dispatch_queue (task_type, customer_name, address, latitude, longitude, notes, status, created_at)
+    VALUES ('survey', COALESCE(NEW.asset_ref, 'NEW'), NEW.address, NEW.latitude, NEW.longitude,
+      NEW.asset_type || ' ' || COALESCE(NEW.asset_ref, 'NEW') || ' — Survey at ' || COALESCE(NEW.address, 'TBD'), 'pending', now());
+
+    INSERT INTO activity_log (entity_type, entity_id, action, details, created_at)
+    VALUES ('network_asset', NEW.id, 'survey_task_created', jsonb_build_object('message', 'New ' || NEW.asset_type || ' planned', 'asset_ref', NEW.asset_ref, 'address', NEW.address), now());
+  END IF;
+  RETURN NEW;
+END;
+$function$
+;
+
+CREATE OR REPLACE FUNCTION public.fn_flag_iloq_anomaly()
+ RETURNS trigger
+ LANGUAGE plpgsql
+ SET search_path TO 'public', 'pg_catalog', 'extensions'
+AS $function$
+BEGIN
+  -- Flag denied access
+  IF NEW.action = 'denied' OR NEW.action = 'tamper' THEN
+    NEW.flagged := true;
+    NEW.flag_reason := 'Access ' || NEW.action || ' for ' || COALESCE(NEW.technician_name, 'unknown');
+  END IF;
+  -- Flag access outside schedule window
+  IF NEW.access_window_end IS NOT NULL AND NEW.created_at > NEW.access_window_end THEN
+    NEW.flagged := true;
+    NEW.flag_reason := COALESCE(NEW.flag_reason, '') || ' Outside access window';
+  END IF;
+  -- Flag night access (10pm - 5am)
+  IF EXTRACT(HOUR FROM NEW.created_at) >= 22 OR EXTRACT(HOUR FROM NEW.created_at) < 5 THEN
+    NEW.flagged := true;
+    NEW.flag_reason := COALESCE(NEW.flag_reason, '') || ' Night access';
+  END IF;
+  -- Update lock stats
+  IF NEW.action = 'open' THEN
+    UPDATE iloq_locks SET last_accessed_at = NEW.created_at, last_accessed_by = NEW.technician_name,
+      total_access_count = total_access_count + 1 WHERE lock_id = NEW.lock_id;
+  END IF;
+  RETURN NEW;
+END;
+$function$
+;
+
+CREATE OR REPLACE FUNCTION public.fn_sensor_alert_dispatch()
+ RETURNS trigger
+ LANGUAGE plpgsql
+ SET search_path TO 'public', 'pg_catalog', 'extensions'
+AS $function$
+BEGIN
+  IF NEW.is_alert = true AND NEW.alert_type IS NOT NULL THEN
+    -- Create alert record
+    INSERT INTO chamber_sensor_alerts (sensor_id, asset_ref, alert_type, severity, message, value)
+    VALUES (
+      NEW.sensor_id, NEW.asset_ref, NEW.alert_type,
+      CASE
+        WHEN NEW.alert_type IN ('water_detected','flood','gas_detected','tamper') THEN 'critical'
+        WHEN NEW.alert_type IN ('high_temp','door_open') THEN 'warning'
+        ELSE 'info'
+      END,
+      NEW.alert_type || ' on ' || COALESCE(NEW.asset_ref, NEW.sensor_id) || ': ' || NEW.value || ' ' || COALESCE(NEW.unit, ''),
+      NEW.value
+    );
+
+    -- Auto-dispatch for critical alerts
+    IF NEW.alert_type IN ('water_detected','flood','tamper','gas_detected') THEN
+      INSERT INTO dispatch_queue (task_type, customer_name, address, notes, status, created_at)
+      VALUES (
+        'repair',
+        COALESCE(NEW.asset_ref, NEW.sensor_id),
+        (SELECT location FROM chamber_sensors WHERE sensor_id = NEW.sensor_id LIMIT 1),
+        'SENSOR ALERT: ' || NEW.alert_type || ' — ' || NEW.value || ' ' || COALESCE(NEW.unit, '') || ' on ' || COALESCE(NEW.asset_ref, NEW.sensor_id),
+        'pending', now()
+      );
+    END IF;
+
+    -- Log to activity
+    INSERT INTO activity_log (entity_type, entity_id, action, details, created_at)
+    VALUES ('network_asset', gen_random_uuid(), 'alert',
+      jsonb_build_object('sensor_id', NEW.sensor_id, 'alert_type', NEW.alert_type, 'value', NEW.value, 'asset_ref', NEW.asset_ref),
+      now());
+  END IF;
+  RETURN NEW;
+END;
+$function$
+;
+
+CREATE OR REPLACE FUNCTION public.fn_predictive_auto_dispatch()
+ RETURNS trigger
+ LANGUAGE plpgsql
+ SET search_path TO 'public', 'pg_catalog', 'extensions'
+AS $function$
+declare
+  v_priority text;
+begin
+  if NEW.probability is not null
+     and NEW.probability >= 80
+     and not coalesce(NEW.auto_dispatched, false)
+  then
+    v_priority := case
+      when NEW.severity = 'critical' then 'high'
+      when NEW.severity = 'major'    then 'medium'
+      else 'normal'
+    end;
+
+    insert into dispatch_queue (task_type, customer_name, priority, notes, status)
+    values (
+      'maintenance',
+      coalesce(NEW.asset_ref, NEW.id::text),
+      v_priority,
+      'PREDICTIVE: ' || coalesce(NEW.prediction_type, 'unknown')
+        || ' — ' || NEW.probability || '% probability. '
+        || coalesce(NEW.recommendation, ''),
+      'pending'
+    );
+
+    NEW.auto_dispatched := true;
+
+    insert into activity_log (action, entity_type, entity_id, details)
+    values (
+      'dispatched',
+      'network_asset',
+      coalesce(NEW.asset_id, NEW.id),
+      jsonb_build_object(
+        'kind',         'predictive_auto_dispatch',
+        'type',         NEW.prediction_type,
+        'probability',  NEW.probability,
+        'severity',     NEW.severity,
+        'priority',     v_priority,
+        'asset_ref',    NEW.asset_ref,
+        'alert_id',     NEW.id
+      )
+    );
+  end if;
+  return NEW;
+end;
+$function$
+;
+
+CREATE OR REPLACE FUNCTION public.fn_weather_pre_alert()
+ RETURNS trigger
+ LANGUAGE plpgsql
+ SET search_path TO 'public', 'pg_catalog', 'extensions'
+AS $function$
+BEGIN
+  IF NEW.severity IN ('warning', 'emergency') AND NEW.affected_chambers IS NOT NULL THEN
+    INSERT INTO chamber_sensor_alerts (asset_ref, alert_type, severity, message, resolved)
+    SELECT unnest(NEW.affected_chambers), 'weather_' || NEW.alert_type, 
+      CASE WHEN NEW.severity = 'emergency' THEN 'critical' ELSE 'warning' END,
+      'Weather alert: ' || NEW.alert_type || ' — ' || COALESCE(NEW.message, ''), false;
+    INSERT INTO activity_log (action, entity_type, entity_id, details)
+    VALUES ('weather_alert', 'system', 'weather', json_build_object('type', NEW.alert_type, 'severity', NEW.severity, 'chambers', array_length(NEW.affected_chambers, 1))::text);
+  END IF;
+  RETURN NEW;
+END;
+$function$
+;
+
+CREATE OR REPLACE FUNCTION public.fn_weather_compliance_log()
+ RETURNS trigger
+ LANGUAGE plpgsql
+ SET search_path TO 'public', 'pg_catalog', 'extensions'
+AS $function$
+BEGIN
+  INSERT INTO compliance_records (standard, category, title, description, evidence_type, evidence_table, status, risk_level)
+  VALUES ('ISO_45001', 'Weather Safety', 
+    'Weather alert issued: ' || NEW.alert_type,
+    'Severity: ' || COALESCE(NEW.severity, 'unknown') || '. Affected area: ' || COALESCE(NEW.affected_area, 'unknown') || '. Auto-alerted ' || COALESCE(array_length(NEW.affected_chambers, 1)::text, '0') || ' chambers.',
+    'weather_alert', 'weather_alerts', 'compliant',
+    CASE WHEN NEW.severity = 'emergency' THEN 'critical' WHEN NEW.severity = 'warning' THEN 'high' ELSE 'medium' END);
+  RETURN NEW;
+END;
+$function$
+;
+
+CREATE OR REPLACE FUNCTION public.fn_preflight_compliance_log()
+ RETURNS trigger
+ LANGUAGE plpgsql
+ SET search_path TO 'public', 'pg_catalog', 'extensions'
+AS $function$
+BEGIN
+  INSERT INTO compliance_records (standard, category, title, description, evidence_type, evidence_table, status, risk_level)
+  VALUES ('ISO_45001', 'Vehicle Safety',
+    NEW.vehicle_id || ' pre-flight by ' || NEW.technician_name,
+    'Status: ' || NEW.overall_status || '. Damage: ' || CASE WHEN NEW.exterior_damage_detected THEN 'YES — ' || COALESCE(NEW.damage_description, '') ELSE 'None' END,
+    'vehicle_inspection', 'fleet_preflight_checks',
+    CASE WHEN NEW.overall_status = 'pass' THEN 'compliant' ELSE 'under_review' END,
+    CASE WHEN NEW.exterior_damage_detected THEN 'medium' ELSE 'low' END);
+  RETURN NEW;
+END;
+$function$
+;
+
+CREATE OR REPLACE FUNCTION public.fn_access_compliance_log()
+ RETURNS trigger
+ LANGUAGE plpgsql
+ SET search_path TO 'public', 'pg_catalog', 'extensions'
+AS $function$
+BEGIN
+  IF NEW.flagged THEN
+    INSERT INTO compliance_records (standard, category, title, description, evidence_type, evidence_table, status, risk_level)
+    VALUES (
+      'ISO_27001', 'Physical Access Security',
+      'Flagged access: ' || NEW.action || ' on ' || COALESCE(NEW.asset_ref, 'unknown'),
+      'Technician: ' || COALESCE(NEW.technician_name, 'unknown') || '. Flag reason: ' || COALESCE(NEW.flag_reason, 'anomaly detected'),
+      'access_log', 'iloq_access_log', 'under_review',
+      CASE WHEN NEW.action = 'tamper' THEN 'critical'
+           WHEN NEW.action = 'denied' THEN 'high'
+           ELSE 'medium'
+      END);
+  END IF;
+  RETURN NEW;
+END;
+$function$
+;
+
+CREATE OR REPLACE FUNCTION public.fn_risk_assessment_compliance()
+ RETURNS trigger
+ LANGUAGE plpgsql
+ SET search_path TO 'public', 'pg_catalog', 'extensions'
+AS $function$
+DECLARE
+  hz_count integer := 0;
+  score text := 'low';
+BEGIN
+  -- Count hazards
+  hz_count := (CASE WHEN NEW.hz_working_at_height THEN 1 ELSE 0 END)
+    + (CASE WHEN NEW.hz_confined_space THEN 1 ELSE 0 END)
+    + (CASE WHEN NEW.hz_live_traffic THEN 1 ELSE 0 END)
+    + (CASE WHEN NEW.hz_underground_services THEN 1 ELSE 0 END)
+    + (CASE WHEN NEW.hz_electrical THEN 1 ELSE 0 END)
+    + (CASE WHEN NEW.hz_manual_handling THEN 1 ELSE 0 END)
+    + (CASE WHEN NEW.hz_asbestos THEN 1 ELSE 0 END)
+    + (CASE WHEN NEW.hz_water_flood THEN 1 ELSE 0 END)
+    + (CASE WHEN NEW.hz_extreme_heat THEN 1 ELSE 0 END)
+    + (CASE WHEN NEW.hz_weather THEN 1 ELSE 0 END)
+    + (CASE WHEN NEW.hz_sharp_objects THEN 1 ELSE 0 END)
+    + (CASE WHEN NEW.hz_biological THEN 1 ELSE 0 END)
+    + (CASE WHEN NEW.hz_noise THEN 1 ELSE 0 END)
+    + (CASE WHEN NEW.hz_lone_working THEN 1 ELSE 0 END)
+    + (CASE WHEN NEW.hz_public_interaction THEN 1 ELSE 0 END);
+  
+  NEW.hazard_count := hz_count;
+  
+  -- Calculate risk score
+  IF NEW.hz_asbestos OR NEW.hz_confined_space OR (NEW.hz_working_at_height AND NEW.hz_live_traffic) THEN
+    score := 'critical';
+  ELSIF hz_count >= 5 OR NEW.hz_electrical OR NEW.hz_working_at_height THEN
+    score := 'high';
+  ELSIF hz_count >= 3 THEN
+    score := 'medium';
+  ELSE
+    score := 'low';
+  END IF;
+  
+  NEW.risk_score := score;
+  
+  -- Auto-generate ISO 45001 compliance record
+  INSERT INTO compliance_records (standard, category, title, description, evidence_type, evidence_table, status, risk_level)
+  VALUES ('ISO_45001', 'Risk Assessment',
+    'RAMS: ' || NEW.job_id || ' by ' || NEW.technician_name,
+    'Site: ' || COALESCE(NEW.site_type, 'unknown') || '. Hazards: ' || hz_count || '. Score: ' || score || '. PPE confirmed. Weather checked: ' || CASE WHEN NEW.ctrl_weather_checked THEN 'Yes' ELSE 'No' END,
+    'incident_report', 'job_risk_assessments',
+    CASE WHEN score = 'critical' THEN 'under_review' ELSE 'compliant' END,
+    score);
+  
+  RETURN NEW;
+END;
+$function$
+;
+
+CREATE OR REPLACE FUNCTION public.fn_near_miss_compliance()
+ RETURNS trigger
+ LANGUAGE plpgsql
+ SET search_path TO 'public', 'pg_catalog', 'extensions'
+AS $function$
+BEGIN
+  INSERT INTO compliance_records (standard, category, title, description, evidence_type, evidence_table, status, risk_level)
+  VALUES ('ISO_45001', 'Near Miss Report',
+    'Near miss: ' || NEW.category || ' by ' || NEW.technician_name,
+    COALESCE(NEW.description, '') || ' | Prevention: ' || COALESCE(NEW.what_prevented_injury, ''),
+    'incident_report', 'near_miss_reports', 'under_review', NEW.risk_level);
+  
+  INSERT INTO safety_incidents (incident_date, incident_type, severity, description, location, technician_name, weather_at_time)
+  VALUES (NEW.incident_date, 'near_miss', 
+    CASE WHEN NEW.risk_level = 'critical' THEN 'serious' WHEN NEW.risk_level = 'high' THEN 'moderate' ELSE 'minor' END,
+    NEW.description, NEW.location, NEW.technician_name, NEW.weather_conditions);
+  RETURN NEW;
+END;
+$function$
+;
+
+CREATE OR REPLACE FUNCTION public.fn_auto_clock_in_on_preflight()
+ RETURNS trigger
+ LANGUAGE plpgsql
+ SET search_path TO 'public', 'pg_catalog', 'extensions'
+AS $function$
+BEGIN
+  -- Only clock in if not already clocked in
+  IF NOT EXISTS (
+    SELECT 1 FROM technician_timesheets 
+    WHERE technician_name = NEW.technician_name 
+    AND status = 'clocked_in'
+  ) THEN
+    INSERT INTO technician_timesheets (technician_name, technician_id, vehicle_id, clock_in, status, notes)
+    VALUES (
+      NEW.technician_name,
+      (SELECT id::text FROM profiles WHERE full_name = NEW.technician_name LIMIT 1),
+      NEW.vehicle_id,
+      NOW(),
+      'clocked_in',
+      'AUTO: Opus AI clock-in on pre-flight completion for ' || NEW.vehicle_id
+    );
+  END IF;
+  RETURN NEW;
+END;
+$function$
+;
+
+CREATE OR REPLACE FUNCTION public.fn_timesheet_fraud_check()
+ RETURNS trigger
+ LANGUAGE plpgsql
+ SET search_path TO 'public', 'pg_catalog', 'extensions'
+AS $function$
+DECLARE
+  shift_hours numeric;
+BEGIN
+  IF NEW.clock_out IS NOT NULL AND NEW.clock_in IS NOT NULL THEN
+    shift_hours := EXTRACT(EPOCH FROM (NEW.clock_out - NEW.clock_in)) / 3600;
+    
+    IF shift_hours > 12 THEN
+      NEW.notes := COALESCE(NEW.notes, '') || ' | OPUS: Shift >12h — director review required';
+      NEW.status := 'disputed';
+    END IF;
+    IF EXTRACT(HOUR FROM NEW.clock_in AT TIME ZONE 'America/Jamaica') < 5 THEN
+      NEW.notes := COALESCE(NEW.notes, '') || ' | OPUS: Clock-in before 5AM';
+      NEW.status := 'disputed';
+    END IF;
+    IF EXTRACT(HOUR FROM NEW.clock_out AT TIME ZONE 'America/Jamaica') > 21 THEN
+      NEW.notes := COALESCE(NEW.notes, '') || ' | OPUS: Clock-out after 9PM';
+      NEW.status := 'disputed';
+    END IF;
+    IF shift_hours > 6 AND COALESCE(NEW.break_minutes, 0) = 0 THEN
+      NEW.notes := COALESCE(NEW.notes, '') || ' | OPUS: No break on 6+ hour shift';
+    END IF;
+    IF shift_hours > 8 THEN
+      NEW.overtime := true;
+      NEW.overtime_approved := false;
+      NEW.notes := COALESCE(NEW.notes, '') || ' | OVERTIME: ' || ROUND(shift_hours - 8, 1)::text || 'h — REQUIRES DIRECTOR APPROVAL (Rui/Omar)';
+    END IF;
+  END IF;
+  RETURN NEW;
+END;
+$function$
+;
+
+CREATE OR REPLACE FUNCTION public.fn_opus_auto_clock_out()
+ RETURNS void
+ LANGUAGE plpgsql
+ SET search_path TO 'public', 'pg_catalog', 'extensions'
+AS $function$
+DECLARE
+  stale RECORD;
+BEGIN
+  FOR stale IN
+    SELECT ts.id, ts.technician_name, ts.clock_in
+    FROM technician_timesheets ts
+    WHERE ts.status = 'clocked_in'
+    AND ts.clock_in < NOW() - INTERVAL '10 hours'
+  LOOP
+    UPDATE technician_timesheets
+    SET clock_out = clock_in + INTERVAL '8 hours',
+        status = 'adjusted',
+        break_minutes = 30,
+        notes = 'AUTO: Opus AI auto-clocked out — no activity for 10+ hours. Defaulted to 8h shift + 30min break.'
+    WHERE id = stale.id;
+    
+    INSERT INTO activity_log (action, entity_type, entity_id, details)
+    VALUES ('auto_clock_out', 'system', stale.technician_name, 
+      '{"reason": "No activity for 10+ hours", "defaulted_hours": 8}');
+  END LOOP;
+END;
+$function$
+;
+
+CREATE OR REPLACE FUNCTION public.fn_otdr_opus_validate()
+ RETURNS trigger
+ LANGUAGE plpgsql
+ SET search_path TO 'public', 'pg_catalog', 'extensions'
+AS $function$
+BEGIN
+  -- Validate against industry standards
+  IF NEW.total_loss_db IS NOT NULL THEN
+    -- Check splice loss (max 0.1dB per splice for ribbon, 0.15dB for single)
+    IF NEW.worst_splice_db IS NOT NULL AND NEW.worst_splice_db > 0.15 THEN
+      NEW.opus_validated := false;
+      NEW.opus_validation_notes := COALESCE(NEW.opus_validation_notes, '') || 'FAIL: Worst splice ' || NEW.worst_splice_db || 'dB exceeds 0.15dB limit. ';
+    END IF;
+    -- Check connector loss (max 0.5dB)
+    IF NEW.worst_connector_db IS NOT NULL AND NEW.worst_connector_db > 0.5 THEN
+      NEW.opus_validated := false;
+      NEW.opus_validation_notes := COALESCE(NEW.opus_validation_notes, '') || 'FAIL: Worst connector ' || NEW.worst_connector_db || 'dB exceeds 0.5dB limit. ';
+    END IF;
+    -- Check ORL (min -40dB for APC)
+    IF NEW.orl_db IS NOT NULL AND NEW.orl_db > -40 THEN
+      NEW.opus_validated := false;
+      NEW.opus_validation_notes := COALESCE(NEW.opus_validation_notes, '') || 'FAIL: ORL ' || NEW.orl_db || 'dB exceeds -40dB limit. ';
+    END IF;
+    -- Check loss per km (max 0.35dB/km at 1310, 0.25dB/km at 1550)
+    IF NEW.loss_per_km IS NOT NULL THEN
+      IF NEW.wavelength = '1310nm' AND NEW.loss_per_km > 0.35 THEN
+        NEW.opus_validated := false;
+        NEW.opus_validation_notes := COALESCE(NEW.opus_validation_notes, '') || 'FAIL: Loss/km ' || NEW.loss_per_km || 'dB exceeds 0.35dB/km at 1310nm. ';
+      ELSIF NEW.wavelength = '1550nm' AND NEW.loss_per_km > 0.25 THEN
+        NEW.opus_validated := false;
+        NEW.opus_validation_notes := COALESCE(NEW.opus_validation_notes, '') || 'FAIL: Loss/km ' || NEW.loss_per_km || 'dB exceeds 0.25dB/km at 1550nm. ';
+      END IF;
+    END IF;
+    -- If no failures, mark as validated
+    IF NEW.opus_validated IS NULL OR NEW.opus_validated THEN
+      NEW.opus_validated := true;
+      NEW.opus_validation_notes := 'PASS: All measurements within acceptable limits.';
+    END IF;
+  END IF;
+  
+  -- Auto-create compliance record
+  INSERT INTO compliance_records (standard, category, title, description, evidence_type, evidence_table, status, risk_level)
+  VALUES ('ISO_9001', 'Quality - OTDR Test',
+    COALESCE(NEW.equipment_type, 'OTDR') || ' test: ' || COALESCE(NEW.cable_ref, NEW.fibre_id, 'unknown') || ' by ' || NEW.technician_name,
+    'Route: ' || COALESCE(NEW.route_from, '?') || ' → ' || COALESCE(NEW.route_to, '?') || '. Loss: ' || COALESCE(NEW.total_loss_db::text, '?') || 'dB. Splices: ' || COALESCE(NEW.splice_count::text, '?') || '. Result: ' || CASE WHEN NEW.pass THEN 'PASS' ELSE 'FAIL — ' || COALESCE(NEW.fail_reason, '') END,
+    'equipment_check', 'otdr_reports',
+    CASE WHEN NEW.pass THEN 'compliant' ELSE 'non_compliant' END,
+    CASE WHEN NEW.pass THEN 'low' ELSE 'high' END);
+  
+  RETURN NEW;
+END;
+$function$
+;
+
+CREATE OR REPLACE FUNCTION public.fn_cleanup_stale_presence()
+ RETURNS void
+ LANGUAGE plpgsql
+ SET search_path TO 'public', 'pg_catalog', 'extensions'
+AS $function$
+DECLARE
+  v_idle_count int;
+  v_offline_count int;
+  v_deleted_count int;
+BEGIN
+  -- Idle transition: online -> idle for rows last seen >2min ago.
+  -- FOR UPDATE SKIP LOCKED avoids blocking when a live client is updating its own heartbeat.
+  -- ORDER BY id ensures consistent lock order across all writers on the table.
+  WITH locked AS (
+    SELECT id FROM public.user_presence
+    WHERE last_seen < NOW() - INTERVAL '2 minutes'
+      AND status = 'online'
+    ORDER BY id
+    FOR UPDATE SKIP LOCKED
+  )
+  UPDATE public.user_presence p
+  SET status = 'idle'
+  FROM locked
+  WHERE p.id = locked.id;
+  GET DIAGNOSTICS v_idle_count = ROW_COUNT;
+
+  -- Offline transition: anything-but-offline -> offline for rows last seen >5min ago.
+  WITH locked AS (
+    SELECT id FROM public.user_presence
+    WHERE last_seen < NOW() - INTERVAL '5 minutes'
+      AND status <> 'offline'
+    ORDER BY id
+    FOR UPDATE SKIP LOCKED
+  )
+  UPDATE public.user_presence p
+  SET status = 'offline'
+  FROM locked
+  WHERE p.id = locked.id;
+  GET DIAGNOSTICS v_offline_count = ROW_COUNT;
+
+  -- Delete rows older than 24h. Same deterministic-order pattern.
+  WITH locked AS (
+    SELECT id FROM public.user_presence
+    WHERE last_seen < NOW() - INTERVAL '24 hours'
+    ORDER BY id
+    FOR UPDATE SKIP LOCKED
+  )
+  DELETE FROM public.user_presence p
+  USING locked
+  WHERE p.id = locked.id;
+  GET DIAGNOSTICS v_deleted_count = ROW_COUNT;
+
+  -- Non-invasive log. Leaves trail of whether the function is still being called
+  -- after neutralisations and how much work it actually does.
+  RAISE LOG 'fn_cleanup_stale_presence: idle=% offline=% deleted=%', v_idle_count, v_offline_count, v_deleted_count;
+END;
+$function$
+;
+
+CREATE OR REPLACE FUNCTION public.check_rls_policies()
+ RETURNS TABLE(tablename text)
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public', 'pg_catalog', 'extensions'
+AS $function$
+BEGIN
+  RETURN QUERY
+  SELECT t.tablename::text
+  FROM pg_tables t
+  WHERE t.schemaname = 'public' AND t.rowsecurity = true
+  AND NOT EXISTS (
+    SELECT 1 FROM pg_policies p 
+    WHERE p.schemaname = 'public' AND p.tablename = t.tablename
+  )
+  ORDER BY t.tablename;
+END;
+$function$
+;
+
+CREATE OR REPLACE FUNCTION public.fix_rls_policies()
+ RETURNS json
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public', 'pg_catalog', 'extensions'
+AS $function$
+DECLARE
+  tbl text;
+  fix_count int := 0;
+BEGIN
+  FOR tbl IN 
+    SELECT t.tablename 
+    FROM pg_tables t
+    WHERE t.schemaname = 'public' AND t.rowsecurity = true
+    AND NOT EXISTS (
+      SELECT 1 FROM pg_policies p 
+      WHERE p.schemaname = 'public' AND p.tablename = t.tablename
+    )
+  LOOP
+    EXECUTE format('CREATE POLICY anon_all ON public.%I FOR ALL TO public USING (true) WITH CHECK (true)', tbl);
+    fix_count := fix_count + 1;
+    
+    -- Log to audit
+    INSERT INTO access_audit_log (user_name, user_role, platform, action, section, details)
+    VALUES ('Opus Code Guardian', 'admin', 'tcc', 'create_record', 'code_guardian', 
+            'RLS AUTOFIX: Added anon_all policy to ' || tbl);
+  END LOOP;
+  
+  RETURN json_build_object('fixed', fix_count, 'status', 'ok');
+END;
+$function$
+;
+
+CREATE OR REPLACE FUNCTION public.fn_doc_download_counter()
+ RETURNS trigger
+ LANGUAGE plpgsql
+ SET search_path TO 'public', 'pg_catalog', 'extensions'
+AS $function$
+BEGIN
+  UPDATE document_library 
+  SET download_count = download_count + 1,
+      last_downloaded_at = NOW(),
+      last_downloaded_by = NEW.user_name
+  WHERE id = NEW.document_id;
+  RETURN NEW;
+END;
+$function$
+;
+
+CREATE OR REPLACE FUNCTION public.fn_chat_mention_notify()
+ RETURNS trigger
+ LANGUAGE plpgsql
+ SET search_path TO 'public', 'pg_catalog', 'extensions'
+AS $function$
+BEGIN
+  IF NEW.mentions IS NOT NULL AND array_length(NEW.mentions, 1) > 0 THEN
+    INSERT INTO chat_notifications (message_id, recipient_name, sender_name, content_preview)
+    SELECT NEW.id, unnest(NEW.mentions), NEW.sender_name, left(NEW.content, 100);
+  END IF;
+  RETURN NEW;
+END;
+$function$
+;
+
+CREATE OR REPLACE FUNCTION public.fn_task_dependency_check()
+ RETURNS trigger
+ LANGUAGE plpgsql
+ SET search_path TO 'public', 'pg_catalog', 'extensions'
+AS $function$
+BEGIN
+  IF NEW.depends_on IS NOT NULL THEN
+    IF NOT EXISTS (
+      SELECT 1 FROM dispatched_tasks 
+      WHERE id = NEW.depends_on 
+      AND status IN ('completed','validated')
+    ) THEN
+      NEW.blocked := true;
+      NEW.blocked_reason := 'Waiting for previous task to complete';
+    ELSE
+      NEW.blocked := false;
+      NEW.blocked_reason := NULL;
+    END IF;
+  END IF;
+  RETURN NEW;
+END;
+$function$
+;
+
+CREATE OR REPLACE FUNCTION public.fn_unblock_next_task()
+ RETURNS trigger
+ LANGUAGE plpgsql
+ SET search_path TO 'public', 'pg_catalog', 'extensions'
+AS $function$
+BEGIN
+  IF NEW.status IN ('completed','validated') AND OLD.status NOT IN ('completed','validated') THEN
+    UPDATE dispatched_tasks 
+    SET blocked = false, blocked_reason = NULL
+    WHERE depends_on = NEW.id;
+  END IF;
+  RETURN NEW;
+END;
+$function$
+;
+
+CREATE OR REPLACE FUNCTION public.fn_network_gate_check()
+ RETURNS trigger
+ LANGUAGE plpgsql
+ SET search_path TO 'public', 'pg_catalog', 'extensions'
+AS $function$
+BEGIN
+  IF NEW.requires_network_pass = true AND NEW.network_segment_id IS NOT NULL THEN
+    IF NOT EXISTS (
+      SELECT 1 FROM network_segments 
+      WHERE id = NEW.network_segment_id 
+      AND network_validated = true
+    ) THEN
+      NEW.blocked := true;
+      NEW.blocked_reason := 'Network segment not yet validated — CBTs and joints must be OTDR tested and passed before customer installation';
+    END IF;
+  END IF;
+  RETURN NEW;
+END;
+$function$
+;
+
+CREATE OR REPLACE FUNCTION public.fn_network_validated_unblock()
+ RETURNS trigger
+ LANGUAGE plpgsql
+ SET search_path TO 'public', 'pg_catalog', 'extensions'
+AS $function$
+BEGIN
+  IF NEW.network_validated = true AND (OLD.network_validated = false OR OLD.network_validated IS NULL) THEN
+    UPDATE dispatched_tasks 
+    SET blocked = false, blocked_reason = NULL
+    WHERE network_segment_id = NEW.id 
+    AND requires_network_pass = true;
+  END IF;
+  RETURN NEW;
+END;
+$function$
+;
+
+CREATE OR REPLACE FUNCTION public.fn_auto_notify_customer_eta()
+ RETURNS trigger
+ LANGUAGE plpgsql
+ SET search_path TO 'public', 'pg_catalog', 'extensions'
+AS $function$
+BEGIN
+  -- Only notify on customer-facing phases where someone goes to the premises
+  IF NEW.phase NOT IN (
+    'customer_survey', 'customer_civils', 'customer_cbt', 
+    'customer_cabling', 'customer_csp', 'customer_internals', 
+    'customer_install'
+  ) THEN
+    RETURN NEW;
+  END IF;
+
+  -- When task starts → notify customer with ETA
+  IF NEW.status = 'in_progress' AND OLD.status != 'in_progress' 
+     AND NEW.auto_notify_customer = true 
+     AND (NEW.customer_phone IS NOT NULL OR NEW.customer_email IS NOT NULL) THEN
+    
+    -- Different messages per phase
+    INSERT INTO customer_notifications (
+      task_id, job_reference, customer_name, customer_phone, customer_email,
+      notification_type, message, eta_minutes, technician_name,
+      technician_gps_lat, technician_gps_lng
+    ) VALUES (
+      NEW.id, NEW.job_reference, NEW.customer_name, NEW.customer_phone, NEW.customer_email,
+      'engineer_en_route',
+      CASE NEW.phase
+        WHEN 'customer_survey' THEN
+          'Hi ' || COALESCE(NEW.customer_name, 'there') || ', your Tellinex survey engineer ' || 
+          COALESCE(NEW.assigned_to, '') || ' is on the way to assess your property. ETA: ' || 
+          COALESCE(NEW.estimated_drive_mins::text, '15') || ' minutes.'
+        WHEN 'customer_civils' THEN
+          'Hi ' || COALESCE(NEW.customer_name, 'there') || ', our Tellinex civils team is heading to your property to prepare the fibre route. ETA: ' || 
+          COALESCE(NEW.estimated_drive_mins::text, '15') || ' minutes. Some digging work will be needed at the boundary.'
+        WHEN 'customer_internals' THEN
+          'Hi ' || COALESCE(NEW.customer_name, 'there') || ', your Tellinex engineer ' || 
+          COALESCE(NEW.assigned_to, '') || ' is on the way to install your ONT and router — you will be online today! ETA: ' || 
+          COALESCE(NEW.estimated_drive_mins::text, '15') || ' minutes.'
+        ELSE
+          'Hi ' || COALESCE(NEW.customer_name, 'there') || ', your Tellinex engineer ' || 
+          COALESCE(NEW.assigned_to, '') || ' is on the way. ETA: ' || 
+          COALESCE(NEW.estimated_drive_mins::text, '15') || ' minutes.'
+      END,
+      COALESCE(NEW.estimated_drive_mins, 15),
+      NEW.assigned_to,
+      NEW.technician_gps_lat, NEW.technician_gps_lng
+    );
+
+    NEW.technician_en_route := true;
+    NEW.navigation_started_at := now();
+    NEW.navigation_eta_mins := COALESCE(NEW.estimated_drive_mins, 15);
+  END IF;
+
+  -- When customer_internals completed → fibre is live, welcome message
+  IF NEW.status = 'completed' AND OLD.status != 'completed'
+     AND NEW.auto_notify_customer = true
+     AND (NEW.customer_phone IS NOT NULL OR NEW.customer_email IS NOT NULL) THEN
+    
+    INSERT INTO customer_notifications (
+      task_id, job_reference, customer_name, customer_phone, customer_email,
+      notification_type, message, technician_name
+    ) VALUES (
+      NEW.id, NEW.job_reference, NEW.customer_name, NEW.customer_phone, NEW.customer_email,
+      'job_completed',
+      CASE NEW.phase
+        WHEN 'customer_survey' THEN
+          'Hi ' || COALESCE(NEW.customer_name, 'there') || ', your property survey is complete. We will schedule your installation soon.'
+        WHEN 'customer_internals' THEN
+          'Hi ' || COALESCE(NEW.customer_name, 'there') || ', your Tellinex fibre is now LIVE! Your ONT and router are installed and tested. Welcome to Jamaica''s fastest broadband. Any issues? +1-876-555-FIBRE.'
+        WHEN 'customer_install' THEN
+          'Hi ' || COALESCE(NEW.customer_name, 'there') || ', your Tellinex installation is complete! Your fibre connection is now active. Welcome to Tellinex. Any issues? +1-876-555-FIBRE.'
+        ELSE
+          'Hi ' || COALESCE(NEW.customer_name, 'there') || ', today''s work at your property is complete. We will be in touch about the next steps.'
+      END,
+      NEW.assigned_to
+    );
+  END IF;
+
+  RETURN NEW;
+END;
+$function$
+;
+
+CREATE OR REPLACE FUNCTION public.advance_job_dependency_chain(p_job_id text)
+ RETURNS void
+ LANGUAGE plpgsql
+ SET search_path TO 'public', 'pg_catalog', 'extensions'
+AS $function$
+BEGIN
+  -- Mark job certified
+  UPDATE public.fp_jobs
+  SET status = 'certified', updated_at = NOW()
+  WHERE id = p_job_id;
+
+  -- Insert into activity log
+  INSERT INTO public.activity_log (action, entity_type, entity_id, actor_id, metadata)
+  VALUES ('job_certified', 'fp_job', p_job_id::uuid, NULL,
+          jsonb_build_object('auto_approved', true, 'at', NOW()))
+  ON CONFLICT DO NOTHING;
+END;
+$function$
+;
+
+CREATE OR REPLACE FUNCTION public.fire_customer_notification()
+ RETURNS trigger
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public', 'pg_catalog', 'extensions'
+AS $function$
+BEGIN
+  IF NEW.notify_customers = TRUE AND NEW.notification_sent_at IS NULL THEN
+    -- If no summary yet, call summariser first (async)
+    IF NEW.customer_summary IS NULL THEN
+      PERFORM net.http_post(
+        url := 'https://egztpclpcnizcdtfugsv.supabase.co/functions/v1/opus-incident-summariser',
+        headers := jsonb_build_object('Content-Type', 'application/json'),
+        body := jsonb_build_object('incident_id', NEW.id)
+      );
+    END IF;
+
+    -- Always call notify-customers (it will regenerate summary if missing)
+    PERFORM net.http_post(
+      url := 'https://egztpclpcnizcdtfugsv.supabase.co/functions/v1/notify-customers',
+      headers := jsonb_build_object('Content-Type', 'application/json'),
+      body := jsonb_build_object('incident_id', NEW.id)
+    );
+  END IF;
+  RETURN NEW;
+END $function$
+;
+
+CREATE OR REPLACE FUNCTION public.get_anthropic_key()
+ RETURNS text
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public', 'vault'
+AS $function$
+DECLARE
+  v_role TEXT;
+  v_key TEXT;
+BEGIN
+  -- Belt-and-braces: refuse any non-service_role caller even if GRANTs are wrong
+  v_role := current_setting('request.jwt.claims', true)::jsonb->>'role';
+  IF v_role IS NULL OR v_role = 'anon' OR v_role = 'authenticated' THEN
+    RAISE EXCEPTION 'get_anthropic_key: forbidden for role %', coalesce(v_role, 'unknown');
+  END IF;
+
+  SELECT decrypted_secret INTO v_key
+  FROM vault.decrypted_secrets
+  WHERE name = 'anthropic_api_key'
+  LIMIT 1;
+
+  IF v_key IS NULL THEN
+    RAISE EXCEPTION 'anthropic_api_key not found in vault';
+  END IF;
+
+  RETURN v_key;
+END $function$
+;
+
+CREATE OR REPLACE FUNCTION public.gdpr_request_export(p_user_id uuid)
+ RETURNS uuid
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+DECLARE
+  v_email TEXT;
+  v_request_id UUID;
+BEGIN
+  -- Only the user themselves (or service_role) can request
+  IF current_setting('request.jwt.claim.sub', true)::uuid != p_user_id
+     AND current_setting('request.jwt.claim.role', true) NOT IN ('service_role','postgres') THEN
+    RAISE EXCEPTION 'unauthorized';
+  END IF;
+
+  SELECT email INTO v_email FROM auth.users WHERE id = p_user_id;
+
+  INSERT INTO data_rights_requests (user_id, customer_email, request_type)
+  VALUES (p_user_id, v_email, 'export')
+  RETURNING id INTO v_request_id;
+
+  RETURN v_request_id;
+END $function$
+;
+
+CREATE OR REPLACE FUNCTION public.gdpr_request_delete(p_user_id uuid)
+ RETURNS uuid
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+DECLARE
+  v_email TEXT;
+  v_request_id UUID;
+BEGIN
+  IF current_setting('request.jwt.claim.sub', true)::uuid != p_user_id
+     AND current_setting('request.jwt.claim.role', true) NOT IN ('service_role','postgres') THEN
+    RAISE EXCEPTION 'unauthorized';
+  END IF;
+
+  SELECT email INTO v_email FROM auth.users WHERE id = p_user_id;
+
+  INSERT INTO data_rights_requests (user_id, customer_email, request_type)
+  VALUES (p_user_id, v_email, 'delete')
+  RETURNING id INTO v_request_id;
+
+  RETURN v_request_id;
+END $function$
+;
+
+CREATE OR REPLACE FUNCTION public.opus_record_decision(p_decision_type text, p_confidence numeric DEFAULT NULL::numeric, p_inputs jsonb DEFAULT NULL::jsonb, p_outputs jsonb DEFAULT NULL::jsonb, p_outcome text DEFAULT 'success'::text, p_related_job_id text DEFAULT NULL::text, p_related_incident_id uuid DEFAULT NULL::uuid)
+ RETURNS TABLE(executed_level integer, configured_level integer, downgrade_reason text, requires_approval boolean, requires_role text, log_id uuid)
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+DECLARE
+  v_registry RECORD;
+  v_executed_level INT;
+  v_downgrade_reason TEXT;
+  v_log_id UUID;
+BEGIN
+  SELECT * INTO v_registry FROM opus_autonomy_registry WHERE decision_type = p_decision_type AND enabled = true;
+
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'unknown_decision_type: %', p_decision_type;
+  END IF;
+
+  -- Downgrade rules
+  v_executed_level := v_registry.autonomy_level;
+  v_downgrade_reason := NULL;
+
+  IF p_confidence IS NOT NULL AND p_confidence < v_registry.min_confidence AND v_executed_level > 2 THEN
+    v_executed_level := 2;
+    v_downgrade_reason := format('confidence %s below min %s — downgraded to L2', p_confidence, v_registry.min_confidence);
+  END IF;
+
+  INSERT INTO opus_autonomy_log (
+    decision_type, executed_at_level, configured_level,
+    confidence, downgrade_reason, inputs, outputs, outcome,
+    related_job_id, related_incident_id
+  ) VALUES (
+    p_decision_type, v_executed_level, v_registry.autonomy_level,
+    p_confidence, v_downgrade_reason, p_inputs, p_outputs, p_outcome,
+    p_related_job_id, p_related_incident_id
+  )
+  RETURNING id INTO v_log_id;
+
+  executed_level := v_executed_level;
+  configured_level := v_registry.autonomy_level;
+  downgrade_reason := v_downgrade_reason;
+  requires_approval := (v_executed_level = 2);
+  requires_role := v_registry.requires_role;
+  log_id := v_log_id;
+  RETURN NEXT;
+END $function$
+;
+
+CREATE OR REPLACE FUNCTION public.otel_emit_span(p_trace_id uuid, p_parent_span_id uuid, p_service text, p_operation text, p_duration_ms integer, p_status text DEFAULT 'ok'::text, p_error_message text DEFAULT NULL::text, p_attributes jsonb DEFAULT '{}'::jsonb)
+ RETURNS uuid
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+DECLARE v_span_id UUID;
+BEGIN
+  INSERT INTO otel_spans (trace_id, parent_span_id, service, operation, duration_ms, status, error_message, attributes, ended_at)
+  VALUES (p_trace_id, p_parent_span_id, p_service, p_operation, p_duration_ms, p_status, p_error_message, p_attributes, NOW())
+  RETURNING span_id INTO v_span_id;
+
+  UPDATE otel_traces SET span_count = span_count + 1 WHERE trace_id = p_trace_id;
+
+  RETURN v_span_id;
+END $function$
+;
+
+CREATE OR REPLACE FUNCTION public.otel_start_trace(p_service text, p_operation text, p_user_id uuid DEFAULT NULL::uuid, p_customer_id uuid DEFAULT NULL::uuid, p_correlation_id text DEFAULT NULL::text, p_attributes jsonb DEFAULT '{}'::jsonb)
+ RETURNS uuid
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+DECLARE v_trace_id UUID := gen_random_uuid();
+BEGIN
+  INSERT INTO otel_traces (trace_id, root_service, root_operation, user_id, customer_id, correlation_id, attributes)
+  VALUES (v_trace_id, p_service, p_operation, p_user_id, p_customer_id, p_correlation_id, p_attributes);
+  RETURN v_trace_id;
+END $function$
+;
+
+CREATE OR REPLACE FUNCTION public.otel_finish_trace(p_trace_id uuid, p_status text DEFAULT 'ok'::text)
+ RETURNS void
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+BEGIN
+  UPDATE otel_traces SET
+    ended_at = NOW(),
+    duration_ms = EXTRACT(EPOCH FROM (NOW() - started_at)) * 1000,
+    status = p_status
+  WHERE trace_id = p_trace_id;
+END $function$
+;
+
+CREATE OR REPLACE FUNCTION public.activate_household_preset(p_preset_id uuid)
+ RETURNS void
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+DECLARE v_user_id UUID;
+BEGIN
+  SELECT user_id INTO v_user_id FROM household_presets WHERE id = p_preset_id;
+  IF v_user_id IS NULL THEN RAISE EXCEPTION 'preset_not_found'; END IF;
+  IF v_user_id != auth.uid()
+     AND current_setting('request.jwt.claim.role', true) NOT IN ('service_role','postgres') THEN
+    RAISE EXCEPTION 'unauthorized';
+  END IF;
+  UPDATE household_presets SET is_active = FALSE WHERE user_id = v_user_id;
+  UPDATE household_presets SET is_active = TRUE, last_activated_at = NOW() WHERE id = p_preset_id;
+END $function$
+;
+
+CREATE OR REPLACE FUNCTION public.fire_crew_handoff(p_job_id text, p_from_tech uuid, p_to_role text, p_lat numeric DEFAULT NULL::numeric, p_lng numeric DEFAULT NULL::numeric)
+ RETURNS jsonb
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+DECLARE
+  v_next_tech UUID;
+  v_event_id UUID;
+BEGIN
+  -- Find nearest available tech with the right role
+  SELECT id INTO v_next_tech FROM technicians
+  WHERE role = p_to_role AND status = 'available'
+  LIMIT 1;
+
+  INSERT INTO crew_handoff_events (job_id, event_type, technician_id, receiving_technician_id, detected_at, geo_lat, geo_lng)
+  VALUES (p_job_id, 'handoff_fired', p_from_tech, v_next_tech, NOW(), p_lat, p_lng)
+  RETURNING id INTO v_event_id;
+
+  RETURN jsonb_build_object(
+    'event_id', v_event_id,
+    'next_technician_id', v_next_tech,
+    'handoff_fired_at', NOW()
+  );
+END $function$
+;
+
+CREATE OR REPLACE FUNCTION public.broadcast_twin_asset_change()
+ RETURNS trigger
+ LANGUAGE plpgsql
+ SET search_path TO 'public', 'pg_catalog', 'extensions'
+AS $function$
+BEGIN
+  PERFORM pg_notify(
+    'twin_asset_changed',
+    json_build_object(
+      'asset_id', NEW.id,
+      'asset_type', NEW.asset_type,
+      'geometry_type', NEW.geometry_type,
+      'status', NEW.status,
+      'health_score', NEW.health_score,
+      'lat', NEW.latitude,
+      'lng', NEW.longitude,
+      'changed_at', NOW()
+    )::text
+  );
+  RETURN NEW;
+END $function$
+;
+
+CREATE OR REPLACE FUNCTION public.auto_link_photo_to_asset()
+ RETURNS trigger
+ LANGUAGE plpgsql
+ SET search_path TO 'public', 'pg_catalog', 'extensions'
+AS $function$
+DECLARE
+  v_lat NUMERIC;
+  v_lng NUMERIC;
+  v_asset_id UUID;
+BEGIN
+  -- Skip if explicit asset_id already set
+  IF NEW.network_asset_id IS NOT NULL THEN RETURN NEW; END IF;
+
+  -- Extract GPS per-table
+  IF TG_TABLE_NAME = 'chamber_evidence' THEN
+    v_lat := NEW.latitude; v_lng := NEW.longitude;
+  ELSIF TG_TABLE_NAME = 'field_evidence' THEN
+    v_lat := NEW.gps_lat;  v_lng := NEW.gps_lng;
+  ELSIF TG_TABLE_NAME = 'photo_evidence' THEN
+    v_lat := NEW.latitude; v_lng := NEW.longitude;
+    IF v_lat IS NULL AND NEW.geo_point IS NOT NULL THEN
+      v_lat := (NEW.geo_point->>'lat')::NUMERIC;
+      v_lng := (NEW.geo_point->>'lng')::NUMERIC;
+    END IF;
+  ELSIF TG_TABLE_NAME = 'hs_photos' THEN
+    v_lat := NEW.latitude; v_lng := NEW.longitude;
+  END IF;
+
+  IF v_lat IS NULL OR v_lng IS NULL THEN RETURN NEW; END IF;
+
+  -- Find nearest asset within ~25m using haversine approximation
+  -- 0.000225 degrees ≈ 25m at Kingston latitude
+  SELECT id INTO v_asset_id
+  FROM public.network_assets
+  WHERE latitude IS NOT NULL AND longitude IS NOT NULL
+    AND latitude  BETWEEN v_lat - 0.000225 AND v_lat + 0.000225
+    AND longitude BETWEEN v_lng - 0.000225 AND v_lng + 0.000225
+  ORDER BY ((latitude - v_lat)^2 + (longitude - v_lng)^2) ASC
+  LIMIT 1;
+
+  NEW.network_asset_id := v_asset_id;
+  RETURN NEW;
+END $function$
+;
+
+CREATE OR REPLACE FUNCTION public.trace_fibre_path(start_cable_id uuid, start_fibre_number integer, direction text DEFAULT 'upstream'::text)
+ RETURNS TABLE(hop_number integer, cable_id uuid, cable_ref text, fibre_number integer, fibre_colour text, splice_id uuid, tray_id uuid, closure_asset_id uuid, closure_ref text, length_m numeric, loss_db numeric)
+ LANGUAGE plpgsql
+ SET search_path TO 'public', 'pg_catalog', 'extensions'
+AS $function$
+DECLARE
+  v_hop INTEGER := 0;
+  v_current_cable UUID := start_cable_id;
+  v_current_fibre INTEGER := start_fibre_number;
+  v_max_hops INTEGER := 50;
+  v_splice_id UUID; v_tray_id UUID; v_closure_id UUID; v_closure_ref TEXT;
+  v_next_cable UUID; v_next_fibre INTEGER; v_next_colour TEXT;
+  v_next_cable_ref TEXT; v_next_length NUMERIC; v_loss_db NUMERIC;
+  v_start_colour TEXT; v_start_ref TEXT; v_start_length NUMERIC;
+BEGIN
+  SELECT cp.cable_ref, cp.length_m INTO v_start_ref, v_start_length
+  FROM public.cable_pulls cp WHERE cp.id = start_cable_id;
+
+  v_start_colour := (ARRAY['blue','orange','green','brown','slate','white','red','black','yellow','violet','rose','aqua'])[((start_fibre_number - 1) % 12) + 1];
+
+  hop_number := 0; cable_id := start_cable_id; cable_ref := v_start_ref;
+  fibre_number := start_fibre_number; fibre_colour := v_start_colour;
+  splice_id := NULL; tray_id := NULL; closure_asset_id := NULL; closure_ref := NULL;
+  length_m := v_start_length; loss_db := NULL;
+  RETURN NEXT;
+
+  LOOP
+    EXIT WHEN v_hop >= v_max_hops;
+    v_hop := v_hop + 1;
+    v_splice_id := NULL;
+
+    -- upstream = toward OLT/feeder. Splices are stored (from=feeder, to=drop).
+    --   Starting at a drop: find splice where to_cable=current, next is from_cable.
+    --   Starting at a through-spliced feeder segment: also match to_cable=current.
+    -- downstream = toward customer.
+    --   Starting at a feeder: find splice where from_cable=current, next is to_cable.
+    IF direction = 'upstream' THEN
+      SELECT fs.id, fs.tray_id, st.closure_asset_id, na.asset_ref,
+             fs.from_cable_id, fs.from_fibre_number, fs.from_fibre_colour, fs.loss_db
+      INTO v_splice_id, v_tray_id, v_closure_id, v_closure_ref,
+           v_next_cable, v_next_fibre, v_next_colour, v_loss_db
+      FROM public.fibre_splices fs
+      JOIN public.splice_trays st ON st.id = fs.tray_id
+      JOIN public.network_assets na ON na.id = st.closure_asset_id
+      WHERE fs.to_cable_id = v_current_cable
+        AND fs.to_fibre_number = v_current_fibre
+        AND fs.status = 'active'
+      LIMIT 1;
+    ELSE
+      SELECT fs.id, fs.tray_id, st.closure_asset_id, na.asset_ref,
+             fs.to_cable_id, fs.to_fibre_number, fs.to_fibre_colour, fs.loss_db
+      INTO v_splice_id, v_tray_id, v_closure_id, v_closure_ref,
+           v_next_cable, v_next_fibre, v_next_colour, v_loss_db
+      FROM public.fibre_splices fs
+      JOIN public.splice_trays st ON st.id = fs.tray_id
+      JOIN public.network_assets na ON na.id = st.closure_asset_id
+      WHERE fs.from_cable_id = v_current_cable
+        AND fs.from_fibre_number = v_current_fibre
+        AND fs.status = 'active'
+      LIMIT 1;
+    END IF;
+
+    EXIT WHEN v_splice_id IS NULL;
+
+    SELECT cp.cable_ref, cp.length_m INTO v_next_cable_ref, v_next_length
+    FROM public.cable_pulls cp WHERE cp.id = v_next_cable;
+    EXIT WHEN v_next_cable_ref IS NULL;
+
+    hop_number := v_hop; cable_id := v_next_cable; cable_ref := v_next_cable_ref;
+    fibre_number := v_next_fibre; fibre_colour := v_next_colour;
+    splice_id := v_splice_id; tray_id := v_tray_id;
+    closure_asset_id := v_closure_id; closure_ref := v_closure_ref;
+    length_m := v_next_length; loss_db := v_loss_db;
+    RETURN NEXT;
+
+    v_current_cable := v_next_cable;
+    v_current_fibre := v_next_fibre;
+  END LOOP;
+END $function$
+;
+
+CREATE OR REPLACE FUNCTION public.fn_auto_opus_vision_on_evidence()
+ RETURNS trigger
+ LANGUAGE plpgsql
+ SET search_path TO 'public', 'pg_catalog', 'extensions'
+AS $function$
+DECLARE
+  asset_type_guess TEXT;
+  fn_url TEXT := 'https://egztpclpcnizcdtfugsv.supabase.co/functions/v1/opus-vision-validate';
+BEGIN
+  IF NEW.photo_url IS NULL OR NEW.photo_url = '' OR NEW.opus_validated IS TRUE THEN
+    RETURN NEW;
+  END IF;
+  asset_type_guess := CASE
+    WHEN NEW.photo_type ILIKE '%splice%' OR NEW.photo_type ILIKE '%closure%' THEN 'splice_closure'
+    WHEN NEW.photo_type ILIKE '%termination%' OR NEW.photo_type ILIKE '%csp%' OR NEW.photo_type ILIKE '%ont%' THEN 'fibre_termination'
+    WHEN NEW.photo_type ILIKE '%duct%' OR NEW.photo_type ILIKE '%microduct%' THEN 'microduct_12way'
+    WHEN NEW.photo_type ILIKE '%toby%' OR NEW.photo_type ILIKE '%tb%' THEN 'toby_box'
+    WHEN NEW.photo_type ILIKE '%pole%' OR NEW.photo_type ILIKE '%aerial%' THEN 'pole'
+    ELSE 'chamber'
+  END;
+  -- 45 second timeout for Opus vision call
+  PERFORM net.http_post(
+    url := fn_url,
+    headers := '{"Content-Type":"application/json"}'::jsonb,
+    body := jsonb_build_object(
+      'source_table', 'chamber_evidence',
+      'source_row_id', NEW.id::text,
+      'photo_url', NEW.photo_url,
+      'asset_type', asset_type_guess,
+      'asset_id', NEW.network_asset_id
+    ),
+    timeout_milliseconds := 45000
+  );
+  RETURN NEW;
+END;
+$function$
+;
+
+CREATE OR REPLACE FUNCTION public.fn_backfill_opus_validated()
+ RETURNS trigger
+ LANGUAGE plpgsql
+ SET search_path TO 'public', 'pg_catalog', 'extensions'
+AS $function$
+BEGIN
+  IF NEW.photo_source_table = 'chamber_evidence' AND NEW.photo_source_id IS NOT NULL THEN
+    UPDATE public.chamber_evidence
+    SET opus_validated = (NEW.overall_verdict = 'pass'),
+        opus_score = NEW.overall_score,
+        opus_notes = (
+          SELECT string_agg(f->>'description', '; ')
+          FROM jsonb_array_elements(NEW.findings) f
+          WHERE f->>'severity' IN ('high','medium')
+        )
+    WHERE id = NEW.photo_source_id;
+  END IF;
+  RETURN NEW;
+END;
+$function$
+;
+
+CREATE OR REPLACE FUNCTION public.is_valid_data_source(src text)
+ RETURNS boolean
+ LANGUAGE sql
+ IMMUTABLE
+ SET search_path TO 'public', 'pg_catalog', 'extensions'
+AS $function$
+  SELECT src = ANY (ARRAY[
+    'website_form',
+    'chatbot',
+    'fieldpack_pro_ios',
+    'my_tellinex_app',
+    'tcc_manual_entry',
+    'stripe_webhook',
+    'powertranz_webhook',
+    'iloq_cloud_webhook',
+    'axis_webhook',
+    'lorawan_ns',
+    'exfo_upload',
+    'fujikura_bluetooth',
+    'proceq_upload',
+    'exodigo_webhook',
+    'cad_import',
+    'csv_import',
+    'real_api_integration',
+    'postgres_trigger',
+    'api_v1',           -- NEW: public REST API
+    'system'            -- NEW: internal system jobs (cron, triggers' synthetic rows like webhook deliveries)
+  ]);
+$function$
+;
+
+CREATE OR REPLACE FUNCTION public.tellinex_data_audit()
+ RETURNS TABLE(table_name text, row_count bigint, data_sources text)
+ LANGUAGE plpgsql
+ SET search_path TO 'public', 'pg_catalog', 'extensions'
+AS $function$
+DECLARE
+  t TEXT;
+  cnt BIGINT;
+  sources TEXT;
+BEGIN
+  FOR t IN
+    SELECT c.table_name
+    FROM information_schema.columns c
+    WHERE c.table_schema = 'public'
+      AND c.column_name = 'data_source'
+    ORDER BY c.table_name
+  LOOP
+    EXECUTE format('SELECT COUNT(*) FROM public.%I', t) INTO cnt;
+    IF cnt > 0 THEN
+      EXECUTE format(
+        'SELECT string_agg(data_source || ''='' || c::text, '', '' ORDER BY c DESC) FROM (SELECT data_source, COUNT(*) c FROM public.%I GROUP BY data_source) x',
+        t
+      ) INTO sources;
+      table_name := t;
+      row_count := cnt;
+      data_sources := sources;
+      RETURN NEXT;
+    END IF;
+  END LOOP;
+END;
+$function$
+;
+
+CREATE OR REPLACE FUNCTION public.opus_evolution_snapshot()
+ RETURNS jsonb
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+DECLARE
+  result jsonb;
+BEGIN
+  SELECT jsonb_build_object(
+    'generated_at', NOW(),
+    'window', '24 hours',
+
+    'cron', jsonb_build_object(
+      'active_jobs', (
+        SELECT COALESCE(jsonb_agg(jsonb_build_object('jobname', jobname, 'schedule', schedule)), '[]'::jsonb)
+        FROM cron.job WHERE active = true
+      ),
+      'total_runs_24h', (
+        SELECT COUNT(*) FROM cron.job_run_details WHERE start_time > NOW() - INTERVAL '24 hours'
+      ),
+      'failed_runs_24h', (
+        SELECT COUNT(*) FROM cron.job_run_details
+        WHERE start_time > NOW() - INTERVAL '24 hours' AND status = 'failed'
+      ),
+      'failures_sample', (
+        SELECT COALESCE(jsonb_agg(
+          jsonb_build_object(
+            'jobname', j.jobname,
+            'status', jr.status,
+            'error', LEFT(jr.return_message, 400),
+            'start_time', jr.start_time
+          ) ORDER BY jr.start_time DESC
+        ), '[]'::jsonb)
+        FROM (
+          SELECT * FROM cron.job_run_details
+          WHERE start_time > NOW() - INTERVAL '7 days' AND status = 'failed'
+          ORDER BY start_time DESC LIMIT 10
+        ) jr
+        JOIN cron.job j ON jr.jobid = j.jobid
+      )
+    ),
+
+    'http', jsonb_build_object(
+      'total_24h', (SELECT COUNT(*) FROM net._http_response WHERE created > NOW() - INTERVAL '24 hours'),
+      'errors_24h', (
+        SELECT COUNT(*) FROM net._http_response
+        WHERE created > NOW() - INTERVAL '24 hours'
+          AND (status_code >= 400 OR error_msg IS NOT NULL)
+      ),
+      'errors_sample', (
+        SELECT COALESCE(jsonb_agg(
+          jsonb_build_object(
+            'status_code', status_code,
+            'error_msg', LEFT(error_msg, 200),
+            'response_preview', LEFT(content::text, 300),
+            'created', created
+          ) ORDER BY created DESC
+        ), '[]'::jsonb)
+        FROM (
+          SELECT * FROM net._http_response
+          WHERE created > NOW() - INTERVAL '24 hours'
+            AND (status_code >= 400 OR error_msg IS NOT NULL)
+          ORDER BY created DESC LIMIT 15
+        ) x
+      )
+    ),
+
+    'tables', jsonb_build_object(
+      'bloated', (
+        SELECT COALESCE(jsonb_agg(
+          jsonb_build_object(
+            'table', relname,
+            'live', n_live_tup,
+            'dead', n_dead_tup,
+            'last_autovacuum', last_autovacuum
+          ) ORDER BY n_dead_tup DESC
+        ), '[]'::jsonb)
+        FROM pg_stat_user_tables
+        WHERE schemaname = 'public'
+          AND n_live_tup > 0
+          AND n_dead_tup > n_live_tup * 2
+        LIMIT 10
+      ),
+      'total_public_tables', (
+        SELECT COUNT(*) FROM pg_stat_user_tables WHERE schemaname = 'public'
+      )
+    ),
+
+    'connections', jsonb_build_object(
+      'total_active', (SELECT COUNT(*) FROM pg_stat_activity WHERE state IS NOT NULL),
+      'idle_in_transaction_over_5min', (
+        SELECT COUNT(*) FROM pg_stat_activity
+        WHERE state = 'idle in transaction'
+          AND xact_start < NOW() - INTERVAL '5 minutes'
+      ),
+      'long_running_queries_over_1min', (
+        SELECT COALESCE(jsonb_agg(
+          jsonb_build_object(
+            'pid', pid,
+            'duration_seconds', EXTRACT(EPOCH FROM (NOW() - query_start))::int,
+            'query', LEFT(query, 200)
+          )
+        ), '[]'::jsonb)
+        FROM pg_stat_activity
+        WHERE state = 'active'
+          AND query_start < NOW() - INTERVAL '1 minute'
+          AND query NOT LIKE '%opus_evolution_snapshot%'
+      )
+    ),
+
+    -- Database-level stats WITH uptime context.
+    -- counters_since: clusters started / stats reset; used to compute per-day rate.
+    'database', (
+      SELECT jsonb_build_object(
+        'commits', xact_commit,
+        'rollbacks', xact_rollback,
+        'deadlocks', deadlocks,
+        'conflicts', conflicts,
+        'temp_files', temp_files,
+        'stats_reset', stats_reset,
+        'counters_since', COALESCE(stats_reset, pg_postmaster_start_time()),
+        'uptime_seconds', EXTRACT(EPOCH FROM (NOW() - COALESCE(stats_reset, pg_postmaster_start_time())))::bigint,
+        'uptime_days', ROUND(EXTRACT(EPOCH FROM (NOW() - COALESCE(stats_reset, pg_postmaster_start_time())))::numeric / 86400, 1),
+        'deadlocks_per_day', CASE
+          WHEN EXTRACT(EPOCH FROM (NOW() - COALESCE(stats_reset, pg_postmaster_start_time()))) > 0
+          THEN ROUND(deadlocks::numeric / EXTRACT(EPOCH FROM (NOW() - COALESCE(stats_reset, pg_postmaster_start_time()))) * 86400, 2)
+          ELSE NULL
+        END,
+        'note', 'deadlocks/conflicts/temp_files are CUMULATIVE since counters_since, NOT last 24h. Use *_per_day for rate.'
+      )
+      FROM pg_stat_database
+      WHERE datname = current_database()
+    )
+  ) INTO result;
+
+  RETURN result;
+END;
+$function$
+;
+
+CREATE OR REPLACE FUNCTION public.get_totp_encryption_key()
+ RETURNS text
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public', 'vault'
+AS $function$
+DECLARE
+  v_role TEXT;
+  v_key TEXT;
+BEGIN
+  v_role := current_setting('request.jwt.claims', true)::jsonb->>'role';
+  IF v_role IS NULL OR v_role = 'anon' OR v_role = 'authenticated' THEN
+    RAISE EXCEPTION 'get_totp_encryption_key: forbidden for role %', coalesce(v_role, 'unknown');
+  END IF;
+
+  SELECT decrypted_secret INTO v_key
+  FROM vault.decrypted_secrets
+  WHERE name = 'totp_encryption_key'
+  LIMIT 1;
+
+  IF v_key IS NULL THEN
+    RAISE EXCEPTION 'totp_encryption_key not found in vault';
+  END IF;
+
+  RETURN v_key;
+END $function$
+;
+
+CREATE OR REPLACE FUNCTION public.audit_cascade_orphans()
+ RETURNS jsonb
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+DECLARE
+  v_report JSONB := '[]'::jsonb;
+  v_count INTEGER;
+BEGIN
+  -- 1. activity_log polymorphic entity_id against known entity_type tables with matching uuid PKs.
+  --    quote_requests excluded (bigint PK, incompatible with entity_id uuid).
+  SELECT COUNT(*)::int INTO v_count
+  FROM activity_log al
+  WHERE al.entity_type IN ('work_order', 'fleet_preflight_check', 'dispatched_task')
+    AND al.entity_id IS NOT NULL
+    AND NOT EXISTS (
+      SELECT 1 FROM work_orders wo WHERE al.entity_type = 'work_order' AND wo.id = al.entity_id
+      UNION ALL
+      SELECT 1 FROM fleet_preflight_checks pc WHERE al.entity_type = 'fleet_preflight_check' AND pc.id = al.entity_id
+      UNION ALL
+      SELECT 1 FROM dispatched_tasks dt WHERE al.entity_type = 'dispatched_task' AND dt.id = al.entity_id
+    );
+  IF v_count > 0 THEN
+    v_report := v_report || jsonb_build_object('check', 'activity_log.entity_id', 'orphan_count', v_count);
+  END IF;
+
+  -- 2. compliance_records.evidence_ref polymorphic against known evidence_table values.
+  SELECT COUNT(*)::int INTO v_count
+  FROM compliance_records cr
+  WHERE cr.evidence_ref IS NOT NULL
+    AND cr.evidence_table = 'otdr_reports'
+    AND NOT EXISTS (SELECT 1 FROM otdr_reports o WHERE o.id = cr.evidence_ref);
+  IF v_count > 0 THEN
+    v_report := v_report || jsonb_build_object('check', 'compliance_records.evidence_ref[otdr_reports]', 'orphan_count', v_count);
+  END IF;
+
+  SELECT COUNT(*)::int INTO v_count
+  FROM compliance_records cr
+  WHERE cr.evidence_ref IS NOT NULL
+    AND cr.evidence_table = 'work_orders'
+    AND NOT EXISTS (SELECT 1 FROM work_orders wo WHERE wo.id = cr.evidence_ref);
+  IF v_count > 0 THEN
+    v_report := v_report || jsonb_build_object('check', 'compliance_records.evidence_ref[work_orders]', 'orphan_count', v_count);
+  END IF;
+
+  -- 3. notification_queue.work_order_ref (text) against work_orders.reference (text).
+  SELECT COUNT(*)::int INTO v_count
+  FROM notification_queue nq
+  WHERE nq.work_order_ref IS NOT NULL AND nq.work_order_ref <> ''
+    AND NOT EXISTS (SELECT 1 FROM work_orders wo WHERE wo.reference = nq.work_order_ref);
+  IF v_count > 0 THEN
+    v_report := v_report || jsonb_build_object('check', 'notification_queue.work_order_ref', 'orphan_count', v_count);
+  END IF;
+
+  -- 4. technician_timesheets.technician_id (text) against technicians.id::text OR technicians.name.
+  SELECT COUNT(*)::int INTO v_count
+  FROM technician_timesheets tt
+  WHERE tt.technician_id IS NOT NULL
+    AND NOT EXISTS (
+      SELECT 1 FROM technicians t
+      WHERE t.id::text = tt.technician_id OR t.name = tt.technician_id
+    );
+  IF v_count > 0 THEN
+    v_report := v_report || jsonb_build_object('check', 'technician_timesheets.technician_id', 'orphan_count', v_count);
+  END IF;
+
+  -- 5. technician_timesheets.vehicle_id (text) against fleet_vehicles.vehicle_id (text).
+  SELECT COUNT(*)::int INTO v_count
+  FROM technician_timesheets tt
+  WHERE tt.vehicle_id IS NOT NULL
+    AND NOT EXISTS (SELECT 1 FROM fleet_vehicles fv WHERE fv.vehicle_id = tt.vehicle_id);
+  IF v_count > 0 THEN
+    v_report := v_report || jsonb_build_object('check', 'technician_timesheets.vehicle_id', 'orphan_count', v_count);
+  END IF;
+
+  RETURN jsonb_build_object(
+    'run_at', now(),
+    'checks_run', 6,
+    'orphans_found', jsonb_array_length(v_report),
+    'findings', v_report
+  );
+END $function$
+;
+
+CREATE OR REPLACE FUNCTION public.audit_cascade_orphans_cron()
+ RETURNS void
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+declare
+  v_report jsonb;
+  v_orphans integer;
+begin
+  v_report := public.audit_cascade_orphans();
+  v_orphans := (v_report->>'orphans_found')::int;
+
+  if v_orphans > 0 then
+    insert into public.ai_evolution_logs (
+      system_component, category, severity, observation, root_cause, suggested_fix,
+      status, impact_score, confidence, data_source, evidence_json, fingerprint,
+      observation_count, first_seen_at, last_seen_at, created_at, updated_at
+    ) values (
+      'database_integrity',
+      'cascade_orphan_audit',
+      case when v_orphans >= 10 then 'high' when v_orphans >= 3 then 'medium' else 'low' end,
+      format('Cascade orphan audit found %s categories of orphaned rows across audit/notification tables.', v_orphans),
+      'Audit/notification rows reference a source row (work_order, dispatched_task, etc.) that no longer exists. Root cause is usually over-aggressive cleanup of source rows without cleaning their cascade trail first.',
+      'Review findings_json. For each: delete orphans if safe, add proper FK with ON DELETE semantics, or accept as historical with nulled reference.',
+      'pending',
+      case when v_orphans >= 10 then 7 when v_orphans >= 3 then 5 else 3 end,
+      1.0,
+      'postgres_trigger',
+      v_report,
+      'cascade_orphan_audit_' || to_char(now(), 'YYYY_MM_DD'),
+      1,
+      now(), now(), now(), now()
+    )
+    on conflict (fingerprint) where status='pending'
+    do update set
+      observation_count = ai_evolution_logs.observation_count + 1,
+      last_seen_at = now(),
+      evidence_json = excluded.evidence_json,
+      updated_at = now();
+  end if;
+end;
+$function$
+;
+
+CREATE OR REPLACE FUNCTION public.dispatch_quote_to_fieldpack(p_quote_id bigint, p_crew text DEFAULT NULL::text, p_zone text DEFAULT NULL::text, p_priority text DEFAULT 'medium'::text, p_dispatched_by text DEFAULT 'tcc'::text)
+ RETURNS TABLE(fp_job_id text, quote_id bigint, status text, created_at timestamp with time zone)
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+DECLARE
+  v_quote       public.quote_requests;
+  v_fp_id       text;
+  v_zone        text;
+  v_title       text;
+  v_existing_fp text;
+BEGIN
+  -- 1. Fetch the quote
+  SELECT * INTO v_quote FROM public.quote_requests WHERE id = p_quote_id;
+  IF v_quote IS NULL THEN
+    RAISE EXCEPTION 'Quote request % not found', p_quote_id;
+  END IF;
+
+  -- 2. Idempotency: if already dispatched, return the existing dispatch
+  IF v_quote.fp_job_id IS NOT NULL THEN
+    RETURN QUERY
+      SELECT j.id, v_quote.id, j.status, j.created_at
+      FROM public.fp_jobs j
+      WHERE j.id = v_quote.fp_job_id;
+    RETURN;
+  END IF;
+
+  -- 3. Generate FP job id: FP-<quote_id>-<epoch>
+  v_fp_id := format('FP-%s-%s', p_quote_id, to_char(now(), 'YYYYMMDDHH24MISS'));
+
+  -- 4. Derive zone + title
+  v_zone  := COALESCE(p_zone, v_quote.parish, split_part(COALESCE(v_quote.location,''), ',', -1));
+  v_title := format(
+    'Site Survey — %s — %s',
+    COALESCE(NULLIF(v_quote.company_name,''), v_quote.customer_name, 'Customer'),
+    COALESCE(NULLIF(v_quote.location,''), 'Location TBD')
+  );
+
+  -- 5. Insert fp_jobs row
+  INSERT INTO public.fp_jobs (
+    id, title, zone, crew, status, priority,
+    source_quote_id, customer_name, customer_email, customer_phone, company_name,
+    address, parish, latitude, longitude,
+    bandwidth_required, service_type,
+    satellite_image_url, street_view_url,
+    dispatched_at, dispatched_by, data_source
+  ) VALUES (
+    v_fp_id, v_title, v_zone, COALESCE(p_crew,''), 'planned', COALESCE(p_priority,'medium'),
+    v_quote.id, v_quote.customer_name, v_quote.customer_email, v_quote.customer_phone, v_quote.company_name,
+    v_quote.location, v_quote.parish, v_quote.latitude, v_quote.longitude,
+    v_quote.bandwidth_required, COALESCE(v_quote.service_requested, v_quote.quote_type),
+    v_quote.satellite_image_url, v_quote.street_view_url,
+    now(), p_dispatched_by, 'tcc_dispatch'
+  );
+
+  -- 6. Update quote_requests
+  UPDATE public.quote_requests
+     SET fp_job_id          = v_fp_id,
+         exported_to_fp_at  = now(),
+         exported_to_fp_by  = p_dispatched_by,
+         status             = CASE WHEN status = 'new' THEN 'dispatched' ELSE status END,
+         updated_at         = now()
+   WHERE id = p_quote_id;
+
+  -- 7. Return confirmation
+  RETURN QUERY
+    SELECT v_fp_id, p_quote_id, 'planned'::text, now();
+END;
+$function$
+;
+
+CREATE OR REPLACE FUNCTION public._fp_jobs_lifecycle_trigger()
+ RETURNS trigger
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+DECLARE
+  v_event text;
+  v_prev  text;
+  v_new   text;
+  v_reason text;
+  v_actor text;
+BEGIN
+  IF TG_OP = 'INSERT' THEN
+    v_event := 'dispatched';
+    v_new   := NEW.crew;
+    v_actor := COALESCE(NEW.dispatched_by, 'system');
+
+    INSERT INTO public.fp_job_events (fp_job_id, event_type, new_value, actor, metadata)
+    VALUES (NEW.id, v_event, v_new, v_actor,
+            jsonb_build_object('title', NEW.title, 'status', NEW.status, 'priority', NEW.priority, 'zone', NEW.zone));
+
+    PERFORM public._fp_fire_push_notification('dispatched', NEW, v_actor, NULL);
+
+  ELSIF TG_OP = 'UPDATE' THEN
+    -- Cancellation
+    IF NEW.status = 'cancelled' AND (OLD.status IS DISTINCT FROM 'cancelled') THEN
+      v_reason := NEW.cancellation_reason;
+      v_actor  := COALESCE(NEW.cancelled_by, 'system');
+
+      INSERT INTO public.fp_job_events (fp_job_id, event_type, previous_value, new_value, reason, actor)
+      VALUES (NEW.id, 'cancelled', OLD.status, NEW.status, v_reason, v_actor);
+
+      PERFORM public._fp_fire_push_notification('cancelled', NEW, v_actor, v_reason);
+
+    -- Reassignment (crew changed, not via cancellation)
+    ELSIF NEW.crew IS DISTINCT FROM OLD.crew AND NEW.status <> 'cancelled' THEN
+      v_actor := COALESCE(NEW.reassigned_by, 'system');
+
+      INSERT INTO public.fp_job_events (fp_job_id, event_type, previous_value, new_value, reason, actor, metadata)
+      VALUES (NEW.id, 'reassigned', OLD.crew, NEW.crew, NEW.cancellation_reason, v_actor,
+              jsonb_build_object('previous_crew', OLD.crew, 'new_crew', NEW.crew));
+
+      PERFORM public._fp_fire_push_notification('reassigned', NEW, v_actor, NULL);
+
+    -- Completed
+    ELSIF NEW.status = 'done' AND OLD.status IS DISTINCT FROM 'done' THEN
+      INSERT INTO public.fp_job_events (fp_job_id, event_type, previous_value, new_value)
+      VALUES (NEW.id, 'completed', OLD.status, NEW.status);
+
+    -- Generic status change
+    ELSIF NEW.status IS DISTINCT FROM OLD.status THEN
+      INSERT INTO public.fp_job_events (fp_job_id, event_type, previous_value, new_value)
+      VALUES (NEW.id, 'status_change', OLD.status, NEW.status);
+    END IF;
+  END IF;
+
+  RETURN NEW;
+END;
+$function$
+;
+
+CREATE OR REPLACE FUNCTION public.reassign_fp_job_crew(p_fp_job_id text, p_new_crew text, p_reassigned_by text DEFAULT 'tcc'::text, p_reason text DEFAULT NULL::text)
+ RETURNS TABLE(fp_job_id text, previous_crew text, new_crew text, reassigned_at timestamp with time zone)
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+DECLARE
+  v_old_crew text;
+BEGIN
+  IF p_new_crew IS NULL OR p_new_crew = '' THEN
+    RAISE EXCEPTION 'new_crew cannot be empty';
+  END IF;
+
+  SELECT crew INTO v_old_crew FROM public.fp_jobs WHERE id = p_fp_job_id;
+  IF v_old_crew IS NULL THEN
+    RAISE EXCEPTION 'fp_job % not found', p_fp_job_id;
+  END IF;
+
+  IF v_old_crew = p_new_crew THEN
+    RAISE EXCEPTION 'fp_job % is already assigned to crew %', p_fp_job_id, p_new_crew;
+  END IF;
+
+  UPDATE public.fp_jobs
+     SET previous_crew = crew,
+         crew          = p_new_crew,
+         reassigned_at = now(),
+         reassigned_by = p_reassigned_by,
+         cancellation_reason = CASE WHEN p_reason IS NOT NULL THEN p_reason ELSE cancellation_reason END,
+         updated_at    = now()
+   WHERE id = p_fp_job_id;
+
+  RETURN QUERY
+    SELECT p_fp_job_id, v_old_crew, p_new_crew, now();
+END;
+$function$
+;
+
+CREATE OR REPLACE FUNCTION public.cancel_fp_dispatch(p_fp_job_id text, p_reason text, p_cancelled_by text DEFAULT 'tcc'::text)
+ RETURNS TABLE(fp_job_id text, source_quote_id bigint, status text, cancelled_at timestamp with time zone)
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+DECLARE
+  v_job public.fp_jobs;
+BEGIN
+  IF p_reason IS NULL OR length(trim(p_reason)) < 3 THEN
+    RAISE EXCEPTION 'cancellation_reason must be at least 3 characters';
+  END IF;
+
+  SELECT * INTO v_job FROM public.fp_jobs WHERE id = p_fp_job_id;
+  IF v_job IS NULL THEN
+    RAISE EXCEPTION 'fp_job % not found', p_fp_job_id;
+  END IF;
+
+  IF v_job.status = 'cancelled' THEN
+    RAISE EXCEPTION 'fp_job % is already cancelled', p_fp_job_id;
+  END IF;
+
+  IF v_job.status = 'done' THEN
+    RAISE EXCEPTION 'fp_job % is already completed — cannot cancel', p_fp_job_id;
+  END IF;
+
+  -- Mark fp_job cancelled (trigger fires push + audit)
+  UPDATE public.fp_jobs
+     SET status              = 'cancelled',
+         cancelled_at        = now(),
+         cancelled_by        = p_cancelled_by,
+         cancellation_reason = p_reason,
+         updated_at          = now()
+   WHERE id = p_fp_job_id;
+
+  -- Release the quote so it can be re-dispatched
+  IF v_job.source_quote_id IS NOT NULL THEN
+    UPDATE public.quote_requests
+       SET fp_job_id         = NULL,
+           exported_to_fp_at = NULL,
+           exported_to_fp_by = NULL,
+           status            = CASE WHEN status = 'dispatched' THEN 'new' ELSE status END,
+           updated_at        = now()
+     WHERE id = v_job.source_quote_id;
+  END IF;
+
+  RETURN QUERY
+    SELECT p_fp_job_id, v_job.source_quote_id, 'cancelled'::text, now();
+END;
+$function$
+;
+
+CREATE OR REPLACE FUNCTION public.private_get_anon_key()
+ RETURNS text
+ LANGUAGE sql
+ SECURITY DEFINER
+ SET search_path TO 'vault', 'public'
+AS $function$
+  SELECT decrypted_secret FROM vault.decrypted_secrets WHERE name = 'supabase_anon_key' LIMIT 1;
+$function$
+;
+
+CREATE OR REPLACE FUNCTION public.trg_fp_jobs_push_on_dispatch()
+ RETURNS trigger
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public', 'extensions'
+AS $function$
+DECLARE
+  v_url         text := 'https://egztpclpcnizcdtfugsv.supabase.co/functions/v1/send-field-push';
+  v_anon_key    text;
+  v_category    text;
+  v_title       text;
+  v_body        text;
+  v_maps_url    text;
+  v_payload     jsonb;
+  v_request_id  bigint;
+BEGIN
+  -- Skip if no crew assigned
+  IF NEW.crew IS NULL OR NEW.crew = '' THEN
+    RETURN NEW;
+  END IF;
+
+  -- On UPDATE, only fire if crew actually changed
+  IF TG_OP = 'UPDATE' THEN
+    IF OLD.crew IS NOT DISTINCT FROM NEW.crew THEN
+      RETURN NEW;
+    END IF;
+    v_category := 'reassignment';
+    v_title    := '🔄 Job Reassigned';
+    v_body     := format('You have been reassigned: %s', NEW.title);
+  ELSE
+    v_category := 'dispatch';
+    v_title    := '📋 New Job Dispatched';
+    v_body     := format('%s — %s', NEW.title, COALESCE(NEW.address, NEW.zone, ''));
+  END IF;
+
+  -- Skip if cancelled
+  IF NEW.status = 'cancelled' THEN
+    RETURN NEW;
+  END IF;
+
+  -- Build Google Maps URL
+  IF NEW.latitude IS NOT NULL AND NEW.longitude IS NOT NULL THEN
+    v_maps_url := format('https://www.google.com/maps/search/?api=1&query=%s,%s', NEW.latitude, NEW.longitude);
+  ELSIF NEW.address IS NOT NULL THEN
+    v_maps_url := 'https://www.google.com/maps/search/?api=1&query=' || replace(NEW.address, ' ', '+');
+  END IF;
+
+  -- Fetch anon key from Vault
+  v_anon_key := private_get_anon_key();
+  IF v_anon_key IS NULL THEN
+    RAISE WARNING 'supabase_anon_key missing from Vault — skipping push for %', NEW.id;
+    RETURN NEW;
+  END IF;
+
+  -- Assemble payload for send-field-push
+  v_payload := jsonb_build_object(
+    'fp_job_id',           NEW.id,
+    'crew',                NEW.crew,
+    'title',               v_title,
+    'body',                v_body,
+    'category',            v_category,
+    'priority',            COALESCE(NEW.priority, 'medium'),
+    'status',              NEW.status,
+    'zone',                NEW.zone,
+    'customer_name',       NEW.customer_name,
+    'company_name',        NEW.company_name,
+    'address',             NEW.address,
+    'parish',              NEW.parish,
+    'latitude',            NEW.latitude,
+    'longitude',           NEW.longitude,
+    'bandwidth_required',  NEW.bandwidth_required,
+    'service_type',        NEW.service_type,
+    'satellite_image_url', NEW.satellite_image_url,
+    'street_view_url',     NEW.street_view_url,
+    'maps_url',            v_maps_url,
+    'source_quote_id',     NEW.source_quote_id,
+    'dispatched_at',       NEW.dispatched_at,
+    'dispatched_by',       NEW.dispatched_by
+  );
+
+  -- Fire-and-forget async HTTP POST via pg_net
+  SELECT net.http_post(
+    url     := v_url,
+    body    := v_payload,
+    headers := jsonb_build_object(
+                 'Content-Type',  'application/json',
+                 'Authorization', 'Bearer ' || v_anon_key
+               ),
+    timeout_milliseconds := 5000
+  ) INTO v_request_id;
+
+  -- Log the attempt (delivery confirmation flows back via edge function updating the log)
+  INSERT INTO public.dispatch_push_log (
+    id, job_reference, technician_id, title, body, category, delivered, apns_response, data_source
+  ) VALUES (
+    gen_random_uuid(), NEW.id, NEW.crew, v_title, v_body, v_category,
+    NULL, format('pg_net request_id=%s', v_request_id), 'tcc_trigger'
+  );
+
+  RETURN NEW;
+END;
+$function$
+;
+
+CREATE OR REPLACE FUNCTION public.fp_jobs_reassign_crew(p_fp_job_id text, p_new_crew text, p_reassigned_by text DEFAULT 'tcc'::text)
+ RETURNS TABLE(fp_job_id text, old_crew text, new_crew text, updated_at timestamp with time zone)
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+DECLARE
+  v_job public.fp_jobs;
+BEGIN
+  SELECT * INTO v_job FROM public.fp_jobs WHERE id = p_fp_job_id FOR UPDATE;
+  IF v_job IS NULL THEN
+    RAISE EXCEPTION 'FieldPack job % not found', p_fp_job_id;
+  END IF;
+
+  IF p_new_crew IS NULL OR btrim(p_new_crew) = '' THEN
+    RAISE EXCEPTION 'New crew cannot be empty — use fp_jobs_cancel_dispatch to unassign';
+  END IF;
+
+  IF v_job.status = 'cancelled' THEN
+    RAISE EXCEPTION 'Cannot reassign a cancelled job. Redispatch from the source quote instead.';
+  END IF;
+
+  IF v_job.crew = p_new_crew THEN
+    -- Idempotent: no change
+    RETURN QUERY SELECT v_job.id, v_job.crew, v_job.crew, v_job.updated_at;
+    RETURN;
+  END IF;
+
+  UPDATE public.fp_jobs
+     SET crew          = p_new_crew,
+         dispatched_by = p_reassigned_by,
+         dispatched_at = now(),
+         updated_at    = now(),
+         notes         = COALESCE(notes || E'\n', '') ||
+                         format('[%s] Reassigned from %s to %s by %s',
+                                to_char(now(), 'YYYY-MM-DD HH24:MI'),
+                                COALESCE(NULLIF(v_job.crew,''), 'unassigned'),
+                                p_new_crew,
+                                p_reassigned_by)
+   WHERE id = p_fp_job_id;
+
+  RETURN QUERY
+    SELECT p_fp_job_id, v_job.crew, p_new_crew, now();
+END;
+$function$
+;
+
+CREATE OR REPLACE FUNCTION public.fp_jobs_cancel_dispatch(p_fp_job_id text, p_cancelled_by text DEFAULT 'tcc'::text, p_reason text DEFAULT NULL::text)
+ RETURNS TABLE(fp_job_id text, quote_id bigint, status text, cancelled_at timestamp with time zone)
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+DECLARE
+  v_job   public.fp_jobs;
+  v_quote bigint;
+BEGIN
+  SELECT * INTO v_job FROM public.fp_jobs WHERE id = p_fp_job_id FOR UPDATE;
+  IF v_job IS NULL THEN
+    RAISE EXCEPTION 'FieldPack job % not found', p_fp_job_id;
+  END IF;
+
+  IF v_job.status = 'cancelled' THEN
+    -- Idempotent
+    RETURN QUERY SELECT v_job.id, v_job.source_quote_id, v_job.status, v_job.updated_at;
+    RETURN;
+  END IF;
+
+  IF v_job.status = 'done' THEN
+    RAISE EXCEPTION 'Cannot cancel a completed job — create a rework ticket instead';
+  END IF;
+
+  v_quote := v_job.source_quote_id;
+
+  -- Cancel the FP job
+  UPDATE public.fp_jobs
+     SET status     = 'cancelled',
+         updated_at = now(),
+         notes      = COALESCE(notes || E'\n', '') ||
+                      format('[%s] Cancelled by %s. Reason: %s',
+                             to_char(now(), 'YYYY-MM-DD HH24:MI'),
+                             p_cancelled_by,
+                             COALESCE(p_reason, 'not specified'))
+   WHERE id = p_fp_job_id;
+
+  -- Unlink quote_requests so it can be redispatched if needed
+  IF v_quote IS NOT NULL THEN
+    UPDATE public.quote_requests
+       SET fp_job_id         = NULL,
+           exported_to_fp_at = NULL,
+           exported_to_fp_by = NULL,
+           status            = CASE WHEN status = 'dispatched' THEN 'new' ELSE status END,
+           updated_at        = now(),
+           notes             = COALESCE(notes || E'\n', '') ||
+                               format('[%s] Dispatch %s cancelled by %s. Reason: %s',
+                                      to_char(now(), 'YYYY-MM-DD HH24:MI'),
+                                      p_fp_job_id,
+                                      p_cancelled_by,
+                                      COALESCE(p_reason, 'not specified'))
+     WHERE id = v_quote;
+  END IF;
+
+  -- Log explicit cancellation push (trigger won't fire for this path because crew unchanged)
+  INSERT INTO public.dispatch_push_log (
+    id, job_reference, technician_id, title, body, category, delivered, apns_response, data_source
+  ) VALUES (
+    gen_random_uuid(), p_fp_job_id, v_job.crew,
+    '❌ Job Cancelled',
+    format('Job %s cancelled: %s', v_job.title, COALESCE(p_reason, 'no reason provided')),
+    'cancellation',
+    NULL, 'queued-by-cancel-rpc', 'tcc_cancel'
+  );
+
+  RETURN QUERY SELECT p_fp_job_id, v_quote, 'cancelled'::text, now();
+END;
+$function$
+;
+
+CREATE OR REPLACE FUNCTION public.get_olt_credentials_key()
+ RETURNS text
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public', 'vault'
+AS $function$
+DECLARE
+  v_role TEXT;
+  v_key TEXT;
+BEGIN
+  v_role := current_setting('request.jwt.claims', true)::jsonb->>'role';
+  IF v_role IS NULL OR v_role = 'anon' OR v_role = 'authenticated' THEN
+    RAISE EXCEPTION 'get_olt_credentials_key: forbidden for role %', coalesce(v_role, 'unknown');
+  END IF;
+
+  SELECT decrypted_secret INTO v_key
+  FROM vault.decrypted_secrets
+  WHERE name = 'olt_credentials_key'
+  LIMIT 1;
+
+  IF v_key IS NULL THEN
+    RAISE EXCEPTION 'olt_credentials_key not found in vault';
+  END IF;
+
+  RETURN v_key;
+END $function$
+;
+
+CREATE OR REPLACE FUNCTION public.build_system_digest()
+ RETURNS jsonb
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public', 'pg_catalog'
+AS $function$
+DECLARE
+  v_window_start TIMESTAMPTZ := now() - interval '24 hours';
+  v_window_end TIMESTAMPTZ := now();
+  v_digest_date DATE := (v_window_end AT TIME ZONE 'UTC')::date;
+
+  v_http_total INT; v_http_errors INT; v_http_error_rate NUMERIC(5,2); v_http_top_errors JSONB;
+  v_cron_total INT; v_cron_failed INT; v_cron_failed_jobs JSONB;
+  v_evo_new INT; v_evo_by_severity JSONB; v_evo_high_crit JSONB;
+  v_orphans INT;
+  v_deadlocks_now INT; v_rollbacks_now BIGINT; v_commits_now BIGINT;
+  v_fleet_24h INT;
+  v_overall TEXT; v_digest_id UUID;
+BEGIN
+  SELECT COUNT(*) INTO v_http_total FROM net._http_response WHERE created > v_window_start;
+  SELECT COUNT(*) INTO v_http_errors FROM net._http_response
+    WHERE created > v_window_start AND (status_code >= 400 OR error_msg IS NOT NULL);
+  v_http_error_rate := CASE WHEN v_http_total > 0
+    THEN ROUND((v_http_errors::numeric / v_http_total) * 100, 2) ELSE 0 END;
+
+  SELECT COALESCE(jsonb_agg(jsonb_build_object(
+           'status_code', status_code, 'error', error, 'count', cnt
+         ) ORDER BY cnt DESC), '[]'::jsonb)
+    INTO v_http_top_errors
+  FROM (
+    SELECT status_code,
+           COALESCE(LEFT(error_msg, 100), 'HTTP ' || status_code::text) AS error,
+           COUNT(*) AS cnt
+    FROM net._http_response
+    WHERE created > v_window_start AND (status_code >= 400 OR error_msg IS NOT NULL)
+    GROUP BY status_code, LEFT(error_msg, 100)
+    ORDER BY COUNT(*) DESC LIMIT 5
+  ) x;
+
+  SELECT COUNT(*) INTO v_cron_total FROM cron.job_run_details WHERE start_time > v_window_start;
+  SELECT COUNT(*) INTO v_cron_failed FROM cron.job_run_details
+    WHERE start_time > v_window_start AND status = 'failed';
+
+  SELECT COALESCE(jsonb_agg(jsonb_build_object(
+           'jobname', jobname, 'failures', failures, 'last_failure_at', last_failure_at
+         ) ORDER BY failures DESC), '[]'::jsonb)
+    INTO v_cron_failed_jobs
+  FROM (
+    SELECT j.jobname, COUNT(*) AS failures, MAX(jr.start_time) AS last_failure_at
+    FROM cron.job_run_details jr
+    JOIN cron.job j ON j.jobid = jr.jobid
+    WHERE jr.start_time > v_window_start AND jr.status = 'failed'
+    GROUP BY j.jobname
+  ) x;
+
+  -- CHANGE: only count findings newly discovered AND still pending (unresolved).
+  -- Resolved/monitoring findings from the window are tracked but not counted as "new unresolved".
+  SELECT COUNT(*) INTO v_evo_new
+  FROM ai_evolution_logs
+  WHERE first_seen_at > v_window_start
+    AND status = 'pending';
+
+  SELECT COALESCE(jsonb_object_agg(severity, count), '{}'::jsonb) INTO v_evo_by_severity
+  FROM (
+    SELECT severity, COUNT(*) AS count
+    FROM ai_evolution_logs
+    WHERE first_seen_at > v_window_start AND status = 'pending'
+    GROUP BY severity
+  ) x;
+
+  SELECT COALESCE(jsonb_agg(jsonb_build_object(
+           'severity', severity, 'category', category,
+           'observation', LEFT(observation, 200),
+           'fingerprint', fingerprint, 'status', status
+         )), '[]'::jsonb)
+    INTO v_evo_high_crit
+  FROM ai_evolution_logs
+  WHERE first_seen_at > v_window_start
+    AND status = 'pending'
+    AND severity IN ('high', 'critical');
+
+  SELECT COALESCE(MAX((evidence_json->>'orphans_found')::int), 0) INTO v_orphans
+  FROM ai_evolution_logs
+  WHERE category = 'cascade_orphan_audit' AND last_seen_at > v_window_start;
+
+  SELECT deadlocks, xact_rollback, xact_commit
+    INTO v_deadlocks_now, v_rollbacks_now, v_commits_now
+  FROM pg_stat_database WHERE datname = current_database();
+
+  SELECT COUNT(*) INTO v_fleet_24h FROM fleet_telemetry WHERE recorded_at > v_window_start;
+
+  -- Overall: red = unresolved critical OR systemic cron failure; amber = unresolved high or real errors
+  v_overall := CASE
+    WHEN v_cron_failed > 5 OR v_http_error_rate > 10 OR (v_evo_by_severity ? 'critical') THEN 'red'
+    WHEN v_cron_failed > 0 OR v_http_error_rate > 2 OR (v_evo_by_severity ? 'high') OR v_orphans > 0 THEN 'amber'
+    ELSE 'green'
+  END;
+
+  INSERT INTO system_digests (
+    digest_date, window_start, window_end, overall_status,
+    http_total, http_errors, http_error_rate_pct, http_top_errors,
+    cron_total_runs, cron_failed_runs, cron_failed_jobs,
+    evolution_new_findings, evolution_by_severity, evolution_high_critical,
+    cascade_orphans_found,
+    db_deadlocks_delta, db_rollbacks_delta, db_commits_delta,
+    fleet_telemetry_24h, data_source
+  ) VALUES (
+    v_digest_date, v_window_start, v_window_end, v_overall,
+    v_http_total, v_http_errors, v_http_error_rate, v_http_top_errors,
+    v_cron_total, v_cron_failed, v_cron_failed_jobs,
+    v_evo_new, v_evo_by_severity, v_evo_high_crit,
+    v_orphans,
+    v_deadlocks_now, v_rollbacks_now, v_commits_now,
+    v_fleet_24h, 'postgres_trigger'
+  )
+  ON CONFLICT (digest_date) DO UPDATE SET
+    window_start = EXCLUDED.window_start, window_end = EXCLUDED.window_end,
+    overall_status = EXCLUDED.overall_status,
+    http_total = EXCLUDED.http_total, http_errors = EXCLUDED.http_errors,
+    http_error_rate_pct = EXCLUDED.http_error_rate_pct, http_top_errors = EXCLUDED.http_top_errors,
+    cron_total_runs = EXCLUDED.cron_total_runs, cron_failed_runs = EXCLUDED.cron_failed_runs,
+    cron_failed_jobs = EXCLUDED.cron_failed_jobs,
+    evolution_new_findings = EXCLUDED.evolution_new_findings,
+    evolution_by_severity = EXCLUDED.evolution_by_severity,
+    evolution_high_critical = EXCLUDED.evolution_high_critical,
+    cascade_orphans_found = EXCLUDED.cascade_orphans_found,
+    db_deadlocks_delta = EXCLUDED.db_deadlocks_delta,
+    db_rollbacks_delta = EXCLUDED.db_rollbacks_delta,
+    db_commits_delta = EXCLUDED.db_commits_delta,
+    fleet_telemetry_24h = EXCLUDED.fleet_telemetry_24h,
+    created_at = now()
+  RETURNING id INTO v_digest_id;
+
+  RETURN jsonb_build_object(
+    'ok', true, 'digest_id', v_digest_id, 'digest_date', v_digest_date,
+    'overall_status', v_overall, 'http_errors', v_http_errors,
+    'cron_failed', v_cron_failed, 'evolution_new_unresolved', v_evo_new, 'orphans', v_orphans
+  );
+END $function$
+;
+
+CREATE OR REPLACE FUNCTION public.network_snapshots_guard_insert()
+ RETURNS trigger
+ LANGUAGE plpgsql
+ SET search_path TO 'public', 'pg_catalog', 'extensions'
+AS $function$
+BEGIN
+  IF NEW.data_source IS NULL THEN
+    RAISE EXCEPTION 'network_snapshots insert from %: data_source is required. Valid values come from is_valid_data_source(). If you are a new writer, set data_source to the caller identity (e.g. ''real_api_integration'', ''postgres_trigger'', or a producer slug registered in the is_valid_data_source function).',
+      COALESCE(NEW.created_by, 'unknown_producer');
+  END IF;
+  RETURN NEW;
+END $function$
+;
+
+CREATE OR REPLACE FUNCTION public.soc2_signatures_block_update()
+ RETURNS trigger
+ LANGUAGE plpgsql
+ SET search_path TO 'public', 'pg_catalog', 'extensions'
+AS $function$
+BEGIN
+  RAISE EXCEPTION 'soc2_signatures rows are immutable. Create a new row to record a new signature, or archive the policy to invalidate.';
+END $function$
+;
+
+CREATE OR REPLACE FUNCTION public.touch_updated_at()
+ RETURNS trigger
+ LANGUAGE plpgsql
+ SET search_path TO 'public', 'pg_catalog', 'extensions'
+AS $function$
+    BEGIN NEW.updated_at = now(); RETURN NEW; END $function$
+;
+
+CREATE OR REPLACE FUNCTION public.has_soc2_admin_role()
+ RETURNS boolean
+ LANGUAGE sql
+ STABLE SECURITY DEFINER
+ SET search_path TO 'public', 'pg_catalog', 'extensions'
+AS $function$
+  SELECT EXISTS (
+    SELECT 1 FROM public.profiles
+    WHERE id = auth.uid() AND role IN ('admin','coo','ceo')
+  );
+$function$
+;
+
+CREATE OR REPLACE FUNCTION public.has_soc2_read_role()
+ RETURNS boolean
+ LANGUAGE sql
+ STABLE SECURITY DEFINER
+ SET search_path TO 'public', 'pg_catalog', 'extensions'
+AS $function$
+  SELECT EXISTS (
+    SELECT 1 FROM public.profiles
+    WHERE id = auth.uid() AND role IN ('admin','coo','ceo','auditor')
+  );
+$function$
+;
+
+CREATE OR REPLACE FUNCTION public.touch_claude_artifacts_updated_at()
+ RETURNS trigger
+ LANGUAGE plpgsql
+ SET search_path TO 'public', 'pg_catalog', 'extensions'
+AS $function$
+BEGIN
+    NEW.updated_at = NOW();
+    RETURN NEW;
+END;
+$function$
+;
+
+CREATE OR REPLACE FUNCTION public.is_tellinex_staff()
+ RETURNS boolean
+ LANGUAGE sql
+ STABLE SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+  SELECT COALESCE((auth.jwt() ->> 'email') LIKE '%@tellinex.com', false);
+$function$
+;
+
+CREATE OR REPLACE FUNCTION public.fn_audit_row_change()
+ RETURNS trigger
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public', 'pg_catalog'
+AS $function$
+DECLARE
+  v_old  jsonb;
+  v_new  jsonb;
+  v_diff text[];
+  v_key  text;
+  v_pk   text;
+BEGIN
+  -- Build old/new snapshots depending on op
+  IF TG_OP = 'INSERT' THEN
+    v_old := NULL;
+    v_new := to_jsonb(NEW);
+  ELSIF TG_OP = 'UPDATE' THEN
+    v_old := to_jsonb(OLD);
+    v_new := to_jsonb(NEW);
+  ELSIF TG_OP = 'DELETE' THEN
+    v_old := to_jsonb(OLD);
+    v_new := NULL;
+  END IF;
+
+  -- Compute changed fields for UPDATE (JSONB subtract → object of diffs; keys are field names)
+  IF TG_OP = 'UPDATE' THEN
+    SELECT array_agg(key) INTO v_diff
+    FROM jsonb_each(v_new)
+    WHERE v_new->key IS DISTINCT FROM v_old->key
+      AND key NOT IN ('updated_at');  -- updated_at is set by unrelated triggers, noise in audit
+  END IF;
+
+  -- Derive primary key string — try common names, fall back to empty
+  v_pk := COALESCE(
+    (v_new->>'id'),  (v_old->>'id'),
+    (v_new->>'uuid'),(v_old->>'uuid'),
+    ''
+  );
+
+  INSERT INTO public.audit_log (
+    table_name, operation, row_id,
+    actor_uid, actor_email, actor_role,
+    client_ip, request_path,
+    old_row, new_row, changed_fields
+  ) VALUES (
+    TG_TABLE_NAME, TG_OP, v_pk,
+    auth.uid(),
+    NULLIF(auth.jwt()->>'email', ''),
+    NULLIF(auth.jwt()->>'role',  ''),
+    NULLIF(current_setting('request.headers', true)::jsonb->>'x-real-ip','')::inet,
+    NULLIF(current_setting('request.headers', true)::jsonb->>'x-forwarded-uri',''),
+    v_old, v_new, v_diff
+  );
+
+  IF TG_OP = 'DELETE' THEN RETURN OLD; ELSE RETURN NEW; END IF;
+EXCEPTION WHEN OTHERS THEN
+  -- Never fail the originating operation because of an audit-log issue.
+  -- Log to postgres log and carry on. A missing audit row will surface
+  -- in the SOC2 audit-gap check query (see view below).
+  RAISE WARNING 'audit_log insert failed for %/%: %', TG_TABLE_NAME, TG_OP, SQLERRM;
+  IF TG_OP = 'DELETE' THEN RETURN OLD; ELSE RETURN NEW; END IF;
+END;
+$function$
+;
+
+CREATE OR REPLACE FUNCTION public.fn_ecosystem_backlog_set_updated()
+ RETURNS trigger
+ LANGUAGE plpgsql
+ SET search_path TO 'public', 'pg_catalog', 'extensions'
+AS $function$
+BEGIN
+  NEW.updated_at := now();
+  IF NEW.status = 'done' AND OLD.status <> 'done' THEN
+    NEW.completed_at := now();
+  END IF;
+  RETURN NEW;
+END;
+$function$
+;
+
+CREATE OR REPLACE FUNCTION public.raise_alarm(p_alarm_type text, p_severity text, p_message text, p_source_table text, p_source_row_id uuid DEFAULT NULL::uuid, p_asset_id uuid DEFAULT NULL::uuid, p_details jsonb DEFAULT '{}'::jsonb, p_dedup_window interval DEFAULT '00:05:00'::interval, p_ingestion text DEFAULT 'trigger'::text)
+ RETURNS uuid
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+DECLARE
+  v_existing       public.alarms;
+  v_new_id         uuid;
+  v_asset_type     text;
+  v_parish         text;
+  v_lat            double precision;
+  v_lng            double precision;
+BEGIN
+  IF p_severity NOT IN ('info','warning','minor','major','critical') THEN
+    RAISE EXCEPTION 'invalid severity: %', p_severity;
+  END IF;
+
+  IF p_asset_id IS NOT NULL THEN
+    SELECT asset_type, latitude, longitude
+      INTO v_asset_type, v_lat, v_lng
+    FROM public.network_assets
+    WHERE id = p_asset_id;
+  END IF;
+  
+  -- Parish from details payload (weather, customer alarms put it there)
+  v_parish := p_details->>'parish';
+
+  SELECT * INTO v_existing
+  FROM public.alarms
+  WHERE dedup_key = (coalesce(p_asset_id::text, 'noasset') || ':' || p_alarm_type)
+    AND cleared_at IS NULL
+    AND last_seen_at > now() - p_dedup_window
+  ORDER BY raised_at DESC
+  LIMIT 1;
+
+  IF v_existing.id IS NOT NULL THEN
+    UPDATE public.alarms
+    SET reassertion_count = reassertion_count + 1,
+        last_seen_at = now(),
+        details = details || p_details,
+        severity = CASE
+          WHEN array_position(ARRAY['info','warning','minor','major','critical'], p_severity) >
+               array_position(ARRAY['info','warning','minor','major','critical'], severity)
+          THEN p_severity ELSE severity END,
+        message = CASE WHEN reassertion_count > 5 THEN message ELSE p_message END
+    WHERE id = v_existing.id;
+    RETURN v_existing.id;
+  END IF;
+
+  INSERT INTO public.alarms (
+    alarm_type, severity, message, details,
+    asset_id, asset_type_hint, parish, latitude, longitude,
+    source_table, source_row_id, ingestion_method
+  ) VALUES (
+    p_alarm_type, p_severity, p_message, p_details,
+    p_asset_id, v_asset_type, v_parish, v_lat, v_lng,
+    p_source_table, p_source_row_id, p_ingestion
+  )
+  RETURNING id INTO v_new_id;
+
+  RETURN v_new_id;
+END;
+$function$
+;
+
+CREATE OR REPLACE FUNCTION public.clear_alarm(p_alarm_id uuid, p_reason text DEFAULT 'auto-cleared'::text)
+ RETURNS boolean
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+BEGIN
+  UPDATE public.alarms
+  SET cleared_at = now(),
+      notes = coalesce(notes || ' | ', '') || 'Cleared: ' || p_reason
+  WHERE id = p_alarm_id AND cleared_at IS NULL;
+  
+  RETURN FOUND;
+END;
+$function$
+;
+
+CREATE OR REPLACE FUNCTION public.auto_clear_stale_alarms()
+ RETURNS integer
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+DECLARE
+  v_count integer;
+BEGIN
+  WITH stale AS (
+    UPDATE public.alarms
+    SET cleared_at = now(),
+        notes = coalesce(notes || ' | ', '') || 'auto-cleared (no reassertion 30min)'
+    WHERE cleared_at IS NULL
+      AND last_seen_at < now() - interval '30 minutes'
+    RETURNING id
+  )
+  SELECT count(*) FROM stale INTO v_count;
+  
+  RETURN v_count;
+END;
+$function$
+;
+
+CREATE OR REPLACE FUNCTION public.fn_bridge_chamber_sensor_alerts()
+ RETURNS trigger
+ LANGUAGE plpgsql
+ SET search_path TO 'public', 'pg_catalog', 'extensions'
+AS $function$
+DECLARE
+  v_severity text;
+BEGIN
+  -- Map chamber_sensor_alerts fields to our severity scale.
+  -- Schema-tolerant: if a column doesn't exist, fall back gracefully.
+  v_severity := COALESCE(
+    NULLIF(LOWER(NEW.severity::text), ''),
+    'warning'
+  );
+  IF v_severity NOT IN ('info','warning','minor','major','critical') THEN
+    v_severity := 'warning';
+  END IF;
+  
+  PERFORM public.raise_alarm(
+    p_alarm_type    => 'chamber_sensor_' || COALESCE(NEW.alert_type, 'unknown'),
+    p_severity      => v_severity,
+    p_message       => COALESCE(NEW.description, NEW.alert_type, 'Chamber sensor alert'),
+    p_source_table  => 'chamber_sensor_alerts',
+    p_source_row_id => NEW.id,
+    p_asset_id      => NEW.chamber_id,
+    p_details       => to_jsonb(NEW)
+  );
+  RETURN NEW;
+END;
+$function$
+;
+
+CREATE OR REPLACE FUNCTION public.fn_bridge_predictive_alerts()
+ RETURNS trigger
+ LANGUAGE plpgsql
+ SET search_path TO 'public', 'pg_catalog', 'extensions'
+AS $function$
+BEGIN
+  PERFORM public.raise_alarm(
+    p_alarm_type    => 'predictive_' || COALESCE(NEW.alert_type, 'failure'),
+    p_severity      => CASE
+                         WHEN NEW.confidence_score >= 0.85 THEN 'major'
+                         WHEN NEW.confidence_score >= 0.70 THEN 'warning'
+                         ELSE 'info'
+                       END,
+    p_message       => COALESCE(NEW.description, 'Predictive maintenance alert'),
+    p_source_table  => 'predictive_alerts',
+    p_source_row_id => NEW.id,
+    p_asset_id      => NEW.asset_id,
+    p_details       => to_jsonb(NEW)
+  );
+  RETURN NEW;
+END;
+$function$
+;
+
+CREATE OR REPLACE FUNCTION public.fn_bridge_intrusion_alerts()
+ RETURNS trigger
+ LANGUAGE plpgsql
+ SET search_path TO 'public', 'pg_catalog', 'extensions'
+AS $function$
+BEGIN
+  PERFORM public.raise_alarm(
+    p_alarm_type    => 'security_intrusion',
+    p_severity      => 'major',
+    p_message       => COALESCE(NEW.alert_message, 'Unauthorised chamber access detected'),
+    p_source_table  => 'intrusion_alerts',
+    p_source_row_id => NEW.id,
+    p_asset_id      => NEW.asset_id,
+    p_details       => to_jsonb(NEW)
+  );
+  RETURN NEW;
+END;
+$function$
+;
+
+CREATE OR REPLACE FUNCTION public.fn_bridge_weather_alerts()
+ RETURNS trigger
+ LANGUAGE plpgsql
+ SET search_path TO 'public', 'pg_catalog', 'extensions'
+AS $function$
+BEGIN
+  PERFORM public.raise_alarm(
+    p_alarm_type    => 'weather_' || COALESCE(NEW.alert_type, 'warning'),
+    p_severity      => CASE COALESCE(LOWER(NEW.severity::text), 'warning')
+                         WHEN 'extreme' THEN 'critical'
+                         WHEN 'severe'  THEN 'major'
+                         WHEN 'moderate' THEN 'warning'
+                         ELSE 'info'
+                       END,
+    p_message       => COALESCE(NEW.message, NEW.alert_type, 'Weather alert'),
+    p_source_table  => 'weather_alerts',
+    p_source_row_id => NEW.id,
+    p_asset_id      => NULL,
+    p_details       => to_jsonb(NEW)
+  );
+  RETURN NEW;
+END;
+$function$
+;
+
+CREATE OR REPLACE FUNCTION public.run_fault_correlation()
+ RETURNS TABLE(incidents_created integer, incidents_updated integer, alarms_correlated integer)
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+DECLARE
+  v_window_minutes  integer := 15;
+  v_created         integer := 0;
+  v_updated         integer := 0;
+  v_correlated      integer := 0;
+  v_incident_id     uuid;
+  v_grp             record;
+  v_root            record;
+  v_alarm           record;
+  v_incident_sev    text;
+  v_incident_type   text;
+  v_root_alarm_type text;
+BEGIN
+  FOR v_grp IN
+    SELECT
+      COALESCE(a.parish, 'unknown') AS parish_key,
+      date_trunc('minute', a.raised_at) - 
+        (EXTRACT(MINUTE FROM a.raised_at)::integer % v_window_minutes) * interval '1 minute' AS time_bucket,
+      array_agg(a.id) AS alarm_ids,
+      count(*) AS alarm_count,
+      max(a.severity) AS max_severity,
+      min(a.raised_at) AS first_alarm_at
+    FROM public.alarms a
+    WHERE a.primary_incident_id IS NULL
+      AND a.cleared_at IS NULL
+      AND a.raised_at > now() - interval '24 hours'
+    GROUP BY parish_key, time_bucket
+    HAVING count(*) >= 1
+  LOOP
+    SELECT a.asset_id, a.asset_type_hint, a.alarm_type
+    INTO v_root
+    FROM public.alarms a
+    WHERE a.id = ANY(v_grp.alarm_ids) AND a.asset_id IS NOT NULL
+    ORDER BY
+      CASE LOWER(COALESCE(a.asset_type_hint, ''))
+        WHEN 'hub' THEN 1 WHEN 'olt' THEN 2 WHEN 'cabinet' THEN 3
+        WHEN 'fdh' THEN 4 WHEN 'splitter' THEN 5 WHEN 'csp' THEN 6
+        WHEN 'joint_bay' THEN 7 WHEN 'toby_box' THEN 8 ELSE 9 END,
+      a.severity DESC, a.raised_at ASC
+    LIMIT 1;
+    
+    -- If no asset-bound alarm, pick the most-severe one for type derivation
+    IF v_root.alarm_type IS NULL THEN
+      SELECT a.alarm_type INTO v_root_alarm_type
+      FROM public.alarms a
+      WHERE a.id = ANY(v_grp.alarm_ids)
+      ORDER BY a.severity DESC LIMIT 1;
+      v_root.alarm_type := v_root_alarm_type;
+    END IF;
+    
+    v_incident_sev  := public.map_alarm_to_incident_severity(v_grp.max_severity);
+    v_incident_type := public.map_alarm_type_to_incident_type(v_root.asset_type_hint, v_root.alarm_type);
+
+    SELECT id INTO v_incident_id
+    FROM public.network_incidents
+    WHERE status IN ('active','investigating','dispatched')
+      AND (
+        (root_cause_asset_id IS NOT NULL AND root_cause_asset_id = v_root.asset_id)
+        OR (affected_parish IS NOT NULL AND affected_parish = v_grp.parish_key
+            AND created_at > now() - interval '2 hours')
+      )
+    ORDER BY created_at DESC
+    LIMIT 1;
+
+    IF v_incident_id IS NULL THEN
+      INSERT INTO public.network_incidents (
+        type, city, map_x, map_y, title, detail, status,
+        affected_customers, severity, affected_parish,
+        root_cause_asset_id, correlated_alarm_count, first_alarm_at,
+        data_source
+      ) VALUES (
+        v_incident_type,
+        COALESCE(v_grp.parish_key, 'unknown'),
+        0, 0,
+        CASE 
+          WHEN v_grp.alarm_count > 5 THEN 'Major event — ' || v_grp.alarm_count || ' alarms in ' || v_grp.parish_key
+          WHEN v_grp.alarm_count > 1 THEN 'Correlated event — ' || v_grp.alarm_count || ' alarms'
+          ELSE 'Single alarm — ' || v_grp.parish_key
+        END,
+        'Auto-grouped by correlation engine. ' || v_grp.alarm_count || ' raw alarms.',
+        'active', 0, v_incident_sev, v_grp.parish_key,
+        v_root.asset_id, v_grp.alarm_count, v_grp.first_alarm_at,
+        'real_api_integration'
+      )
+      RETURNING id INTO v_incident_id;
+      v_created := v_created + 1;
+    ELSE
+      UPDATE public.network_incidents
+      SET correlated_alarm_count = correlated_alarm_count + v_grp.alarm_count,
+          severity = CASE 
+            WHEN array_position(ARRAY['info','degraded','outage','critical'], v_incident_sev) >
+                 array_position(ARRAY['info','degraded','outage','critical'], severity)
+            THEN v_incident_sev ELSE severity END,
+          updated_at = now()
+      WHERE id = v_incident_id;
+      v_updated := v_updated + 1;
+    END IF;
+
+    FOR v_alarm IN
+      SELECT id, asset_id FROM public.alarms WHERE id = ANY(v_grp.alarm_ids)
+    LOOP
+      UPDATE public.alarms
+      SET primary_incident_id = v_incident_id,
+          correlated_at = now(),
+          correlation_confidence = CASE
+            WHEN v_alarm.asset_id = v_root.asset_id THEN 1.00
+            WHEN v_alarm.asset_id IS NOT NULL AND v_root.asset_id IS NOT NULL
+              AND EXISTS (
+                SELECT 1 FROM public.network_topology_links l
+                WHERE (l.from_asset_id = v_alarm.asset_id AND l.to_asset_id = v_root.asset_id)
+                   OR (l.to_asset_id = v_alarm.asset_id AND l.from_asset_id = v_root.asset_id)
+              ) THEN 0.85
+            WHEN v_alarm.asset_id IS NOT NULL THEN 0.50
+            ELSE 0.30
+          END
+      WHERE id = v_alarm.id;
+      
+      INSERT INTO public.alarm_incident_links (alarm_id, incident_id, confidence, reasoning, is_primary)
+      VALUES (
+        v_alarm.id, v_incident_id,
+        CASE WHEN v_alarm.asset_id = v_root.asset_id THEN 1.00 ELSE 0.50 END,
+        'parish+15min window. Root: ' || COALESCE(v_root.asset_type_hint, 'unknown'),
+        true
+      ) ON CONFLICT (alarm_id, incident_id) DO NOTHING;
+      
+      v_correlated := v_correlated + 1;
+    END LOOP;
+  END LOOP;
+  
+  RETURN QUERY SELECT v_created, v_updated, v_correlated;
+END;
+$function$
+;
+
+CREATE OR REPLACE FUNCTION public.map_alarm_to_incident_severity(p_sev text)
+ RETURNS text
+ LANGUAGE sql
+ IMMUTABLE
+ SET search_path TO 'public', 'pg_catalog', 'extensions'
+AS $function$
+  SELECT CASE p_sev
+    WHEN 'critical' THEN 'critical'
+    WHEN 'major'    THEN 'outage'
+    WHEN 'minor'    THEN 'degraded'
+    WHEN 'warning'  THEN 'degraded'
+    WHEN 'info'     THEN 'info'
+    ELSE 'info'
+  END;
+$function$
+;
+
+CREATE OR REPLACE FUNCTION public.map_alarm_type_to_incident_type(p_asset_type text, p_alarm_type text)
+ RETURNS text
+ LANGUAGE sql
+ IMMUTABLE
+ SET search_path TO 'public', 'pg_catalog', 'extensions'
+AS $function$
+  SELECT CASE
+    WHEN p_alarm_type LIKE 'weather_%' THEN 'weather'
+    WHEN p_alarm_type LIKE '%cut%' OR p_alarm_type LIKE '%fibre%' THEN 'fibre_cut'
+    WHEN p_alarm_type LIKE '%power%' THEN 'power_outage'
+    WHEN p_alarm_type LIKE '%congestion%' OR p_alarm_type LIKE '%bandwidth%' THEN 'congestion'
+    WHEN p_asset_type IN ('olt','splitter','cabinet','fdh','hub','csp','joint_bay','toby_box') THEN 'equipment_failure'
+    ELSE 'outage'
+  END;
+$function$
+;
+
+CREATE OR REPLACE FUNCTION public.safe_make_point(lat double precision, lng double precision)
+ RETURNS geography
+ LANGUAGE sql
+ IMMUTABLE PARALLEL SAFE
+ SET search_path TO 'public', 'pg_catalog', 'extensions'
+AS $function$
+  SELECT CASE
+    WHEN lat IS NULL OR lng IS NULL THEN NULL
+    WHEN lat NOT BETWEEN -90 AND 90 THEN NULL
+    WHEN lng NOT BETWEEN -180 AND 180 THEN NULL
+    ELSE ST_SetSRID(ST_MakePoint(lng, lat), 4326)::geography
+  END
+$function$
+;
+
+CREATE OR REPLACE FUNCTION public.distance_metres(lat1 double precision, lng1 double precision, lat2 double precision, lng2 double precision)
+ RETURNS double precision
+ LANGUAGE sql
+ IMMUTABLE PARALLEL SAFE
+ SET search_path TO 'public', 'pg_catalog', 'extensions'
+AS $function$
+  SELECT ST_Distance(
+    public.safe_make_point(lat1, lng1),
+    public.safe_make_point(lat2, lng2)
+  )
+$function$
+;
+
+CREATE OR REPLACE FUNCTION public.trigger_predict_blast_radius()
+ RETURNS trigger
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public', 'extensions'
+AS $function$
+BEGIN
+  IF NEW.root_cause_asset_id IS NULL THEN
+    RETURN NEW;
+  END IF;
+  IF TG_OP = 'UPDATE' AND OLD.root_cause_asset_id IS NOT DISTINCT FROM NEW.root_cause_asset_id THEN
+    RETURN NEW;
+  END IF;
+
+  PERFORM net.http_post(
+    url     := 'https://egztpclpcnizcdtfugsv.supabase.co/functions/v1/predict-blast-radius',
+    headers := jsonb_build_object(
+      'Content-Type',  'application/json',
+      'Authorization', 'Bearer sb_publishable_BK64lFYCrgPZuTGf4s3Gmg_XBj3-NtU'
+    ),
+    body    := jsonb_build_object('incident_id', NEW.id::text),
+    timeout_milliseconds := 5000
+  );
+
+  RETURN NEW;
+END
+$function$
+;
+
+CREATE OR REPLACE FUNCTION public.refresh_stale_blast_radius_predictions()
+ RETURNS integer
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public', 'extensions'
+AS $function$
+DECLARE
+  v_incident record;
+  v_count integer := 0;
+BEGIN
+  FOR v_incident IN 
+    SELECT id 
+    FROM public.network_incidents
+    WHERE resolved_at IS NULL
+      AND root_cause_asset_id IS NOT NULL
+      AND (
+        predicted_at IS NULL
+        OR predicted_by_engine_version IS DISTINCT FROM 'v2.0.0'
+        OR predicted_at < (NOW() - INTERVAL '1 hour')
+      )
+    ORDER BY predicted_at NULLS FIRST
+    LIMIT 20
+  LOOP
+    PERFORM net.http_post(
+      url     := 'https://egztpclpcnizcdtfugsv.supabase.co/functions/v1/predict-blast-radius',
+      headers := jsonb_build_object(
+        'Content-Type',  'application/json',
+        'Authorization', 'Bearer sb_publishable_BK64lFYCrgPZuTGf4s3Gmg_XBj3-NtU'
+      ),
+      body    := jsonb_build_object('incident_id', v_incident.id::text),
+      timeout_milliseconds := 5000
+    );
+    v_count := v_count + 1;
+  END LOOP;
+  
+  RETURN v_count;
+END
+$function$
+;
+
+CREATE OR REPLACE FUNCTION public.evaluate_incident_sla(p_incident_id uuid)
+ RETURNS integer
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+DECLARE
+  v_incident             record;
+  v_customer_ref         text;
+  v_tier                 text;
+  v_tier_def             record;
+  v_breach_minutes       integer;
+  v_already_billable     integer;
+  v_remaining_allowance  integer;
+  v_billable             integer;
+  v_already_credited     numeric;
+  v_credit_uncapped      numeric;
+  v_credit               numeric;
+  v_count                integer := 0;
+  v_period_start         date;
+  v_period_end           date;
+BEGIN
+  SELECT id, root_cause_asset_id, first_alarm_at, resolved_at, predicted_blast_radius
+  INTO v_incident
+  FROM public.network_incidents
+  WHERE id = p_incident_id;
+
+  IF NOT FOUND OR v_incident.first_alarm_at IS NULL THEN
+    RETURN 0;
+  END IF;
+
+  v_breach_minutes := GREATEST(0, EXTRACT(EPOCH FROM (
+    COALESCE(v_incident.resolved_at, NOW()) - v_incident.first_alarm_at
+  ))::int / 60);
+
+  IF v_breach_minutes <= 0 THEN
+    RETURN 0;
+  END IF;
+
+  v_period_start := date_trunc('month', COALESCE(v_incident.resolved_at, NOW()))::date;
+  v_period_end   := (v_period_start + INTERVAL '1 month' - INTERVAL '1 day')::date;
+
+  IF v_incident.predicted_blast_radius IS NULL OR jsonb_array_length(COALESCE(v_incident.predicted_blast_radius->'affectedCustomerRefs', '[]'::jsonb)) = 0 THEN
+    RETURN 0;
+  END IF;
+
+  FOR v_customer_ref IN
+    SELECT jsonb_array_elements_text(v_incident.predicted_blast_radius->'affectedCustomerRefs')
+  LOOP
+    -- Customer's tier — read from customers.service_tier via account_number
+    -- which is the canonical customer_reference shape. Fall back to silver.
+    SELECT COALESCE(LOWER(service_tier), 'silver')
+    INTO v_tier
+    FROM public.customers
+    WHERE account_number = v_customer_ref
+    LIMIT 1;
+    IF v_tier IS NULL THEN
+      v_tier := 'silver';
+    END IF;
+
+    SELECT * INTO v_tier_def FROM public.sla_tiers WHERE tier = v_tier;
+    IF NOT FOUND THEN
+      RAISE NOTICE 'Unknown SLA tier % for customer %, skipping', v_tier, v_customer_ref;
+      CONTINUE;
+    END IF;
+
+    SELECT COALESCE(SUM(billable_minutes), 0)
+    INTO v_already_billable
+    FROM public.customer_sla_credits
+    WHERE customer_reference = v_customer_ref
+      AND incident_id <> p_incident_id
+      AND created_at >= v_period_start
+      AND created_at <= (v_period_end + INTERVAL '1 day')
+      AND status <> 'waived';
+
+    v_remaining_allowance := GREATEST(0, v_tier_def.monthly_allowance_minutes - v_already_billable);
+    v_billable := GREATEST(0, v_breach_minutes - v_remaining_allowance);
+
+    IF v_billable = 0 THEN CONTINUE; END IF;
+
+    SELECT COALESCE(SUM(credit_amount_usd), 0)
+    INTO v_already_credited
+    FROM public.customer_sla_credits
+    WHERE customer_reference = v_customer_ref
+      AND incident_id <> p_incident_id
+      AND created_at >= v_period_start
+      AND created_at <= (v_period_end + INTERVAL '1 day')
+      AND status <> 'waived';
+
+    v_credit_uncapped := v_billable * v_tier_def.credit_per_minute_usd;
+    v_credit := LEAST(v_credit_uncapped, v_tier_def.monthly_max_credit_usd - v_already_credited);
+    v_credit := GREATEST(0, v_credit);
+
+    IF v_credit = 0 THEN CONTINUE; END IF;
+
+    INSERT INTO public.customer_sla_credits (
+      customer_reference, incident_id, tier_at_breach,
+      breach_started_at, breach_resolved_at,
+      breach_duration_minutes, billable_minutes, credit_amount_usd
+    ) VALUES (
+      v_customer_ref, p_incident_id, v_tier,
+      v_incident.first_alarm_at, v_incident.resolved_at,
+      v_breach_minutes, v_billable, v_credit
+    )
+    ON CONFLICT (customer_reference, incident_id) DO UPDATE
+    SET breach_duration_minutes = EXCLUDED.breach_duration_minutes,
+        billable_minutes        = EXCLUDED.billable_minutes,
+        credit_amount_usd       = EXCLUDED.credit_amount_usd,
+        breach_resolved_at      = EXCLUDED.breach_resolved_at,
+        tier_at_breach          = EXCLUDED.tier_at_breach,
+        updated_at              = NOW();
+
+    v_count := v_count + 1;
+  END LOOP;
+
+  RETURN v_count;
+END
+$function$
+;
+
+CREATE OR REPLACE FUNCTION public.trigger_evaluate_incident_sla()
+ RETURNS trigger
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+BEGIN
+  -- Only fire on resolved_at transitioning from NULL to non-NULL
+  IF OLD.resolved_at IS NULL AND NEW.resolved_at IS NOT NULL THEN
+    PERFORM public.evaluate_incident_sla(NEW.id);
+  END IF;
+  RETURN NEW;
+END
+$function$
+;
+
+CREATE OR REPLACE FUNCTION public.evaluate_ongoing_incident_sla()
+ RETURNS integer
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+DECLARE
+  v_incident record;
+  v_total integer := 0;
+  v_count integer;
+BEGIN
+  FOR v_incident IN
+    SELECT id FROM public.network_incidents
+    WHERE resolved_at IS NULL
+      AND first_alarm_at IS NOT NULL
+      AND first_alarm_at < (NOW() - INTERVAL '1 hour')
+      AND predicted_blast_radius IS NOT NULL
+  LOOP
+    SELECT public.evaluate_incident_sla(v_incident.id) INTO v_count;
+    v_total := v_total + v_count;
+  END LOOP;
+  RETURN v_total;
+END
+$function$
+;
+
+CREATE OR REPLACE FUNCTION public.trigger_notify_status_page_subscribers()
+ RETURNS trigger
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public', 'extensions'
+AS $function$
+BEGIN
+  -- Only fire for active (not planned, not archived, not pre-resolved) incidents
+  IF NEW.status IS DISTINCT FROM 'active' THEN
+    RETURN NEW;
+  END IF;
+  IF NEW.resolved_at IS NOT NULL THEN
+    RETURN NEW;
+  END IF;
+
+  PERFORM net.http_post(
+    url     := 'https://egztpclpcnizcdtfugsv.supabase.co/functions/v1/notify-status-page-subscribers',
+    headers := jsonb_build_object(
+      'Content-Type', 'application/json',
+      'Authorization', 'Bearer sb_publishable_BK64lFYCrgPZuTGf4s3Gmg_XBj3-NtU'
+    ),
+    body    := jsonb_build_object('incident_id', NEW.id::text),
+    timeout_milliseconds := 8000
+  );
+
+  RETURN NEW;
+END
+$function$
+;
+
+CREATE OR REPLACE FUNCTION public.emit_incident_webhook_event(p_event_type text, p_incident jsonb)
+ RETURNS integer
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+DECLARE
+  v_webhook record;
+  v_count   integer := 0;
+BEGIN
+  FOR v_webhook IN
+    SELECT id
+    FROM public.api_webhooks
+    WHERE status = 'active'
+      AND p_event_type = ANY(event_filter)
+  LOOP
+    INSERT INTO public.api_webhook_deliveries (
+      webhook_id, event_type, payload, status, next_attempt_at, data_source
+    ) VALUES (
+      v_webhook.id,
+      p_event_type,
+      jsonb_build_object(
+        'event',     p_event_type,
+        'occurred_at', now(),
+        'incident',  p_incident
+      ),
+      'pending',
+      now(),
+      'system'
+    );
+    v_count := v_count + 1;
+  END LOOP;
+  RETURN v_count;
+END
+$function$
+;
+
+CREATE OR REPLACE FUNCTION public.trigger_emit_incident_webhooks()
+ RETURNS trigger
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+DECLARE
+  v_payload jsonb;
+BEGIN
+  -- Build a slim public-facing payload — same shape as the API.
+  v_payload := jsonb_build_object(
+    'id',                NEW.id,
+    'type',              NEW.type,
+    'severity',          NEW.severity,
+    'status',            NEW.status,
+    'title',             NEW.title,
+    'affected_parish',   NEW.affected_parish,
+    'first_alarm_at',    NEW.first_alarm_at,
+    'created_at',        NEW.created_at,
+    'resolved_at',       NEW.resolved_at,
+    'isolated_metres',   NEW.isolated_metres,
+    'predicted_blast_radius', NEW.predicted_blast_radius,
+    'predicted_at',      NEW.predicted_at
+  );
+
+  IF TG_OP = 'INSERT' THEN
+    PERFORM public.emit_incident_webhook_event('incident.opened', v_payload);
+    RETURN NEW;
+  END IF;
+
+  -- UPDATE branch
+  IF OLD.resolved_at IS NULL AND NEW.resolved_at IS NOT NULL THEN
+    PERFORM public.emit_incident_webhook_event('incident.resolved', v_payload);
+  ELSIF OLD.severity IS DISTINCT FROM NEW.severity 
+     OR OLD.status   IS DISTINCT FROM NEW.status THEN
+    PERFORM public.emit_incident_webhook_event('incident.updated', v_payload);
+  END IF;
+
+  RETURN NEW;
+END
+$function$
+;
+
+CREATE OR REPLACE FUNCTION public.api_consume_rate_token(p_api_key_id uuid)
+ RETURNS TABLE(allowed boolean, tokens_remaining numeric, retry_after_seconds integer)
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+DECLARE
+  v_rate           integer;
+  v_bucket_size    numeric;
+  v_tokens         numeric;
+  v_last_refill    timestamptz;
+  v_elapsed_sec    numeric;
+  v_refill         numeric;
+  v_new_tokens     numeric;
+  v_now            timestamptz := now();
+BEGIN
+  -- Lock the row to make the read-modify-write atomic.
+  SELECT 
+    COALESCE(rate_per_minute, 60),
+    bucket_tokens,
+    bucket_last_refill
+  INTO v_rate, v_tokens, v_last_refill
+  FROM public.api_keys
+  WHERE id = p_api_key_id
+  FOR UPDATE;
+
+  IF NOT FOUND THEN
+    -- Should not happen (caller looked up the key already), but be safe.
+    RETURN QUERY SELECT false, 0::numeric, 60;
+    RETURN;
+  END IF;
+
+  v_bucket_size := v_rate; -- bucket size == 1 minute of capacity
+
+  -- Refill: how many tokens to add for elapsed seconds, capped at bucket size.
+  v_elapsed_sec := EXTRACT(EPOCH FROM (v_now - v_last_refill));
+  v_refill      := v_elapsed_sec * v_rate / 60.0;
+  v_new_tokens  := LEAST(v_bucket_size, v_tokens + v_refill);
+
+  IF v_new_tokens >= 1 THEN
+    -- Allow + decrement
+    v_new_tokens := v_new_tokens - 1;
+    UPDATE public.api_keys
+       SET bucket_tokens = v_new_tokens,
+           bucket_last_refill = v_now,
+           request_count = request_count + 1
+     WHERE id = p_api_key_id;
+    RETURN QUERY SELECT true, v_new_tokens, 0;
+  ELSE
+    -- Reject + record refill so we don't double-count next call
+    UPDATE public.api_keys
+       SET bucket_tokens = v_new_tokens,
+           bucket_last_refill = v_now
+     WHERE id = p_api_key_id;
+    -- retry_after = ceil(seconds until next full token)
+    RETURN QUERY SELECT 
+      false,
+      v_new_tokens,
+      CEIL((1.0 - v_new_tokens) * 60.0 / v_rate)::integer;
+  END IF;
+END
+$function$
+;
+
+CREATE OR REPLACE FUNCTION public.compute_asset_health_score(p_asset_id uuid)
+ RETURNS TABLE(score numeric, components jsonb, recommended_action text)
+ LANGUAGE plpgsql
+ STABLE
+ SET search_path TO 'public', 'pg_catalog', 'extensions'
+AS $function$
+declare
+  v_alarms_7d int; v_alarms_30d int; v_alarms_90d int; v_critical_30d int;
+  v_open_alarms int; v_max_reassert int; v_oldest_open_age numeric;
+  v_age_years numeric; v_baseline_years numeric; v_age_factor numeric;
+  v_alarm_density numeric; v_severity_factor numeric; v_open_factor numeric;
+  v_reassert_factor numeric; v_score numeric; v_action text;
+  v_components jsonb; v_asset_type text;
+begin
+  select asset_type into v_asset_type from network_assets where id = p_asset_id;
+
+  select
+    count(*) filter (where raised_at > now() - interval '7 days'),
+    count(*) filter (where raised_at > now() - interval '30 days'),
+    count(*) filter (where raised_at > now() - interval '90 days'),
+    count(*) filter (where raised_at > now() - interval '30 days' and severity = 'critical'),
+    count(*) filter (where cleared_at is null),
+    coalesce(max(reassertion_count) filter (where raised_at > now() - interval '30 days'), 0),
+    coalesce(extract(epoch from now() - min(raised_at) filter (where cleared_at is null)) / 3600, 0)
+  into v_alarms_7d, v_alarms_30d, v_alarms_90d, v_critical_30d,
+       v_open_alarms, v_max_reassert, v_oldest_open_age
+  from alarms where asset_id = p_asset_id;
+
+  select coalesce(extract(epoch from now() - installed_date::timestamptz) / (86400 * 365.25), 0)
+  into v_age_years from network_assets where id = p_asset_id;
+
+  v_baseline_years := case
+    when v_asset_type ilike '%olt%'      then 12
+    when v_asset_type ilike '%ont%'      then  8
+    when v_asset_type ilike '%fdp%'      then 25
+    when v_asset_type ilike '%fat%'      then 25
+    when v_asset_type ilike '%joint%'    then 30
+    when v_asset_type ilike '%cable%'    then 30
+    when v_asset_type ilike '%chamber%'  then 50
+    when v_asset_type ilike '%duct%'     then 50
+    when v_asset_type ilike '%cabinet%'  then 20
+    when v_asset_type ilike '%cell%'     then 10
+    else 20
+  end;
+
+  v_alarm_density := greatest(0, 1.0 - (
+    v_alarms_7d  * 0.15 +
+    least(v_alarms_30d - v_alarms_7d, 10) * 0.04 +
+    least(v_alarms_90d - v_alarms_30d, 30) * 0.01
+  ));
+  v_severity_factor := greatest(0, 1.0 - v_critical_30d * 0.20);
+  v_open_factor := case
+    when v_open_alarms = 0 then 1.0
+    else greatest(0.05, 1.0 - least(v_oldest_open_age, 200) / 200.0 * 0.95)
+  end;
+  v_reassert_factor := greatest(0, 1.0 - least(v_max_reassert, 10) * 0.10);
+  v_age_factor := case
+    when v_age_years <= v_baseline_years * 0.5 then 1.0
+    when v_age_years <= v_baseline_years       then 1.0 - (v_age_years - v_baseline_years*0.5) / (v_baseline_years*0.5) * 0.5
+    when v_age_years <= v_baseline_years * 1.5 then 0.5 - (v_age_years - v_baseline_years) / (v_baseline_years*0.5) * 0.3
+    else 0.2
+  end;
+
+  v_score := round(
+    power(v_alarm_density,    0.30) *
+    power(v_severity_factor,  0.20) *
+    power(v_open_factor,      0.20) *
+    power(v_reassert_factor,  0.15) *
+    power(v_age_factor,       0.15)
+  , 3);
+  v_score := greatest(0, least(1, v_score));
+
+  v_action := case
+    when v_score < 0.10 then 'CRITICAL: pre-failure likely — schedule maintenance immediately'
+    when v_score < 0.30 then 'WARNING: schedule maintenance within 7 days'
+    when v_score < 0.60 then 'WATCH: monitor; consider preventive inspection at next visit'
+    when v_age_years > v_baseline_years then 'AGE: end-of-life by class baseline; plan replacement'
+    else 'OK: no action needed'
+  end;
+
+  v_components := jsonb_build_object(
+    'alarms_7d', v_alarms_7d, 'alarms_30d', v_alarms_30d, 'alarms_90d', v_alarms_90d,
+    'critical_30d', v_critical_30d, 'open_alarms', v_open_alarms,
+    'oldest_open_age_h', round(v_oldest_open_age, 1),
+    'max_reassert', v_max_reassert, 'age_years', round(v_age_years, 2),
+    'baseline_years', v_baseline_years, 'asset_type', v_asset_type,
+    'factor_alarm_density', round(v_alarm_density, 3),
+    'factor_severity', round(v_severity_factor, 3),
+    'factor_open', round(v_open_factor, 3),
+    'factor_reassert', round(v_reassert_factor, 3),
+    'factor_age', round(v_age_factor, 3)
+  );
+
+  return query select v_score, v_components, v_action;
+end;
+$function$
+;
+
+CREATE OR REPLACE FUNCTION public.refresh_asset_health_score(p_asset_id uuid)
+ RETURNS void
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public', 'pg_temp'
+AS $function$
+declare
+  v_score numeric; v_comp jsonb; v_action text;
+  v_prev numeric; v_trend text;
+  v_alert_id uuid; v_resolved_count int;
+begin
+  select score, components, recommended_action into v_score, v_comp, v_action
+  from compute_asset_health_score(p_asset_id);
+
+  select score into v_prev from asset_health_scores
+  where asset_id = p_asset_id order by computed_at desc limit 1;
+
+  v_trend := case
+    when v_prev is null then 'stable'
+    when v_score > v_prev + 0.05 then 'improving'
+    when v_score < v_prev - 0.05 then 'degrading'
+    else 'stable'
+  end;
+
+  insert into asset_health_scores (asset_id, score, components, trend, recommended_action)
+  values (p_asset_id, v_score, v_comp, v_trend, v_action);
+
+  update network_assets set health_score = (v_score * 100)::int
+  where id = p_asset_id;
+
+  delete from asset_health_rescore_queue where asset_id = p_asset_id;
+
+  if v_score < 0.30 then
+    v_alert_id := generate_predictive_alert_from_health_score(p_asset_id);
+  end if;
+
+  if v_score >= 0.40 then
+    update predictive_alerts
+    set resolved_at = now()
+    where asset_id = p_asset_id
+      and resolved_at is null
+      and alert_type in ('asset_health_warning', 'asset_health_critical');
+    get diagnostics v_resolved_count = row_count;
+
+    if v_resolved_count > 0 then
+      -- Use 'status_change' (in allow-list) for the auto-resolve event;
+      -- mark the kind in details so it's distinguishable.
+      insert into activity_log (action, entity_type, entity_id, details)
+      values (
+        'status_change',
+        'network_asset',
+        p_asset_id,
+        jsonb_build_object(
+          'kind',             'predictive_alert_auto_resolved',
+          'asset_id',         p_asset_id,
+          'recovered_score',  v_score,
+          'previous_score',   v_prev,
+          'alerts_resolved',  v_resolved_count
+        )
+      );
+    end if;
+  end if;
+end;
+$function$
+;
+
+CREATE OR REPLACE FUNCTION public.queue_asset_for_rescore(p_asset_id uuid, p_reason text DEFAULT NULL::text)
+ RETURNS void
+ LANGUAGE sql
+ SECURITY DEFINER
+ SET search_path TO 'public', 'pg_temp'
+AS $function$
+  insert into asset_health_rescore_queue (asset_id, reason)
+  values (p_asset_id, p_reason)
+  on conflict (asset_id) do update
+    set enqueued_at = now(),
+        reason = coalesce(excluded.reason, asset_health_rescore_queue.reason);
+$function$
+;
+
+CREATE OR REPLACE FUNCTION public.trg_alarm_change_queue_rescore()
+ RETURNS trigger
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public', 'pg_temp'
+AS $function$
+begin
+  if new.asset_id is not null then
+    perform queue_asset_for_rescore(new.asset_id, 'alarm_change:' || coalesce(new.alarm_type, '?'));
+  end if;
+  return new;
+end;
+$function$
+;
+
+CREATE OR REPLACE FUNCTION public.trg_incident_resolved_queue_rescore()
+ RETURNS trigger
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public', 'pg_temp'
+AS $function$
+begin
+  if new.status = 'resolved' and (old.status is null or old.status <> 'resolved') then
+    insert into asset_health_rescore_queue (asset_id, reason)
+    select distinct a.asset_id, 'incident_resolved:' || new.id::text
+    from alarms a
+    where a.primary_incident_id = new.id and a.asset_id is not null
+    on conflict (asset_id) do update set enqueued_at = now();
+  end if;
+  return new;
+end;
+$function$
+;
+
+CREATE OR REPLACE FUNCTION public.flush_asset_health_rescore_queue(p_limit integer DEFAULT 200)
+ RETURNS integer
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public', 'pg_temp'
+AS $function$
+declare
+  v_processed int := 0;
+  v_id uuid;
+begin
+  for v_id in
+    select asset_id from asset_health_rescore_queue
+    order by enqueued_at asc
+    limit p_limit
+  loop
+    perform refresh_asset_health_score(v_id);
+    v_processed := v_processed + 1;
+  end loop;
+  return v_processed;
+end;
+$function$
+;
+
+CREATE OR REPLACE FUNCTION public.enqueue_all_active_assets_for_rescore()
+ RETURNS integer
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public', 'pg_temp'
+AS $function$
+declare
+  v_count int;
+begin
+  insert into asset_health_rescore_queue (asset_id, reason)
+  select id, 'periodic_refresh' from network_assets
+  where status is null or status not in ('decommissioned', 'removed')
+  on conflict (asset_id) do nothing;
+  get diagnostics v_count = row_count;
+  return v_count;
+end;
+$function$
+;
+
+CREATE OR REPLACE FUNCTION public.generate_predictive_alert_from_health_score(p_asset_id uuid)
+ RETURNS uuid
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public', 'pg_temp'
+AS $function$
+declare
+  v_score numeric;
+  v_components jsonb;
+  v_action text;
+  v_severity text;
+  v_alert_type text;
+  v_probability integer;
+  v_confidence numeric;
+  v_asset_ref text;
+  v_asset_type text;
+  v_address text;
+  v_description text;
+  v_existing_id uuid;
+  v_alert_id uuid;
+begin
+  -- Read latest score
+  select score, components, recommended_action
+  into v_score, v_components, v_action
+  from asset_health_scores
+  where asset_id = p_asset_id
+  order by computed_at desc
+  limit 1;
+
+  if v_score is null then
+    return null;  -- no score yet, can't predict
+  end if;
+
+  -- Score >= 0.30 is 'watch' or 'ok' — do not generate an alert.
+  if v_score >= 0.30 then
+    return null;
+  end if;
+
+  -- Severity & alert_type from score band
+  if v_score < 0.10 then
+    v_severity := 'critical';
+    v_alert_type := 'asset_health_critical';
+  else
+    v_severity := 'warning';
+    v_alert_type := 'asset_health_warning';
+  end if;
+
+  -- Probability: invert health score (lower health = higher failure probability).
+  -- Score 0.10 → ~85%, score 0.05 → ~92%, score 0 → ~95%.
+  -- Above 0.30 we don't generate at all (handled above).
+  v_probability := least(95, greatest(50, round((1.0 - v_score) * 95)::integer));
+
+  -- Confidence: how solid is the signal. Components-driven.
+  -- Higher when alarms_30d > 5 AND open_alarms > 0 AND age_factor < 0.5.
+  v_confidence := least(0.99, greatest(0.30,
+    0.40
+    + case when (v_components->>'alarms_30d')::int > 5 then 0.20 else 0 end
+    + case when (v_components->>'open_alarms')::int > 0 then 0.15 else 0 end
+    + case when (v_components->>'critical_30d')::int > 0 then 0.15 else 0 end
+    + case when (v_components->>'factor_age')::numeric < 0.5 then 0.10 else 0 end
+  ));
+
+  -- Asset metadata for human-readable fields
+  select asset_ref, asset_type, address
+  into v_asset_ref, v_asset_type, v_address
+  from network_assets where id = p_asset_id;
+
+  v_description := format(
+    '%s %s flagged for predictive maintenance: health score %s (%s factors). %s',
+    coalesce(v_asset_type, 'Asset'),
+    coalesce(v_asset_ref, p_asset_id::text),
+    v_score,
+    coalesce(v_components->>'asset_type', 'unknown type'),
+    v_action
+  );
+
+  -- Idempotency: skip if an open alert of this type already exists.
+  -- (The unique partial index would also prevent this, but we want a quiet
+  -- no-op rather than an exception.)
+  select id into v_existing_id
+  from predictive_alerts
+  where asset_id = p_asset_id
+    and alert_type = v_alert_type
+    and resolved_at is null
+  limit 1;
+
+  if v_existing_id is not null then
+    return null;
+  end if;
+
+  -- Generate
+  insert into predictive_alerts (
+    alert_type, severity, asset_id, asset_ref,
+    confidence_score, probability, prediction_type,
+    description, recommendation, customer_message,
+    detected_at, data_source
+  ) values (
+    v_alert_type, v_severity, p_asset_id, v_asset_ref,
+    v_confidence, v_probability, 'asset_health_score',
+    v_description, v_action,
+    null,  -- customer_message left null for asset alerts; weather alerts populate it
+    now(), 'system'
+  )
+  returning id into v_alert_id;
+
+  return v_alert_id;
+end;
+$function$
+;
+
+CREATE OR REPLACE FUNCTION public.generate_predictive_work_order_ref()
+ RETURNS text
+ LANGUAGE sql
+ SET search_path TO 'public', 'pg_catalog', 'extensions'
+AS $function$
+  select 'PM-' || to_char(now(), 'YYYYMMDD') || '-' || substr(replace(gen_random_uuid()::text, '-', ''), 1, 6);
+$function$
+;
+
+CREATE OR REPLACE FUNCTION public.draft_predictive_work_order(p_asset_id uuid, p_health_score_id uuid, p_score numeric, p_components jsonb, p_action text)
+ RETURNS uuid
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public', 'pg_temp'
+AS $function$
+declare
+  v_existing_id uuid;
+  v_priority text;
+  v_title text;
+  v_description text;
+  v_asset_ref text;
+  v_asset_type text;
+  v_lat double precision;
+  v_lng double precision;
+  v_required_role text;
+  v_new_id uuid;
+  v_score_pct text;
+  v_severity_label text;
+begin
+  v_priority := case
+    when p_score < 0.10 then 'critical'
+    when p_score < 0.30 then 'high'
+    else 'normal'
+  end;
+
+  v_score_pct := round(p_score * 100)::text || '%';
+  v_severity_label := case
+    when p_score < 0.10 then 'CRITICAL — pre-failure likely'
+    when p_score < 0.30 then 'WARNING — schedule within 7 days'
+    else 'WATCH'
+  end;
+
+  select asset_ref, asset_type, latitude, longitude
+  into v_asset_ref, v_asset_type, v_lat, v_lng
+  from network_assets where id = p_asset_id;
+
+  v_required_role := case
+    when v_asset_type ilike '%olt%' or v_asset_type ilike '%ont%'
+      or v_asset_type ilike '%fdp%' or v_asset_type ilike '%fat%'
+      or v_asset_type ilike '%joint%' or v_asset_type ilike '%cable%'
+      then 'fibre_engineer'
+    when v_asset_type ilike '%chamber%' or v_asset_type ilike '%duct%'
+      then 'civils_contractor'
+    when v_asset_type ilike '%cabinet%' or v_asset_type ilike '%cell%'
+      then 'fibre_engineer'
+    else 'fibre_engineer'
+  end;
+
+  select id into v_existing_id
+  from work_orders
+  where triggering_asset_id = p_asset_id
+    and source_kind = 'predictive_maintenance'
+    and status not in ('completed','rejected','blocked')
+  limit 1;
+
+  if v_existing_id is not null then
+    update work_orders set
+      priority = case
+        when v_priority = 'critical' then 'critical'
+        when priority = 'critical' then 'critical'
+        else v_priority end,
+      triggering_health_score_id = p_health_score_id,
+      triggering_score = p_score,
+      triggering_components = p_components,
+      description = format(
+        E'PREDICTIVE MAINTENANCE — refreshed %s\n\nAsset %s (%s) health score %s\n\nAction: %s\n\nComponents:\n%s',
+        to_char(now(), 'YYYY-MM-DD HH24:MI'),
+        coalesce(v_asset_ref, p_asset_id::text),
+        coalesce(v_asset_type, 'unknown type'),
+        v_score_pct,
+        p_action,
+        p_components::text
+      ),
+      updated_at = now()
+    where id = v_existing_id;
+    return v_existing_id;
+  end if;
+
+  v_title := format(
+    'Predictive maintenance — %s (%s) health %s',
+    coalesce(v_asset_ref, p_asset_id::text),
+    coalesce(v_asset_type, 'asset'),
+    v_score_pct
+  );
+
+  v_description := format(
+    E'PREDICTIVE MAINTENANCE — auto-drafted by asset health system\n\n' ||
+    E'Asset %s (%s)\n' ||
+    E'Health score: %s — %s\n\n' ||
+    E'Recommended action: %s\n\n' ||
+    E'Component breakdown:\n%s\n\n' ||
+    E'This work order was created automatically because the asset crossed below the predictive maintenance threshold. ' ||
+    E'A technician should investigate before customer-impacting failure occurs. ' ||
+    E'If false alarm, mark this work order as rejected with notes — that signal feeds the model.',
+    coalesce(v_asset_ref, p_asset_id::text),
+    coalesce(v_asset_type, 'unknown'),
+    v_score_pct,
+    v_severity_label,
+    p_action,
+    p_components::text
+  );
+
+  insert into work_orders (
+    reference, title, description, priority, status, work_type, required_role,
+    planned_start_lat, planned_start_lng, planned_metres,
+    source_kind, triggering_asset_id, triggering_health_score_id,
+    triggering_score, triggering_components, data_source
+  ) values (
+    generate_predictive_work_order_ref(),
+    v_title,
+    v_description,
+    v_priority,
+    'pending',
+    'maintenance',
+    v_required_role,
+    v_lat, v_lng, 0,
+    'predictive_maintenance',
+    p_asset_id,
+    p_health_score_id,
+    p_score,
+    p_components,
+    'system'
+  )
+  returning id into v_new_id;
+
+  return v_new_id;
+end;
+$function$
+;
+
+CREATE OR REPLACE FUNCTION public.trg_health_score_draft_work_order()
+ RETURNS trigger
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public', 'pg_temp'
+AS $function$
+declare
+  v_action text;
+begin
+  if new.score < 0.30 then
+    v_action := coalesce(new.recommended_action, 'Schedule maintenance');
+    perform draft_predictive_work_order(
+      new.asset_id, new.id, new.score, new.components, v_action
+    );
+  end if;
+  return new;
+end;
+$function$
+;
+
+CREATE OR REPLACE FUNCTION public.emit_work_order_webhook_event(p_event_type text, p_work_order jsonb)
+ RETURNS integer
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public', 'pg_temp'
+AS $function$
+declare
+  v_webhook record;
+  v_count integer := 0;
+begin
+  for v_webhook in
+    select id from public.api_webhooks
+    where status = 'active' and p_event_type = any(event_filter)
+  loop
+    insert into public.api_webhook_deliveries (
+      webhook_id, event_type, payload, status, next_attempt_at, data_source
+    ) values (
+      v_webhook.id,
+      p_event_type,
+      jsonb_build_object(
+        'event',       p_event_type,
+        'occurred_at', now(),
+        'work_order',  p_work_order
+      ),
+      'pending',
+      now(),
+      'system'
+    );
+    v_count := v_count + 1;
+  end loop;
+  return v_count;
+end;
+$function$
+;
+
+CREATE OR REPLACE FUNCTION public.build_work_order_webhook_payload(p_wo_id uuid)
+ RETURNS jsonb
+ LANGUAGE sql
+ STABLE
+ SET search_path TO 'public', 'pg_catalog', 'extensions'
+AS $function$
+  select jsonb_build_object(
+    'id',                      wo.id,
+    'reference',               wo.reference,
+    'title',                   wo.title,
+    'priority',                wo.priority,
+    'status',                  wo.status,
+    'work_type',               wo.work_type,
+    'required_role',           wo.required_role,
+    'source_kind',             wo.source_kind,
+    'created_at',              wo.created_at,
+    'updated_at',              wo.updated_at,
+    'planned_start_lat',       wo.planned_start_lat,
+    'planned_start_lng',       wo.planned_start_lng,
+    'asset', jsonb_build_object(
+      'id',         na.id,
+      'asset_ref',  na.asset_ref,
+      'asset_type', na.asset_type,
+      'address',    na.address,
+      'latitude',   na.latitude,
+      'longitude',  na.longitude
+    ),
+    'health', jsonb_build_object(
+      'score',                 wo.triggering_score,
+      'computed_at',           ahs.computed_at,
+      'trend',                 ahs.trend,
+      'recommended_action',    ahs.recommended_action,
+      'components',            wo.triggering_components,
+      'flag_level',            case
+        when wo.triggering_score < 0.10 then 'critical'
+        when wo.triggering_score < 0.30 then 'warning'
+        else 'watch' end
+    )
+  )
+  from work_orders wo
+  left join network_assets na on na.id = wo.triggering_asset_id
+  left join asset_health_scores ahs on ahs.id = wo.triggering_health_score_id
+  where wo.id = p_wo_id;
+$function$
+;
+
+CREATE OR REPLACE FUNCTION public.trg_wo_predictive_drafted_emit()
+ RETURNS trigger
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public', 'pg_temp'
+AS $function$
+begin
+  if new.source_kind = 'predictive_maintenance' then
+    perform emit_work_order_webhook_event(
+      'work_order.predictive_drafted',
+      build_work_order_webhook_payload(new.id)
+    );
+  end if;
+  return new;
+end;
+$function$
+;
+
+CREATE OR REPLACE FUNCTION public.trg_wo_predictive_escalated_emit()
+ RETURNS trigger
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public', 'pg_temp'
+AS $function$
+begin
+  if new.source_kind = 'predictive_maintenance'
+     and new.priority = 'critical'
+     and (old.priority is null or old.priority <> 'critical') then
+    perform emit_work_order_webhook_event(
+      'work_order.predictive_escalated',
+      build_work_order_webhook_payload(new.id)
+    );
+  end if;
+  return new;
+end;
+$function$
+;
+
+CREATE OR REPLACE FUNCTION public._outcome_to_wo_status(p_outcome text)
+ RETURNS text
+ LANGUAGE sql
+ IMMUTABLE
+ SET search_path TO 'public', 'pg_catalog', 'extensions'
+AS $function$
+  select case p_outcome
+    when 'confirmed_critical'  then 'completed'
+    when 'confirmed_warning'   then 'completed'
+    when 'completed_proactive' then 'completed'
+    when 'false_positive'      then 'rejected'
+    when 'superseded'          then 'rejected'
+    when 'inaccessible'        then 'blocked'
+    else null
+  end;
+$function$
+;
+
+CREATE OR REPLACE FUNCTION public.submit_predictive_feedback(p_work_order_id uuid, p_outcome text, p_notes text DEFAULT NULL::text, p_marked_by text DEFAULT NULL::text)
+ RETURNS uuid
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public', 'pg_temp'
+AS $function$
+declare
+  v_wo record;
+  v_latest_score numeric;
+  v_minutes int;
+  v_recovery numeric;
+  v_feedback_id uuid;
+  v_target_status text;
+begin
+  -- Pull the work order with its predictive-source linkage
+  select * into v_wo from work_orders where id = p_work_order_id;
+  if v_wo.id is null then
+    raise exception 'WO_NOT_FOUND: work order % does not exist', p_work_order_id;
+  end if;
+  if v_wo.source_kind <> 'predictive_maintenance' then
+    raise exception 'NOT_PREDICTIVE: work order % is not predictive_maintenance (source_kind=%)', p_work_order_id, v_wo.source_kind;
+  end if;
+  if exists (select 1 from predictive_feedback where work_order_id = p_work_order_id) then
+    raise exception 'FEEDBACK_EXISTS: work order % already has feedback', p_work_order_id;
+  end if;
+
+  v_target_status := _outcome_to_wo_status(p_outcome);
+  if v_target_status is null then
+    raise exception 'INVALID_OUTCOME: % is not a recognised outcome', p_outcome;
+  end if;
+
+  -- Latest health score for the asset (at feedback time)
+  select score into v_latest_score
+  from asset_health_scores
+  where asset_id = v_wo.triggering_asset_id
+  order by computed_at desc
+  limit 1;
+
+  v_minutes := (extract(epoch from now() - v_wo.created_at) / 60)::int;
+  v_recovery := case
+    when v_wo.triggering_score is null or v_wo.triggering_score = 0 then null
+    else round((coalesce(v_latest_score, v_wo.triggering_score) - v_wo.triggering_score) * 100, 2)
+  end;
+
+  insert into predictive_feedback (
+    work_order_id, triggering_asset_id, triggering_health_score_id,
+    triggering_score, triggering_components,
+    outcome, notes, marked_by,
+    draft_to_feedback_minutes, score_at_feedback, score_recovered_pct
+  ) values (
+    p_work_order_id, v_wo.triggering_asset_id, v_wo.triggering_health_score_id,
+    v_wo.triggering_score, v_wo.triggering_components,
+    p_outcome, p_notes, p_marked_by,
+    v_minutes, v_latest_score, v_recovery
+  ) returning id into v_feedback_id;
+
+  -- Transition WO to terminal status
+  update work_orders set
+    status = v_target_status,
+    completed_at = case when v_target_status = 'completed' then now() else completed_at end,
+    updated_at = now()
+  where id = p_work_order_id;
+
+  -- Audit
+  insert into activity_log (action, entity_type, entity_id, details)
+  values (
+    'status_change', 'work_order', p_work_order_id,
+    jsonb_build_object(
+      'kind',                'predictive_feedback_submitted',
+      'outcome',             p_outcome,
+      'new_status',          v_target_status,
+      'minutes_to_feedback', v_minutes,
+      'score_at_draft',      v_wo.triggering_score,
+      'score_at_feedback',   v_latest_score,
+      'recovery_pct',        v_recovery,
+      'marked_by',           p_marked_by
+    )
+  );
+
+  return v_feedback_id;
+end;
+$function$
+;
+
+CREATE OR REPLACE FUNCTION public.escalate_stale_predictive_work_orders()
+ RETURNS TABLE(bumped_to_critical_count integer, stale_critical_count integer)
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public', 'pg_temp'
+AS $function$
+declare
+  v_bumped int := 0;
+  v_stale int := 0;
+  v_wo record;
+begin
+  -- 1) Bump 'high' to 'critical' if unassigned + >2h old
+  --    The escalated webhook fires from existing trigger
+  for v_wo in
+    select id, reference, triggering_asset_id
+    from work_orders
+    where source_kind = 'predictive_maintenance'
+      and status = 'pending'
+      and priority = 'high'
+      and assigned_technician is null
+      and created_at < now() - interval '2 hours'
+  loop
+    update work_orders
+    set priority = 'critical',
+        updated_at = now()
+    where id = v_wo.id;
+
+    insert into activity_log (action, entity_type, entity_id, details)
+    values ('status_change', 'work_order', v_wo.id, jsonb_build_object(
+      'kind', 'predictive_wo_auto_escalated_stale',
+      'reference', v_wo.reference,
+      'reason', 'unassigned >2h with high priority',
+      'asset_id', v_wo.triggering_asset_id
+    ));
+
+    v_bumped := v_bumped + 1;
+  end loop;
+
+  -- 2) Fire stale_unassigned webhook for critical WOs unassigned >4h.
+  --    Send once per WO using activity_log as the "already-fired" marker.
+  for v_wo in
+    select wo.id, wo.reference, wo.triggering_asset_id
+    from work_orders wo
+    where wo.source_kind = 'predictive_maintenance'
+      and wo.status = 'pending'
+      and wo.priority = 'critical'
+      and wo.assigned_technician is null
+      and wo.created_at < now() - interval '4 hours'
+      and not exists (
+        select 1 from activity_log al
+        where al.entity_type = 'work_order'
+          and al.entity_id = wo.id
+          and al.details->>'kind' = 'predictive_wo_stale_webhook_fired'
+      )
+  loop
+    perform emit_work_order_webhook_event(
+      'work_order.stale_unassigned',
+      build_work_order_webhook_payload(v_wo.id)
+    );
+
+    insert into activity_log (action, entity_type, entity_id, details)
+    values ('status_change', 'work_order', v_wo.id, jsonb_build_object(
+      'kind', 'predictive_wo_stale_webhook_fired',
+      'reference', v_wo.reference,
+      'asset_id', v_wo.triggering_asset_id
+    ));
+
+    v_stale := v_stale + 1;
+  end loop;
+
+  return query select v_bumped, v_stale;
+end;
+$function$
+;
+
+CREATE OR REPLACE FUNCTION public.allocate_maintenance_window_for_wo(p_wo_id uuid)
+ RETURNS uuid
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public', 'pg_temp'
+AS $function$
+declare
+  v_wo record;
+  v_slot_start timestamptz;
+  v_slot_end timestamptz;
+  v_duration int;
+  v_window_id uuid;
+begin
+  select * into v_wo from work_orders where id = p_wo_id;
+  if v_wo.id is null then
+    raise exception 'WO_NOT_FOUND';
+  end if;
+
+  -- Don't double-book: if already has an active window, return it
+  select id into v_window_id from maintenance_windows
+  where work_order_id = p_wo_id and status in ('tentative','confirmed','in_progress')
+  limit 1;
+  if v_window_id is not null then
+    return v_window_id;
+  end if;
+
+  -- Estimate duration by work_type and asset_type
+  v_duration := case
+    when v_wo.work_type = 'maintenance' and v_wo.required_role = 'fibre_engineer' then 90
+    when v_wo.work_type = 'maintenance' and v_wo.required_role = 'civils_contractor' then 180
+    when v_wo.work_type = 'splice_joint' then 120
+    when v_wo.work_type = 'otdr_test' then 45
+    else 60
+  end;
+
+  -- Allocate slot:
+  --   critical → start in 1h, give a 4h window
+  --   high     → start tomorrow morning local 09:00, 1d window
+  --   normal   → start in 3d at 09:00, 1d window
+  --   low      → start in 7d at 09:00, 1d window
+  v_slot_start := case v_wo.priority
+    when 'critical' then now() + interval '1 hour'
+    when 'high'     then date_trunc('day', now() at time zone 'America/Jamaica') + interval '1 day' + interval '9 hours'
+    when 'normal'   then date_trunc('day', now() at time zone 'America/Jamaica') + interval '3 days' + interval '9 hours'
+    else                date_trunc('day', now() at time zone 'America/Jamaica') + interval '7 days' + interval '9 hours'
+  end;
+
+  v_slot_end := case v_wo.priority
+    when 'critical' then v_slot_start + interval '4 hours'
+    when 'high'     then v_slot_start + (v_duration || ' minutes')::interval + interval '2 hours'
+    else                v_slot_start + (v_duration || ' minutes')::interval + interval '1 hour'
+  end;
+
+  insert into maintenance_windows (
+    work_order_id, asset_id, scheduled_start, scheduled_end,
+    status, source, estimated_duration_minutes, notes, data_source
+  ) values (
+    p_wo_id, v_wo.triggering_asset_id, v_slot_start, v_slot_end,
+    'tentative',
+    case when v_wo.source_kind = 'predictive_maintenance' then 'predictive_maintenance' else 'manual' end,
+    v_duration,
+    format('Auto-allocated for WO %s (priority=%s)', v_wo.reference, v_wo.priority),
+    'system'
+  ) returning id into v_window_id;
+
+  return v_window_id;
+end;
+$function$
+;
+
+CREATE OR REPLACE FUNCTION public.trg_wo_allocate_maintenance_window()
+ RETURNS trigger
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public', 'pg_temp'
+AS $function$
+begin
+  if new.source_kind = 'predictive_maintenance' then
+    perform allocate_maintenance_window_for_wo(new.id);
+  end if;
+  return new;
+end;
+$function$
+;
+
+CREATE OR REPLACE FUNCTION public.trg_wo_cancel_window_on_close()
+ RETURNS trigger
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public', 'pg_temp'
+AS $function$
+begin
+  if new.status in ('completed','rejected','blocked')
+     and (old.status is null or old.status not in ('completed','rejected','blocked')) then
+    update maintenance_windows
+    set status = case
+      when new.status = 'completed' and status = 'in_progress' then 'completed'
+      when new.status = 'completed' then 'completed'
+      else 'cancelled'
+    end,
+    updated_at = now()
+    where work_order_id = new.id and status in ('tentative','confirmed','in_progress');
+  end if;
+  return new;
+end;
+$function$
+;
+
+CREATE OR REPLACE FUNCTION public.mark_missed_maintenance_windows()
+ RETURNS integer
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public', 'pg_temp'
+AS $function$
+declare v_count int;
+begin
+  update maintenance_windows
+  set status = 'missed', updated_at = now()
+  where status in ('tentative','confirmed')
+    and scheduled_end < now() - interval '1 hour';
+  get diagnostics v_count = row_count;
+  return v_count;
+end;
+$function$
+;
+
+CREATE OR REPLACE FUNCTION public.public_predictive_kpis_30d()
+ RETURNS TABLE(window_days integer, total_incidents integer, caught_acted integer, caught_total integer, missed integer, catch_rate_pct numeric, caught_acted_rate_pct numeric, avg_lead_time_hours numeric, median_lead_time_hours numeric, predictive_wo_drafted integer, unique_assets_protected integer)
+ LANGUAGE sql
+ STABLE SECURITY DEFINER
+ SET search_path TO 'public', 'pg_temp'
+AS $function$
+  with window_incidents as (
+    select id, first_alarm_at
+    from network_incidents
+    where created_at >= now() - interval '30 days'
+  ),
+  per_incident as (
+    select
+      wi.id as incident_id,
+      min(case
+        when vpi.prediction_outcome = 'caught_acted' then 1
+        when vpi.prediction_outcome = 'caught_unacted' then 2
+        when vpi.prediction_outcome = 'caught_dismissed' then 3
+        when vpi.prediction_outcome is null or vpi.prediction_outcome = 'missed' then 4
+        else 5
+      end) as best_rank,
+      min(vpi.lead_time_hours) as best_lead_time
+    from window_incidents wi
+    left join v_predicted_incidents vpi on vpi.incident_id = wi.id
+    group by wi.id
+  ),
+  drafted_in_window as (
+    select count(*)::int as drafted, count(distinct triggering_asset_id)::int as assets
+    from work_orders
+    where source_kind = 'predictive_maintenance'
+      and created_at >= now() - interval '30 days'
+  )
+  select
+    30 as window_days,
+    (select count(*) from per_incident)::int as total_incidents,
+    (select count(*) from per_incident where best_rank = 1)::int as caught_acted,
+    (select count(*) from per_incident where best_rank in (1,2,3))::int as caught_total,
+    (select count(*) from per_incident where best_rank = 4)::int as missed,
+    case when (select count(*) from per_incident) = 0 then null
+         else round(
+           (select count(*) from per_incident where best_rank in (1,2,3))::numeric
+           / (select count(*) from per_incident)::numeric * 100, 1)
+    end as catch_rate_pct,
+    case when (select count(*) from per_incident) = 0 then null
+         else round(
+           (select count(*) from per_incident where best_rank = 1)::numeric
+           / (select count(*) from per_incident)::numeric * 100, 1)
+    end as caught_acted_rate_pct,
+    (select round(avg(best_lead_time)::numeric, 1) from per_incident where best_rank in (1,2,3) and best_lead_time is not null) as avg_lead_time_hours,
+    (select round(percentile_cont(0.5) within group (order by best_lead_time)::numeric, 1) from per_incident where best_rank in (1,2,3) and best_lead_time is not null) as median_lead_time_hours,
+    (select drafted from drafted_in_window) as predictive_wo_drafted,
+    (select assets  from drafted_in_window) as unique_assets_protected;
+$function$
+;
+
+CREATE OR REPLACE FUNCTION public.public_predictive_weekly_trend()
+ RETURNS TABLE(week_start date, total_incidents integer, caught_acted integer, missed integer, catch_rate_pct numeric)
+ LANGUAGE sql
+ STABLE SECURITY DEFINER
+ SET search_path TO 'public', 'pg_temp'
+AS $function$
+  with weeks as (
+    select generate_series(
+      date_trunc('week', current_date - interval '11 weeks'),
+      date_trunc('week', current_date),
+      interval '1 week'
+    )::date as week_start
+  ),
+  bucketed as (
+    select
+      date_trunc('week', ni.first_alarm_at)::date as week_start,
+      ni.id as incident_id,
+      min(case
+        when vpi.prediction_outcome = 'caught_acted' then 1
+        when vpi.prediction_outcome = 'caught_unacted' then 2
+        when vpi.prediction_outcome = 'caught_dismissed' then 3
+        when vpi.prediction_outcome is null or vpi.prediction_outcome = 'missed' then 4
+        else 5
+      end) as best_rank
+    from network_incidents ni
+    left join v_predicted_incidents vpi on vpi.incident_id = ni.id
+    where ni.first_alarm_at >= current_date - interval '12 weeks'
+    group by 1, 2
+  )
+  select
+    w.week_start,
+    coalesce(count(b.incident_id), 0)::int as total_incidents,
+    coalesce(sum(case when b.best_rank = 1 then 1 else 0 end), 0)::int as caught_acted,
+    coalesce(sum(case when b.best_rank = 4 then 1 else 0 end), 0)::int as missed,
+    case when count(b.incident_id) = 0 then null
+         else round(
+           sum(case when b.best_rank in (1,2,3) then 1 else 0 end)::numeric
+           / count(b.incident_id)::numeric * 100, 1)
+    end as catch_rate_pct
+  from weeks w
+  left join bucketed b on b.week_start = w.week_start
+  group by w.week_start
+  order by w.week_start asc;
+$function$
+;
+
+CREATE OR REPLACE FUNCTION public._next_business_day_morning()
+ RETURNS timestamp with time zone
+ LANGUAGE sql
+ STABLE
+ SET search_path TO 'public', 'pg_catalog', 'extensions'
+AS $function$
+  with target as (
+    select case
+      when extract(hour from now() at time zone 'America/Jamaica') >= 16
+        then ((now() at time zone 'America/Jamaica')::date + interval '1 day')::date
+      else (now() at time zone 'America/Jamaica')::date
+    end as base_date
+  )
+  select (case extract(dow from base_date)
+    when 0 then base_date + interval '1 day'
+    when 6 then base_date + interval '2 days'
+    else base_date::timestamp
+  end + interval '9 hours') at time zone 'America/Jamaica'
+  from target;
+$function$
+;
+
+CREATE OR REPLACE FUNCTION public.check_system_health()
+ RETURNS TABLE(alert_type text, severity text, component text, message text, details jsonb)
+ LANGUAGE plpgsql
+ STABLE
+ SET search_path TO 'public', 'pg_catalog', 'extensions'
+AS $function$
+declare
+  v_critical_crons text[] := array[
+    'run_fault_correlation',
+    'flush_asset_health_rescore_queue',
+    'flush_webhook_deliveries',
+    'auto_clear_stale_alarms',
+    'refresh_blast_radius_predictions'
+  ];
+  v_cron text;
+  v_last_run timestamptz;
+  v_max_age_min int;
+  v_rescore_queue_size int;
+  v_pending_webhooks int;
+  v_failing_webhooks int;
+  v_recent_critical_assets int;
+  v_recent_predictive_drafts int;
+begin
+  -- 1) Cron freshness: each critical cron should have run recently
+  foreach v_cron in array v_critical_crons loop
+    select max(start_time) into v_last_run
+    from cron.job_run_details jrd
+    join cron.job j on j.jobid = jrd.jobid
+    where j.jobname = v_cron;
+
+    -- Tolerance per job (max minutes between runs before alert)
+    v_max_age_min := case v_cron
+      when 'run_fault_correlation'                  then 5    -- 1m schedule, 5m tolerance
+      when 'flush_asset_health_rescore_queue'       then 15   -- 5m schedule
+      when 'flush_webhook_deliveries'               then 5    -- 30s schedule
+      when 'auto_clear_stale_alarms'                then 15   -- 5m schedule
+      when 'refresh_blast_radius_predictions'       then 15
+      else 60
+    end;
+
+    if v_last_run is null then
+      return query select 'cron_stale'::text, 'critical'::text,
+        ('cron:' || v_cron)::text,
+        ('Cron job ' || v_cron || ' has never run')::text,
+        jsonb_build_object('jobname', v_cron, 'last_run', null);
+    elsif v_last_run < now() - (v_max_age_min || ' minutes')::interval then
+      return query select 'cron_stale'::text, 'error'::text,
+        ('cron:' || v_cron)::text,
+        ('Cron job ' || v_cron || ' last ran ' || round(extract(epoch from now() - v_last_run)/60, 1) || ' min ago (tolerance ' || v_max_age_min || ' min)')::text,
+        jsonb_build_object(
+          'jobname', v_cron, 'last_run', v_last_run,
+          'minutes_since_last_run', round(extract(epoch from now() - v_last_run)/60, 1),
+          'tolerance_min', v_max_age_min
+        );
+    end if;
+  end loop;
+
+  -- 2) Asset health rescore queue backed up
+  select count(*) into v_rescore_queue_size from asset_health_rescore_queue;
+  if v_rescore_queue_size > 1000 then
+    return query select 'queue_backed_up'::text, 'critical'::text,
+      'queue:asset_health_rescore'::text,
+      ('Asset health rescore queue has ' || v_rescore_queue_size || ' items pending (threshold 1000)')::text,
+      jsonb_build_object('queue_size', v_rescore_queue_size, 'threshold', 1000);
+  elsif v_rescore_queue_size > 500 then
+    return query select 'queue_backed_up'::text, 'warning'::text,
+      'queue:asset_health_rescore'::text,
+      ('Asset health rescore queue has ' || v_rescore_queue_size || ' items pending')::text,
+      jsonb_build_object('queue_size', v_rescore_queue_size, 'threshold', 500);
+  end if;
+
+  -- 3) Webhook delivery failures
+  select count(*) into v_pending_webhooks
+  from api_webhook_deliveries
+  where status = 'pending' and attempt_count > 2 and created_at < now() - interval '15 minutes';
+
+  if v_pending_webhooks > 50 then
+    return query select 'webhook_delivery_failures'::text, 'error'::text,
+      'webhooks:retry_pending'::text,
+      ('Webhook delivery has ' || v_pending_webhooks || ' rows stuck in retry (threshold 50)')::text,
+      jsonb_build_object('stuck_count', v_pending_webhooks);
+  end if;
+
+  -- 4) Webhooks with 5+ consecutive failures
+  select count(*) into v_failing_webhooks
+  from api_webhooks where consecutive_failures >= 5 and status = 'active';
+
+  if v_failing_webhooks > 0 then
+    return query select 'webhook_delivery_failures'::text, 'warning'::text,
+      'webhooks:consecutive_failures'::text,
+      (v_failing_webhooks || ' webhook(s) have 5+ consecutive failures — partner endpoints may be down')::text,
+      jsonb_build_object('failing_webhook_count', v_failing_webhooks);
+  end if;
+
+  -- 5) Predictive pipeline idle: critical assets but no draft work_orders
+  select count(*) into v_recent_critical_assets
+  from asset_health_scores ahs
+  where ahs.computed_at > now() - interval '1 hour' and ahs.score < 0.10;
+
+  select count(*) into v_recent_predictive_drafts
+  from work_orders
+  where source_kind = 'predictive_maintenance'
+    and created_at > now() - interval '1 hour';
+
+  if v_recent_critical_assets > 0 and v_recent_predictive_drafts = 0 then
+    return query select 'predictive_pipeline_idle'::text, 'error'::text,
+      'pipeline:predictive_maintenance'::text,
+      ('Detected ' || v_recent_critical_assets || ' critical asset(s) in last hour but 0 predictive work orders drafted — trigger may be broken')::text,
+      jsonb_build_object('critical_assets', v_recent_critical_assets, 'drafts', v_recent_predictive_drafts);
+  end if;
+
+  -- 6) Predictive pipeline overload: too many drafts in short time → likely a cascade
+  if v_recent_predictive_drafts > 50 then
+    return query select 'predictive_pipeline_overload'::text, 'warning'::text,
+      'pipeline:predictive_maintenance'::text,
+      (v_recent_predictive_drafts || ' predictive work orders drafted in last hour — investigate for false-positive cascade')::text,
+      jsonb_build_object('drafts_last_hour', v_recent_predictive_drafts);
+  end if;
+end;
+$function$
+;
+
+CREATE OR REPLACE FUNCTION public.run_system_health_check()
+ RETURNS integer
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public', 'pg_temp'
+AS $function$
+declare
+  v_alert record;
+  v_count int := 0;
+  v_alert_id uuid;
+begin
+  update system_health_alerts
+  set resolved_at = now()
+  where resolved_at is null and detected_at < now() - interval '2 hours';
+
+  for v_alert in select * from check_system_health() loop
+    begin
+      insert into system_health_alerts (
+        alert_type, severity, component, message, details
+      ) values (
+        v_alert.alert_type, v_alert.severity, v_alert.component, v_alert.message, v_alert.details
+      ) returning id into v_alert_id;
+
+      perform emit_system_webhook_event(
+        'system.health_alert',
+        jsonb_build_object(
+          'alert_id', v_alert_id,
+          'alert_type', v_alert.alert_type,
+          'severity', v_alert.severity,
+          'component', v_alert.component,
+          'message', v_alert.message,
+          'details', v_alert.details
+        )
+      );
+      v_count := v_count + 1;
+    exception when unique_violation then null;
+    end;
+  end loop;
+
+  return v_count;
+end;
+$function$
+;
+
+CREATE OR REPLACE FUNCTION public.emit_system_webhook_event(p_event_type text, p_payload jsonb)
+ RETURNS integer
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public', 'pg_temp'
+AS $function$
+declare
+  v_webhook record;
+  v_count integer := 0;
+begin
+  for v_webhook in
+    select id from public.api_webhooks
+    where status = 'active' and p_event_type = any(event_filter)
+  loop
+    insert into public.api_webhook_deliveries (
+      webhook_id, event_type, payload, status, next_attempt_at, data_source
+    ) values (
+      v_webhook.id, p_event_type,
+      jsonb_build_object(
+        'event', p_event_type,
+        'occurred_at', now(),
+        'system_alert', p_payload
+      ),
+      'pending', now(), 'system'
+    );
+    v_count := v_count + 1;
+  end loop;
+  return v_count;
+end;
+$function$
+;
+
+CREATE OR REPLACE FUNCTION public.admin_create_api_key(p_name text, p_scopes text[], p_rate_per_minute integer DEFAULT 60, p_expires_at timestamp with time zone DEFAULT NULL::timestamp with time zone, p_customer_reference text DEFAULT NULL::text)
+ RETURNS TABLE(id uuid, token text, token_prefix text)
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public', 'pg_temp'
+AS $function$
+declare
+  v_token text;
+  v_token_hash text;
+  v_token_prefix text;
+  v_id uuid;
+  v_allowed_scopes text[] := array[
+    'incidents.read','incidents.write','sla.read',
+    'webhooks.manage','work_orders.read','work_orders.feedback','*'
+  ];
+  v_scope text;
+begin
+  if not is_tellinex_staff() then
+    raise exception 'NOT_AUTHORIZED: only Tellinex staff may issue API keys';
+  end if;
+  if p_name is null or length(trim(p_name)) = 0 then
+    raise exception 'INVALID_NAME: name is required';
+  end if;
+  if p_scopes is null or array_length(p_scopes, 1) is null then
+    raise exception 'INVALID_SCOPES: at least one scope required';
+  end if;
+  foreach v_scope in array p_scopes loop
+    if not (v_scope = any(v_allowed_scopes)) then
+      raise exception 'INVALID_SCOPE: % not in allowed list (%)', v_scope, array_to_string(v_allowed_scopes, ', ');
+    end if;
+  end loop;
+  if p_rate_per_minute is null or p_rate_per_minute < 1 or p_rate_per_minute > 6000 then
+    raise exception 'INVALID_RATE: rate_per_minute must be 1..6000';
+  end if;
+
+  -- Generate 32-byte random token hex-encoded with prefix
+  v_token := 'tk_' || encode(gen_random_bytes(32), 'hex');
+  v_token_hash := encode(digest(v_token, 'sha256'), 'hex');
+  v_token_prefix := substring(v_token from 1 for 12);
+
+  insert into api_keys (
+    token_hash, token_prefix, name, scopes, rate_per_minute,
+    status, expires_at, customer_reference, created_by, data_source,
+    bucket_tokens, bucket_last_refill
+  ) values (
+    v_token_hash, v_token_prefix, trim(p_name), p_scopes, p_rate_per_minute,
+    'active', p_expires_at, p_customer_reference, auth.uid(), 'admin_ui',
+    p_rate_per_minute, now()
+  ) returning api_keys.id into v_id;
+
+  return query select v_id, v_token, v_token_prefix;
+end;
+$function$
+;
+
+CREATE OR REPLACE FUNCTION public.admin_revoke_api_key(p_id uuid)
+ RETURNS boolean
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public', 'pg_temp'
+AS $function$
+begin
+  if not is_tellinex_staff() then
+    raise exception 'NOT_AUTHORIZED';
+  end if;
+  update api_keys set status = 'revoked' where id = p_id;
+  if not found then
+    raise exception 'NOT_FOUND: api_key %', p_id;
+  end if;
+  -- Also pause all webhooks for this key
+  update api_webhooks set status = 'paused' where api_key_id = p_id and status = 'active';
+  return true;
+end;
+$function$
+;
+
+CREATE OR REPLACE FUNCTION public.admin_reactivate_api_key(p_id uuid)
+ RETURNS boolean
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public', 'pg_temp'
+AS $function$
+begin
+  if not is_tellinex_staff() then
+    raise exception 'NOT_AUTHORIZED';
+  end if;
+  update api_keys set status = 'active' 
+  where id = p_id and status in ('revoked','paused');
+  if not found then
+    raise exception 'NOT_FOUND_OR_INVALID_STATE';
+  end if;
+  return true;
+end;
+$function$
+;
+
+CREATE OR REPLACE FUNCTION public.admin_set_webhook_status(p_id uuid, p_status text)
+ RETURNS boolean
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public', 'pg_temp'
+AS $function$
+begin
+  if not is_tellinex_staff() then
+    raise exception 'NOT_AUTHORIZED';
+  end if;
+  if p_status not in ('active','paused','revoked') then
+    raise exception 'INVALID_STATUS: must be active|paused|revoked';
+  end if;
+  update api_webhooks set status = p_status where id = p_id;
+  if not found then
+    raise exception 'NOT_FOUND';
+  end if;
+  return true;
+end;
+$function$
+;
+
+CREATE OR REPLACE FUNCTION public.admin_test_webhook(p_id uuid)
+ RETURNS uuid
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public', 'pg_temp'
+AS $function$
+declare
+  v_delivery_id uuid;
+begin
+  if not is_tellinex_staff() then
+    raise exception 'NOT_AUTHORIZED';
+  end if;
+  insert into api_webhook_deliveries (
+    webhook_id, event_type, payload, status, next_attempt_at, data_source
+  ) values (
+    p_id, 'webhook.test',
+    jsonb_build_object(
+      'event', 'webhook.test',
+      'occurred_at', now(),
+      'message', 'Test ping from Tellinex admin UI',
+      'triggered_by', (select email from auth.users where id = auth.uid())
+    ),
+    'pending', now(), 'admin_ui'
+  ) returning id into v_delivery_id;
+  return v_delivery_id;
+end;
+$function$
+;
+
+CREATE OR REPLACE FUNCTION public.escalate_overdue_lone_worker_checkins()
+ RETURNS TABLE(escalated_count integer, marked_overdue_count integer)
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public', 'pg_temp'
+AS $function$
+declare
+  v_escalated int := 0;
+  v_overdue int := 0;
+  v_row record;
+begin
+  -- 1) Mark overdue if past due
+  update lone_worker_checkins
+  set status = 'overdue'
+  where status = 'active' and next_checkin_due_at < now();
+  get diagnostics v_overdue = row_count;
+
+  -- 2) Escalate if overdue >5 min (no recovery happened)
+  for v_row in
+    select id, technician_id, technician_name, job_id, last_checkin_at,
+           latitude, longitude, emergency_contact_phone, emergency_contact_name
+    from lone_worker_checkins
+    where status = 'overdue' and next_checkin_due_at < now() - interval '5 minutes'
+      and escalated_at is null
+  loop
+    update lone_worker_checkins
+    set status = 'escalated', escalated_at = now()
+    where id = v_row.id;
+
+    -- Insert into activity_log so dispatch sees it
+    insert into activity_log (action, entity_type, entity_id, details)
+    values ('lone_worker_overdue', 'technician', v_row.id, jsonb_build_object(
+      'kind', 'lone_worker_escalation',
+      'technician_id', v_row.technician_id,
+      'technician_name', v_row.technician_name,
+      'job_id', v_row.job_id,
+      'last_checkin_at', v_row.last_checkin_at,
+      'minutes_overdue', round(extract(epoch from now() - v_row.last_checkin_at)/60),
+      'last_known_lat', v_row.latitude,
+      'last_known_lng', v_row.longitude,
+      'emergency_contact_phone', v_row.emergency_contact_phone,
+      'emergency_contact_name', v_row.emergency_contact_name
+    ));
+
+    -- Fire system webhook so external alerting (PagerDuty/Slack) catches it
+    perform emit_system_webhook_event('lone_worker.escalated', jsonb_build_object(
+      'technician_id', v_row.technician_id,
+      'technician_name', v_row.technician_name,
+      'job_id', v_row.job_id,
+      'minutes_overdue', round(extract(epoch from now() - v_row.last_checkin_at)/60),
+      'last_known_location', case 
+        when v_row.latitude is not null then jsonb_build_object('lat', v_row.latitude, 'lng', v_row.longitude)
+        else null
+      end,
+      'emergency_contact', jsonb_build_object('phone', v_row.emergency_contact_phone, 'name', v_row.emergency_contact_name)
+    ));
+
+    v_escalated := v_escalated + 1;
+  end loop;
+
+  return query select v_escalated, v_overdue;
+end;
+$function$
+;
+
+CREATE OR REPLACE FUNCTION public.validate_technician_for_job(p_technician_id text, p_job_type text)
+ RETURNS TABLE(allowed boolean, reason text, required_training text[], missing_training text[], expired_training text[])
+ LANGUAGE plpgsql
+ STABLE
+ SET search_path TO 'public', 'pg_catalog', 'extensions'
+AS $function$
+declare
+  v_required text[];
+  v_held text[];
+  v_expired text[];
+  v_missing text[];
+begin
+  -- Required mandatory training for this job type
+  select array_agg(required_training)
+    into v_required
+  from training_requirements
+  where job_type = p_job_type and mandatory = true;
+
+  if v_required is null or array_length(v_required, 1) = 0 then
+    return query select true, 'No mandatory training required for ' || p_job_type, 
+                        array[]::text[], array[]::text[], array[]::text[];
+    return;
+  end if;
+
+  -- What this tech has, valid + not expired
+  select array_agg(certification_type)
+    into v_held
+  from training_records
+  where technician_id = p_technician_id
+    and passed = true
+    and (expiry_date is null or expiry_date >= current_date);
+
+  -- What's expired (held but past expiry)
+  select array_agg(certification_type)
+    into v_expired
+  from training_records
+  where technician_id = p_technician_id
+    and passed = true
+    and expiry_date is not null and expiry_date < current_date
+    and certification_type = any(v_required);
+
+  v_held := coalesce(v_held, array[]::text[]);
+  v_expired := coalesce(v_expired, array[]::text[]);
+
+  -- Missing = required minus held
+  select array_agg(req) into v_missing
+  from unnest(v_required) as req
+  where req != all(v_held);
+
+  v_missing := coalesce(v_missing, array[]::text[]);
+
+  if array_length(v_missing, 1) is null and array_length(v_expired, 1) is null then
+    return query select true, 'All required training valid'::text,
+                        v_required, array[]::text[], array[]::text[];
+  else
+    return query select false,
+      case 
+        when array_length(v_expired, 1) > 0 and array_length(v_missing, 1) > 0 
+          then 'Missing required training and has expired certifications'
+        when array_length(v_expired, 1) > 0 
+          then 'Has expired certifications that need renewal'
+        else 'Missing required training'
+      end::text,
+      v_required, v_missing, v_expired;
+  end if;
+end;
+$function$
+;
+
+CREATE OR REPLACE FUNCTION public.tech_can_perform_work(p_technician_id uuid, p_required_certs text[])
+ RETURNS boolean
+ LANGUAGE sql
+ STABLE
+ SET search_path TO 'public', 'pg_catalog', 'extensions'
+AS $function$
+  select case
+    when p_required_certs is null or array_length(p_required_certs,1) is null then true
+    when (
+      select count(distinct cert_type) from technician_certifications
+      where technician_id = p_technician_id and status = 'valid'
+        and (expires_at is null or expires_at > current_date)
+        and cert_type = any(p_required_certs)
+    ) >= array_length(p_required_certs,1) then true
+    else false
+  end;
+$function$
+;
+
+CREATE OR REPLACE FUNCTION public.submit_lone_worker_checkin(p_technician_id uuid, p_job_id uuid DEFAULT NULL::uuid, p_latitude numeric DEFAULT NULL::numeric, p_longitude numeric DEFAULT NULL::numeric, p_battery_pct integer DEFAULT NULL::integer, p_interval_minutes integer DEFAULT 60)
+ RETURNS TABLE(checkin_id uuid, next_checkin_due_at timestamp with time zone)
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public', 'pg_temp'
+AS $function$
+declare 
+  v_id uuid; 
+  v_next timestamptz;
+  v_tech_name text;
+begin
+  select name into v_tech_name from technicians where id = p_technician_id;
+  
+  -- Resolve outstanding active checkins for this tech
+  update lone_worker_checkins
+  set status = 'resolved', ended_at = now()
+  where technician_id = p_technician_id and status in ('active','overdue');
+  
+  v_next := now() + (p_interval_minutes || ' minutes')::interval;
+  
+  insert into lone_worker_checkins (
+    technician_id, technician_name, job_id, status,
+    started_at, last_checkin_at, next_checkin_due_at, checkin_interval_minutes,
+    latitude, longitude, battery_pct
+  ) values (
+    p_technician_id, v_tech_name, p_job_id, 'active',
+    now(), now(), v_next, p_interval_minutes,
+    p_latitude, p_longitude, p_battery_pct
+  ) returning id into v_id;
+
+  return query select v_id, v_next;
+end;
+$function$
+;
+
+CREATE OR REPLACE FUNCTION public.record_iloq_scan_with_wo_check(p_lock_id text, p_technician_id uuid, p_action text DEFAULT 'unlock'::text, p_access_method text DEFAULT 'mobile_nfc'::text, p_latitude numeric DEFAULT NULL::numeric, p_longitude numeric DEFAULT NULL::numeric, p_dispatch_task_id uuid DEFAULT NULL::uuid)
+ RETURNS TABLE(access_log_id uuid, asset_id uuid, work_order_id uuid)
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public', 'pg_temp'
+AS $function$
+declare
+  v_log_id uuid;
+  v_asset_id uuid;
+  v_asset_ref text;
+  v_alarm_count int;
+  v_wo_id uuid := null;
+  v_wo_ref text;
+  v_tech_name text;
+  v_tech_email text;
+begin
+  -- Look up asset from lock
+  select asset_id, asset_ref into v_asset_id, v_asset_ref 
+  from iloq_locks where lock_id = p_lock_id;
+
+  -- Look up tech details
+  select name, email into v_tech_name, v_tech_email
+  from technicians where id = p_technician_id;
+
+  -- Record access log entry
+  insert into iloq_access_log (
+    lock_id, asset_ref, technician_id, technician_name, technician_email,
+    action, access_method, latitude, longitude, dispatch_task_id, granted_by
+  ) values (
+    p_lock_id, v_asset_ref, p_technician_id, v_tech_name, v_tech_email,
+    p_action, p_access_method, p_latitude, p_longitude, p_dispatch_task_id, 'auto'
+  ) returning id into v_log_id;
+
+  -- If asset has active (uncleared) alarms, auto-open inspection WO
+  if v_asset_id is not null then
+    select count(*) into v_alarm_count from alarms
+    where asset_id = v_asset_id and cleared_at is null;
+
+    if v_alarm_count > 0 then
+      v_wo_ref := 'TAG-' || to_char(now(),'YYYYMMDD') || '-' || substr(gen_random_uuid()::text,1,6);
+      insert into work_orders (
+        reference, title, description, source_kind, status, priority,
+        triggering_asset_id, assigned_technician, work_type, required_role, data_source
+      ) values (
+        v_wo_ref,
+        'iLOQ scan triggered work order at ' || coalesce(v_asset_ref,'asset'),
+        'Tech ' || coalesce(v_tech_name,'unknown') || ' scanned iLOQ lock ' || p_lock_id || 
+          '. Asset has ' || v_alarm_count || ' active alarm(s). Auto-opened.',
+        'iloq_scan', 'in_progress', 'normal',
+        v_asset_id, p_technician_id::text, 'inspection', 'fibre_engineer', 'fp_pro'
+      ) returning id into v_wo_id;
+    end if;
+  end if;
+
+  return query select v_log_id, v_asset_id, v_wo_id;
+end;
+$function$
+;
+
+CREATE OR REPLACE FUNCTION public.admin_create_webhook(p_api_key_id uuid, p_url text, p_event_filter text[])
+ RETURNS TABLE(id uuid, signing_secret text)
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public', 'pg_temp'
+AS $function$
+declare
+  v_secret text;
+  v_id uuid;
+  v_allowed_events text[] := array[
+    'incident.opened','incident.updated','incident.resolved',
+    'work_order.predictive_drafted','work_order.predictive_escalated',
+    'work_order.stale_unassigned','work_order.completed',
+    'sla_credit.applied','system.health_alert','lone_worker.overdue'
+  ];
+  v_event text;
+  v_owner_check uuid;
+begin
+  if not is_tellinex_staff() then
+    raise exception 'NOT_AUTHORIZED: only Tellinex staff may create webhooks';
+  end if;
+
+  -- Validate api_key exists and is active
+  select id into v_owner_check from api_keys 
+  where id = p_api_key_id and status = 'active';
+  if v_owner_check is null then
+    raise exception 'INVALID_API_KEY: api_key_id does not exist or is not active';
+  end if;
+
+  -- Validate URL is HTTPS
+  if p_url !~ '^https://' then
+    raise exception 'INVALID_URL: url must start with https://';
+  end if;
+
+  -- Validate events
+  if p_event_filter is null or array_length(p_event_filter, 1) is null then
+    raise exception 'INVALID_EVENTS: at least one event required';
+  end if;
+  foreach v_event in array p_event_filter loop
+    if not (v_event = any(v_allowed_events)) then
+      raise exception 'INVALID_EVENT: % not in allowed list', v_event;
+    end if;
+  end loop;
+
+  -- Generate 32-byte signing secret
+  v_secret := encode(gen_random_bytes(32), 'hex');
+
+  insert into api_webhooks (
+    api_key_id, url, event_filter, signing_secret, status, data_source
+  ) values (
+    p_api_key_id, p_url, p_event_filter, v_secret, 'active', 'admin_ui'
+  ) returning api_webhooks.id into v_id;
+
+  return query select v_id, v_secret;
+end;
+$function$
+;
+
+CREATE OR REPLACE FUNCTION public.etl_record_import(p_source_system text, p_source_table text, p_external_id text, p_payload jsonb, p_imported_by uuid DEFAULT NULL::uuid)
+ RETURNS TABLE(import_id uuid, status text, idempotent_match boolean)
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public', 'pg_temp'
+AS $function$
+declare
+  v_existing_id uuid;
+  v_existing_status text;
+  v_new_id uuid;
+begin
+  -- Check for prior import with same external_id
+  if p_external_id is not null then
+    select id, status into v_existing_id, v_existing_status
+    from etl_imports
+    where source_system = p_source_system 
+      and external_id = p_external_id
+      and status in ('succeeded','processing','pending')
+    order by created_at desc limit 1;
+    
+    if v_existing_id is not null then
+      return query select v_existing_id, v_existing_status, true;
+      return;
+    end if;
+  end if;
+
+  insert into etl_imports (
+    source_system, source_table, external_id, payload, imported_by
+  ) values (
+    p_source_system, p_source_table, p_external_id, p_payload, p_imported_by
+  ) returning id into v_new_id;
+
+  return query select v_new_id, 'pending'::text, false;
+end;
+$function$
+;
+
+CREATE OR REPLACE FUNCTION public.etl_complete_import(p_import_id uuid, p_status text, p_records_processed integer DEFAULT 0, p_records_failed integer DEFAULT 0, p_error_message text DEFAULT NULL::text, p_error_details jsonb DEFAULT NULL::jsonb)
+ RETURNS void
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public', 'pg_temp'
+AS $function$
+begin
+  if p_status not in ('succeeded','failed','rejected') then
+    raise exception 'INVALID_STATUS: must be succeeded/failed/rejected';
+  end if;
+  
+  update etl_imports
+  set status = p_status,
+      records_processed = p_records_processed,
+      records_failed = p_records_failed,
+      error_message = p_error_message,
+      error_details = p_error_details,
+      processing_completed_at = now()
+  where id = p_import_id;
+end;
+$function$
+;
+
+CREATE OR REPLACE FUNCTION public.record_form_field_value(p_form_type text, p_field_name text, p_field_value_text text DEFAULT NULL::text, p_field_value_numeric numeric DEFAULT NULL::numeric, p_technician_id text DEFAULT NULL::text, p_work_type text DEFAULT NULL::text, p_region_code text DEFAULT NULL::text, p_asset_id uuid DEFAULT NULL::uuid, p_job_id uuid DEFAULT NULL::uuid, p_is_validated boolean DEFAULT true)
+ RETURNS uuid
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+declare
+  v_id uuid;
+begin
+  insert into form_field_history(
+    form_type, field_name, field_value_text, field_value_numeric,
+    technician_id, work_type, region_code, asset_id, job_id, is_validated
+  ) values (
+    p_form_type, p_field_name, p_field_value_text, p_field_value_numeric,
+    p_technician_id, p_work_type, p_region_code, p_asset_id, p_job_id, p_is_validated
+  ) returning id into v_id;
+  return v_id;
+end;
+$function$
+;
+
+CREATE OR REPLACE FUNCTION public.get_smart_form_default(p_form_type text, p_field_name text, p_technician_id text DEFAULT NULL::text, p_work_type text DEFAULT NULL::text, p_region_code text DEFAULT NULL::text)
+ RETURNS TABLE(candidate_value_text text, candidate_value_numeric numeric, confidence numeric, source text, sample_size integer)
+ LANGUAGE plpgsql
+ STABLE SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+begin
+  -- Layer 1: technician + work_type
+  return query
+  with recent as (
+    select field_value_text, field_value_numeric
+    from form_field_history
+    where form_type = p_form_type
+      and field_name = p_field_name
+      and technician_id = p_technician_id
+      and (p_work_type is null or work_type = p_work_type)
+      and is_validated
+    order by recorded_at desc
+    limit 50
+  ),
+  ranked as (
+    select 
+      coalesce(field_value_text, field_value_numeric::text) as v_key,
+      field_value_text, field_value_numeric,
+      count(*)::int as freq
+    from recent
+    group by 1, field_value_text, field_value_numeric
+  ),
+  total as (select count(*) as n from recent)
+  select 
+    ranked.field_value_text,
+    ranked.field_value_numeric,
+    round(ranked.freq::numeric / nullif(total.n, 0), 3) as confidence,
+    'technician_history'::text as source,
+    total.n::int as sample_size
+  from ranked, total
+  where total.n >= 3                              -- need at least 3 samples to suggest
+  order by ranked.freq desc
+  limit 3;
+
+  if found then return; end if;
+
+  -- Layer 2: region + work_type
+  return query
+  with recent as (
+    select field_value_text, field_value_numeric
+    from form_field_history
+    where form_type = p_form_type
+      and field_name = p_field_name
+      and (p_region_code is null or region_code = p_region_code)
+      and (p_work_type is null or work_type = p_work_type)
+      and is_validated
+    order by recorded_at desc
+    limit 200
+  ),
+  ranked as (
+    select 
+      coalesce(field_value_text, field_value_numeric::text) as v_key,
+      field_value_text, field_value_numeric,
+      count(*)::int as freq
+    from recent
+    group by 1, field_value_text, field_value_numeric
+  ),
+  total as (select count(*) as n from recent)
+  select 
+    ranked.field_value_text,
+    ranked.field_value_numeric,
+    round(ranked.freq::numeric / nullif(total.n, 0), 3) as confidence,
+    'region_history'::text as source,
+    total.n::int as sample_size
+  from ranked, total
+  where total.n >= 5
+  order by ranked.freq desc
+  limit 3;
+
+  if found then return; end if;
+
+  -- Layer 3: global fallback
+  return query
+  with recent as (
+    select field_value_text, field_value_numeric
+    from form_field_history
+    where form_type = p_form_type
+      and field_name = p_field_name
+      and is_validated
+    order by recorded_at desc
+    limit 500
+  ),
+  ranked as (
+    select 
+      coalesce(field_value_text, field_value_numeric::text) as v_key,
+      field_value_text, field_value_numeric,
+      count(*)::int as freq
+    from recent
+    group by 1, field_value_text, field_value_numeric
+  ),
+  total as (select count(*) as n from recent)
+  select 
+    ranked.field_value_text,
+    ranked.field_value_numeric,
+    round(ranked.freq::numeric / nullif(total.n, 0), 3) as confidence,
+    'global_history'::text as source,
+    total.n::int as sample_size
+  from ranked, total
+  where total.n >= 10
+  order by ranked.freq desc
+  limit 3;
+end;
+$function$
+;
+
+CREATE OR REPLACE FUNCTION public.current_tenant_id()
+ RETURNS uuid
+ LANGUAGE sql
+ STABLE SECURITY DEFINER
+ SET search_path TO 'public', 'pg_catalog'
+AS $function$
+  select coalesce(
+    (current_setting('app.current_tenant_id', true))::uuid,
+    '00000000-0000-0000-0000-000000000001'::uuid
+  );
+$function$
+;
+
+CREATE OR REPLACE FUNCTION public.set_tenant_context(p_tenant_id uuid)
+ RETURNS void
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public', 'pg_catalog'
+AS $function$
+begin
+  if not exists (select 1 from tenants where id=p_tenant_id and status='active') then
+    raise exception 'Tenant % not found or inactive', p_tenant_id;
+  end if;
+  perform set_config('app.current_tenant_id', p_tenant_id::text, false);
+end;
+$function$
+;
+
+CREATE OR REPLACE FUNCTION public.is_tenant_member(p_tenant_id uuid, p_user_email text DEFAULT NULL::text)
+ RETURNS boolean
+ LANGUAGE sql
+ STABLE SECURITY DEFINER
+ SET search_path TO 'public', 'pg_catalog'
+AS $function$
+  select case
+    when p_user_email is not null and p_user_email like '%@tellinex.com' then true
+    when exists(
+      select 1 from profiles 
+      where tenant_id = p_tenant_id 
+        and email = coalesce(p_user_email, (auth.jwt()->>'email'))
+    ) then true
+    else false
+  end;
+$function$
+;
+
+CREATE OR REPLACE FUNCTION public.submit_digital_acceptance(p_work_order_id uuid, p_technician_email text, p_technician_name text, p_contractor_company text, p_terms_version text, p_terms_accepted boolean, p_signature_image_url text, p_signature_hash_sha256 text, p_gps_lat double precision DEFAULT NULL::double precision, p_gps_lng double precision DEFAULT NULL::double precision, p_gps_accuracy_m double precision DEFAULT NULL::double precision, p_device_id text DEFAULT NULL::text, p_device_model text DEFAULT NULL::text, p_app_version text DEFAULT NULL::text, p_ip_address text DEFAULT NULL::text, p_declared_metres double precision DEFAULT NULL::double precision, p_lidar_scan_ref text DEFAULT NULL::text, p_photo_evidence_count integer DEFAULT 0, p_evidence_seal_hash text DEFAULT NULL::text, p_payment_approval_id uuid DEFAULT NULL::uuid)
+ RETURNS uuid
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public', 'pg_catalog'
+AS $function$
+declare
+  v_id uuid;
+  v_tenant uuid;
+begin
+  if not p_terms_accepted then
+    raise exception 'Terms must be accepted to submit digital acceptance';
+  end if;
+  if length(coalesce(p_signature_hash_sha256,'')) <> 64 then
+    raise exception 'signature_hash_sha256 must be 64-char SHA-256';
+  end if;
+
+  select tenant_id into v_tenant from work_orders where id=p_work_order_id;
+  v_tenant := coalesce(v_tenant, '00000000-0000-0000-0000-000000000001'::uuid);
+
+  insert into digital_acceptances (
+    work_order_id, payment_approval_id, technician_email, technician_name, contractor_company,
+    terms_version, terms_accepted, terms_accepted_at,
+    signature_image_url, signature_hash_sha256,
+    gps_lat, gps_lng, gps_accuracy_m,
+    device_id, device_model, app_version, ip_address,
+    declared_metres, lidar_scan_ref, photo_evidence_count, evidence_seal_hash,
+    status, tenant_id, data_source
+  ) values (
+    p_work_order_id, p_payment_approval_id, p_technician_email, p_technician_name, p_contractor_company,
+    p_terms_version, p_terms_accepted, now(),
+    p_signature_image_url, p_signature_hash_sha256,
+    p_gps_lat, p_gps_lng, p_gps_accuracy_m,
+    p_device_id, p_device_model, p_app_version, p_ip_address,
+    p_declared_metres, p_lidar_scan_ref, p_photo_evidence_count, p_evidence_seal_hash,
+    'submitted', v_tenant, 'real'
+  ) returning id into v_id;
+
+  insert into system_events (platform, event_type, severity, message, details, app_version)
+  values ('fieldpack-pro', 'digital_acceptance_submitted', 'info',
+    format('Digital acceptance %s submitted for WO %s', v_id, p_work_order_id),
+    jsonb_build_object('acceptance_id', v_id, 'work_order_id', p_work_order_id, 'declared_metres', p_declared_metres, 'tenant_id', v_tenant),
+    p_app_version);
+
+  return v_id;
+end;
+$function$
+;
+
+CREATE OR REPLACE FUNCTION public.submit_customer_signoff(p_work_order_id uuid, p_customer_name text, p_signoff_type text DEFAULT 'install_completion'::text, p_signature_image_url text DEFAULT NULL::text, p_signature_hash_sha256 text DEFAULT NULL::text, p_satisfaction_rating integer DEFAULT NULL::integer, p_comments text DEFAULT NULL::text, p_customer_id uuid DEFAULT NULL::uuid, p_customer_install_id uuid DEFAULT NULL::uuid, p_customer_email text DEFAULT NULL::text, p_customer_phone text DEFAULT NULL::text, p_gps_lat double precision DEFAULT NULL::double precision, p_gps_lng double precision DEFAULT NULL::double precision, p_terms_version text DEFAULT 'v1'::text, p_device_model text DEFAULT NULL::text, p_app_version text DEFAULT NULL::text)
+ RETURNS uuid
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public', 'pg_catalog'
+AS $function$
+declare
+  v_id uuid;
+  v_tenant uuid;
+begin
+  if length(coalesce(p_customer_name,'')) < 2 then
+    raise exception 'customer_name required';
+  end if;
+  if p_signature_hash_sha256 is not null and length(p_signature_hash_sha256) <> 64 then
+    raise exception 'signature_hash_sha256 must be 64-char SHA-256';
+  end if;
+
+  select tenant_id into v_tenant from work_orders where id=p_work_order_id;
+  v_tenant := coalesce(v_tenant, '00000000-0000-0000-0000-000000000001'::uuid);
+
+  insert into customer_signoffs (
+    work_order_id, customer_id, customer_install_id, customer_name, customer_email, customer_phone,
+    signoff_type, satisfaction_rating, comments,
+    signature_image_url, signature_hash_sha256,
+    gps_lat, gps_lng,
+    device_model, app_version,
+    terms_version, terms_accepted, terms_accepted_at,
+    status, tenant_id, data_source
+  ) values (
+    p_work_order_id, p_customer_id, p_customer_install_id, p_customer_name, p_customer_email, p_customer_phone,
+    p_signoff_type, p_satisfaction_rating, p_comments,
+    p_signature_image_url, p_signature_hash_sha256,
+    p_gps_lat, p_gps_lng,
+    p_device_model, p_app_version,
+    p_terms_version, true, now(),
+    'submitted', v_tenant, 'real'
+  ) returning id into v_id;
+
+  insert into system_events (platform, event_type, severity, message, details, app_version)
+  values ('my-tellinex', 'customer_signoff_submitted', 'info',
+    format('Customer signoff %s submitted for WO %s', v_id, p_work_order_id),
+    jsonb_build_object('signoff_id', v_id, 'work_order_id', p_work_order_id, 'signoff_type', p_signoff_type, 'rating', p_satisfaction_rating, 'tenant_id', v_tenant),
+    p_app_version);
+
+  return v_id;
+end;
+$function$
+;
+
+CREATE OR REPLACE FUNCTION public.verify_digital_acceptance(p_acceptance_id uuid)
+ RETURNS TABLE(acceptance_id uuid, is_valid boolean, reason text, work_order_id uuid, signed_at timestamp with time zone, signed_by text)
+ LANGUAGE sql
+ STABLE SECURITY DEFINER
+ SET search_path TO 'public', 'pg_catalog'
+AS $function$
+  select 
+    da.id,
+    case
+      when da.terms_accepted is not true then false
+      when da.signature_hash_sha256 is null or length(da.signature_hash_sha256) <> 64 then false
+      when da.status not in ('submitted','verified') then false
+      else true
+    end as is_valid,
+    case
+      when da.terms_accepted is not true then 'Terms not accepted'
+      when da.signature_hash_sha256 is null then 'No signature hash'
+      when length(da.signature_hash_sha256) <> 64 then 'Invalid signature hash length'
+      when da.status not in ('submitted','verified') then 'Status: ' || da.status
+      else 'Valid'
+    end as reason,
+    da.work_order_id,
+    da.terms_accepted_at,
+    da.technician_email
+  from digital_acceptances da
+  where da.id = p_acceptance_id;
+$function$
+;
+
+CREATE OR REPLACE FUNCTION public.tcc_system_summary()
+ RETURNS jsonb
+ LANGUAGE sql
+ STABLE SECURITY DEFINER
+ SET search_path TO 'public', 'pg_catalog'
+AS $function$
+  select jsonb_build_object(
+    'cron_total', (select count(*) from cron.job),
+    'cron_active', (select count(*) from cron.job where active),
+    'cron_failing', (select count(*) from v_cron_heartbeat where health in ('failing','last_failed','stale')),
+    'health_alerts_active', (select count(*) from system_health_alerts where resolved_at is null),
+    'webhook_failed_24h', (select count(*) from api_webhook_deliveries where created_at > now()-interval '24 hours' and status='permanent_failure'),
+    'webhook_pending', (select count(*) from api_webhook_deliveries where status in ('pending','retrying')),
+    'work_orders_open', (select count(*) from work_orders where status not in ('completed','cancelled','closed')),
+    'alarms_active', (select count(*) from alarms where cleared_at is null),
+    'predictions_pending', (select count(*) from work_orders where status='predictive_drafted'),
+    'tenants_active', (select count(*) from tenants where status='active'),
+    'events_24h', (select count(*) from system_events where created_at > now()-interval '24 hours'),
+    'audit_changes_24h', (select count(*) from audit_log where occurred_at > now()-interval '24 hours'),
+    'last_health_check', (select max(detected_at) from system_health_alerts),
+    'as_of', now()
+  );
+$function$
+;
+
+CREATE OR REPLACE FUNCTION public.get_translations(p_locale text DEFAULT 'en'::text, p_namespaces text[] DEFAULT NULL::text[])
+ RETURNS jsonb
+ LANGUAGE sql
+ STABLE SECURITY DEFINER
+ SET search_path TO 'public', 'pg_catalog'
+AS $function$
+  with prefer as (
+    select 
+      namespace || '.' || key as full_key,
+      coalesce(
+        (select value from i18n_translations t2 where t2.namespace=t.namespace and t2.key=t.key and t2.locale=p_locale),
+        (select value from i18n_translations t3 where t3.namespace=t.namespace and t3.key=t.key and t3.locale='en')
+      ) as value
+    from i18n_translations t
+    where t.locale='en'
+      and (p_namespaces is null or t.namespace = any(p_namespaces))
+    group by t.namespace, t.key
+  )
+  select coalesce(jsonb_object_agg(full_key, value), '{}'::jsonb)
+  from prefer
+  where value is not null;
+$function$
+;
+
+CREATE OR REPLACE FUNCTION public.get_form_suggestions(p_form_name text, p_technician_id uuid DEFAULT NULL::uuid, p_asset_type text DEFAULT NULL::text, p_job_type text DEFAULT NULL::text, p_top_n integer DEFAULT 1)
+ RETURNS TABLE(field_name text, suggested_value text, confidence double precision, use_count integer, last_used_at timestamp with time zone, source text)
+ LANGUAGE sql
+ STABLE SECURITY DEFINER
+ SET search_path TO 'public', 'pg_catalog'
+AS $function$
+  with ranked as (
+    select 
+      d.field_name,
+      d.field_value,
+      d.confidence,
+      d.use_count,
+      d.last_used_at,
+      case
+        when d.technician_id = p_technician_id and d.asset_type = p_asset_type and d.job_type = p_job_type then 'exact_match'
+        when d.technician_id = p_technician_id and d.asset_type = p_asset_type then 'tech_asset_match'
+        when d.technician_id = p_technician_id then 'tech_match'
+        when d.asset_type = p_asset_type and d.job_type = p_job_type then 'context_match'
+        else 'global'
+      end as match_source,
+      row_number() over (
+        partition by d.field_name
+        order by 
+          case
+            when d.technician_id = p_technician_id and d.asset_type = p_asset_type and d.job_type = p_job_type then 1
+            when d.technician_id = p_technician_id and d.asset_type = p_asset_type then 2
+            when d.technician_id = p_technician_id then 3
+            when d.asset_type = p_asset_type and d.job_type = p_job_type then 4
+            else 5
+          end,
+          d.confidence desc,
+          d.use_count desc,
+          d.last_used_at desc
+      ) as rn
+    from form_field_defaults d
+    where d.form_name = p_form_name
+      and (d.technician_id is null or d.technician_id = p_technician_id)
+      and (d.asset_type is null or d.asset_type = p_asset_type)
+      and (d.job_type is null or d.job_type = p_job_type)
+      and d.confidence > 0.3
+  )
+  select field_name, field_value, confidence, use_count, last_used_at, match_source
+  from ranked
+  where rn <= p_top_n
+  order by field_name;
+$function$
+;
+
+CREATE OR REPLACE FUNCTION public.record_form_submission(p_form_name text, p_field_values jsonb, p_technician_id uuid DEFAULT NULL::uuid, p_asset_type text DEFAULT NULL::text, p_job_type text DEFAULT NULL::text, p_contractor_company text DEFAULT NULL::text, p_region text DEFAULT NULL::text)
+ RETURNS integer
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public', 'pg_catalog'
+AS $function$
+declare
+  v_field record;
+  v_count int := 0;
+  v_tenant uuid;
+begin
+  select tenant_id into v_tenant from technicians where id=p_technician_id;
+  v_tenant := coalesce(v_tenant, '00000000-0000-0000-0000-000000000001'::uuid);
+  
+  for v_field in select * from jsonb_each_text(p_field_values) loop
+    if v_field.value is not null and v_field.value <> '' then
+      insert into form_field_defaults (
+        form_name, field_name, field_value,
+        technician_id, asset_type, job_type, contractor_company, region,
+        use_count, confidence, learned_from, tenant_id, last_used_at
+      )
+      values (
+        p_form_name, v_field.key, v_field.value,
+        p_technician_id, p_asset_type, p_job_type, p_contractor_company, p_region,
+        1, 0.5, 'observation', v_tenant, now()
+      )
+      on conflict (form_name, field_name, field_value, technician_id, asset_type, job_type)
+      do update set
+        use_count = form_field_defaults.use_count + 1,
+        last_used_at = now(),
+        confidence = least(1.0, form_field_defaults.confidence + 0.1),
+        updated_at = now();
+      v_count := v_count + 1;
+    end if;
+  end loop;
+  
+  return v_count;
+end;
+$function$
+;
+
+CREATE OR REPLACE FUNCTION public.submit_rtk_fix(p_technician_id uuid, p_latitude double precision, p_longitude double precision, p_horizontal_accuracy_m double precision, p_fix_type text, p_measurement_purpose text DEFAULT 'custom'::text, p_altitude_m double precision DEFAULT NULL::double precision, p_vertical_accuracy_m double precision DEFAULT NULL::double precision, p_satellite_count integer DEFAULT NULL::integer, p_hdop double precision DEFAULT NULL::double precision, p_age_of_corrections_s double precision DEFAULT NULL::double precision, p_receiver_model text DEFAULT NULL::text, p_receiver_serial text DEFAULT NULL::text, p_device_id text DEFAULT NULL::text, p_work_order_id uuid DEFAULT NULL::uuid, p_asset_id uuid DEFAULT NULL::uuid, p_notes text DEFAULT NULL::text)
+ RETURNS TABLE(fix_id uuid, meets_requirement boolean, required_accuracy_m double precision, actual_accuracy_m double precision, required_fix_types text[], actual_fix_type text, reason text)
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public', 'pg_catalog'
+AS $function$
+declare
+  v_id uuid;
+  v_req rtk_accuracy_requirements%rowtype;
+  v_meets boolean;
+  v_reason text;
+  v_tenant uuid;
+begin
+  select * into v_req from rtk_accuracy_requirements
+  where measurement_purpose = coalesce(p_measurement_purpose,'custom');
+  if not found then
+    select * into v_req from rtk_accuracy_requirements where measurement_purpose='custom';
+  end if;
+
+  if p_horizontal_accuracy_m > v_req.max_horizontal_accuracy_m then
+    v_meets := false;
+    v_reason := format('Horizontal accuracy %sm exceeds requirement %sm',
+                       round(p_horizontal_accuracy_m::numeric, 3), 
+                       round(v_req.max_horizontal_accuracy_m::numeric, 3));
+  elsif not (p_fix_type = any(v_req.required_fix_types)) then
+    v_meets := false;
+    v_reason := format('Fix type "%s" not in required types: %s',
+                       p_fix_type, array_to_string(v_req.required_fix_types, ', '));
+  else
+    v_meets := true;
+    v_reason := 'Meets requirements';
+  end if;
+
+  select tenant_id into v_tenant from technicians where id=p_technician_id;
+  v_tenant := coalesce(v_tenant, '00000000-0000-0000-0000-000000000001'::uuid);
+
+  insert into rtk_position_fixes (
+    technician_id, device_id, receiver_model, receiver_serial,
+    latitude, longitude, altitude_m,
+    horizontal_accuracy_m, vertical_accuracy_m,
+    fix_type, satellite_count, hdop, age_of_corrections_s,
+    work_order_id, asset_id, measurement_purpose, notes,
+    tenant_id
+  ) values (
+    p_technician_id, p_device_id, p_receiver_model, p_receiver_serial,
+    p_latitude, p_longitude, p_altitude_m,
+    p_horizontal_accuracy_m, p_vertical_accuracy_m,
+    p_fix_type, p_satellite_count, p_hdop, p_age_of_corrections_s,
+    p_work_order_id, p_asset_id, p_measurement_purpose, p_notes,
+    v_tenant
+  ) returning id into v_id;
+
+  insert into system_events (platform, event_type, severity, message, details)
+  values (
+    'fieldpack-pro', 'rtk_fix_captured',
+    case when v_meets then 'info' else 'warn' end,
+    format('RTK fix %s for purpose %s: %s', v_id, p_measurement_purpose, v_reason),
+    jsonb_build_object(
+      'fix_id', v_id, 'work_order_id', p_work_order_id, 'tenant_id', v_tenant,
+      'fix_type', p_fix_type, 'accuracy_m', p_horizontal_accuracy_m,
+      'meets_requirement', v_meets
+    )
+  );
+
+  return query select v_id, v_meets, v_req.max_horizontal_accuracy_m, p_horizontal_accuracy_m,
+                      v_req.required_fix_types, p_fix_type, v_reason;
+end;
+$function$
+;
+
+CREATE OR REPLACE FUNCTION public.transition_procurement_status(p_order_ref text, p_to_status text, p_actor_email text, p_note text DEFAULT NULL::text, p_quoted_total numeric DEFAULT NULL::numeric, p_actual_total numeric DEFAULT NULL::numeric, p_invoice_number text DEFAULT NULL::text, p_tracking_number text DEFAULT NULL::text)
+ RETURNS jsonb
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public', 'pg_catalog'
+AS $function$
+declare
+  v_order procurement_orders%rowtype;
+  v_old_status text;
+  v_valid_transitions text[] := array['planned','quoting','approved','ordered','shipped','received','partial','rejected','cancelled','in_service'];
+begin
+  select * into v_order from procurement_orders where order_ref=p_order_ref;
+  if not found then raise exception 'Order % not found', p_order_ref; end if;
+
+  if not (p_to_status = any(v_valid_transitions)) then
+    raise exception 'Invalid status %. Valid: %', p_to_status, array_to_string(v_valid_transitions, ', ');
+  end if;
+
+  v_old_status := v_order.status;
+
+  update procurement_orders set
+    status = p_to_status,
+    quoted_total = coalesce(p_quoted_total, quoted_total),
+    actual_total = coalesce(p_actual_total, actual_total),
+    invoice_number = coalesce(p_invoice_number, invoice_number),
+    tracking_number = coalesce(p_tracking_number, tracking_number),
+    quote_received_at = case when p_to_status='quoting' and quote_received_at is null then now() else quote_received_at end,
+    approved_at = case when p_to_status='approved' and approved_at is null then now() else approved_at end,
+    approved_by_email = case when p_to_status='approved' and approved_by_email is null then p_actor_email else approved_by_email end,
+    ordered_at = case when p_to_status='ordered' and ordered_at is null then now() else ordered_at end,
+    shipped_at = case when p_to_status='shipped' and shipped_at is null then now() else shipped_at end,
+    received_at = case when p_to_status in ('received','partial') and received_at is null then now() else received_at end,
+    in_service_at = case when p_to_status='in_service' and in_service_at is null then now() else in_service_at end,
+    updated_at = now()
+  where order_ref = p_order_ref;
+
+  insert into system_events (platform, event_type, severity, message, details)
+  values ('tcc', 'procurement_status_change', 'info',
+    format('PO %s: %s → %s by %s', p_order_ref, v_old_status, p_to_status, p_actor_email),
+    jsonb_build_object(
+      'order_ref', p_order_ref, 'from_status', v_old_status, 'to_status', p_to_status,
+      'actor', p_actor_email, 'note', p_note,
+      'quoted_total', p_quoted_total, 'actual_total', p_actual_total
+    ));
+
+  return jsonb_build_object('order_ref', p_order_ref, 'from_status', v_old_status, 'to_status', p_to_status, 'transitioned_at', now());
+end;
+$function$
+;
+
+CREATE OR REPLACE FUNCTION public.log_procurement_communication(p_order_ref text, p_direction text, p_channel text, p_subject text DEFAULT NULL::text, p_recipient_email text DEFAULT NULL::text, p_sender_email text DEFAULT 'rui@tellinex.com'::text, p_body text DEFAULT NULL::text, p_status text DEFAULT 'drafted'::text, p_quoted_amount numeric DEFAULT NULL::numeric, p_quoted_lead_time_days integer DEFAULT NULL::integer, p_response_required boolean DEFAULT false, p_response_due_by date DEFAULT NULL::date)
+ RETURNS uuid
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public', 'pg_catalog'
+AS $function$
+declare
+  v_order_id uuid;
+  v_comm_id uuid;
+begin
+  select id into v_order_id from procurement_orders where order_ref = p_order_ref;
+  if v_order_id is null then
+    raise exception 'PO % not found', p_order_ref;
+  end if;
+
+  insert into procurement_communications (
+    order_id, direction, channel, subject, recipient_email, sender_email, body,
+    status, sent_at, received_at, response_required, response_due_by,
+    quoted_amount, quoted_lead_time_days, created_by_email
+  ) values (
+    v_order_id, p_direction, p_channel, p_subject, p_recipient_email, p_sender_email, p_body,
+    p_status,
+    case when p_direction='outbound' and p_status in ('sent','delivered','opened') then now() else null end,
+    case when p_direction='inbound' then now() else null end,
+    p_response_required, p_response_due_by,
+    p_quoted_amount, p_quoted_lead_time_days,
+    p_sender_email
+  ) returning id into v_comm_id;
+
+  -- Auto-advance PO from planned → quoting on first outbound email
+  if p_direction = 'outbound' and p_status in ('sent','delivered') then
+    update procurement_orders 
+    set status = 'quoting', updated_at = now()
+    where id = v_order_id and status = 'planned';
+  end if;
+
+  -- Auto-update quoted_total on inbound quote
+  if p_direction = 'inbound' and p_quoted_amount is not null then
+    update procurement_orders 
+    set quoted_total = p_quoted_amount, quote_received_at = now(), updated_at = now()
+    where id = v_order_id;
+  end if;
+
+  insert into system_events (platform, event_type, severity, message, details)
+  values ('tcc', 'procurement_communication', 'info',
+    format('PO %s: %s %s — %s', p_order_ref, p_direction, p_channel, coalesce(p_subject, p_status)),
+    jsonb_build_object('order_ref', p_order_ref, 'communication_id', v_comm_id, 'direction', p_direction, 'status', p_status));
+
+  return v_comm_id;
+end;
+$function$
+;
+
+CREATE OR REPLACE FUNCTION public.get_assets_within_radius(p_lat double precision, p_lng double precision, p_radius_m double precision DEFAULT 100, p_asset_types text[] DEFAULT NULL::text[], p_include_planned boolean DEFAULT true)
+ RETURNS TABLE(asset_id uuid, asset_type text, asset_ref text, status text, latitude double precision, longitude double precision, elevation_m numeric, depth_m numeric, fibre_count integer, cable_type text, hexatronic_model text, geometry_3d jsonb, health_score integer, parent_asset_id uuid, distance_m double precision, last_rtk_accuracy_m double precision, has_active_alarm boolean, metadata jsonb)
+ LANGUAGE sql
+ STABLE SECURITY DEFINER
+ SET search_path TO 'public', 'pg_catalog'
+AS $function$
+  select 
+    na.id,
+    na.asset_type,
+    na.asset_ref,
+    na.status,
+    na.latitude,
+    na.longitude,
+    na.elevation_m,
+    coalesce(na.depth_m, 0.6),  -- default slot-cut depth if not specified
+    na.fibre_count,
+    na.cable_type,
+    na.hexatronic_model,
+    na.geometry_3d,
+    na.health_score,
+    na.parent_asset_id,
+    st_distance(
+      na.geog,
+      st_setsrid(st_makepoint(p_lng, p_lat), 4326)::geography
+    ) as distance_m,
+    (select horizontal_accuracy_m from rtk_position_fixes 
+     where asset_id = na.id 
+     order by captured_at desc limit 1),
+    exists(
+      select 1 from alarms a 
+      where a.asset_id = na.id 
+        and a.cleared_at is null
+    ) as has_active_alarm,
+    jsonb_build_object(
+      'installed_by', na.installed_by,
+      'installed_date', na.installed_date,
+      'last_inspected', na.last_inspected,
+      'inspection_status', na.inspection_status,
+      'splice_count', na.splice_count,
+      'joint_type', na.joint_type,
+      'address', coalesce(na.property_address, na.address),
+      'customer_reference', na.customer_reference,
+      'iloq_tag_id', na.iloq_tag_id,
+      'photo_url', na.photo_url,
+      'twin_last_rendered_at', na.twin_last_rendered_at
+    ) as metadata
+  from network_assets na
+  where na.geog is not null
+    and st_dwithin(
+      na.geog,
+      st_setsrid(st_makepoint(p_lng, p_lat), 4326)::geography,
+      p_radius_m
+    )
+    and (p_asset_types is null or na.asset_type = any(p_asset_types))
+    and (
+      (p_include_planned and na.status in ('active','planned','in_service'))
+      or (not p_include_planned and na.status in ('active','in_service'))
+    )
+  order by distance_m;
+$function$
+;
+
+CREATE OR REPLACE FUNCTION public.get_gpr_traces_within_radius(p_lat double precision, p_lng double precision, p_radius_m double precision DEFAULT 100, p_min_confidence double precision DEFAULT 0.3)
+ RETURNS TABLE(trace_id uuid, device_model text, utility_type_guess text, estimated_depth_m double precision, detection_confidence double precision, geometry_geojson jsonb, captured_at timestamp with time zone, notes text, distance_m double precision)
+ LANGUAGE sql
+ STABLE SECURITY DEFINER
+ SET search_path TO 'public', 'pg_catalog'
+AS $function$
+  select 
+    g.id,
+    g.device_model,
+    g.utility_type_guess,
+    g.estimated_depth_m,
+    g.detection_confidence,
+    g.geometry_geojson,
+    g.captured_at,
+    g.notes,
+    st_distance(
+      g.geog,
+      st_setsrid(st_makepoint(p_lng, p_lat), 4326)::geography
+    ) as distance_m
+  from gpr_survey_traces g
+  where g.geog is not null
+    and st_dwithin(
+      g.geog,
+      st_setsrid(st_makepoint(p_lng, p_lat), 4326)::geography,
+      p_radius_m
+    )
+    and coalesce(g.detection_confidence, 1.0) >= p_min_confidence
+  order by distance_m, g.captured_at desc;
+$function$
+;
+
+CREATE OR REPLACE FUNCTION public.submit_gpr_trace(p_device_model text, p_geometry_geojson jsonb, p_captured_at timestamp with time zone DEFAULT now(), p_estimated_depth_m double precision DEFAULT NULL::double precision, p_detection_confidence double precision DEFAULT NULL::double precision, p_utility_type_guess text DEFAULT NULL::text, p_job_site_id uuid DEFAULT NULL::uuid, p_related_work_order_id uuid DEFAULT NULL::uuid, p_captured_by_email text DEFAULT NULL::text, p_device_serial text DEFAULT NULL::text, p_notes text DEFAULT NULL::text, p_rtk_accuracy_m double precision DEFAULT NULL::double precision, p_raw_data_url text DEFAULT NULL::text, p_survey_id uuid DEFAULT NULL::uuid)
+ RETURNS uuid
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public', 'pg_catalog'
+AS $function$
+declare
+  v_id uuid;
+  v_geog geography;
+  v_tenant uuid;
+begin
+  -- Validate geometry
+  begin
+    v_geog := st_geogfromgeojson(p_geometry_geojson::text);
+  exception when others then
+    raise exception 'Invalid geometry: %', sqlerrm;
+  end;
+
+  if st_geometrytype(v_geog::geometry) <> 'ST_LineString' then
+    raise exception 'GPR trace must be a LineString, got %', st_geometrytype(v_geog::geometry);
+  end if;
+
+  -- Tenant scope
+  select tenant_id into v_tenant from work_orders where id=p_related_work_order_id;
+  v_tenant := coalesce(v_tenant, '00000000-0000-0000-0000-000000000001'::uuid);
+
+  insert into gpr_survey_traces (
+    survey_id, device_model, device_serial,
+    geog, geometry_geojson,
+    estimated_depth_m, detection_confidence, utility_type_guess,
+    job_site_id, related_work_order_id, notes, raw_data_url,
+    captured_at, captured_by_email, rtk_accuracy_m,
+    tenant_id
+  ) values (
+    p_survey_id, p_device_model, p_device_serial,
+    v_geog, p_geometry_geojson,
+    p_estimated_depth_m, p_detection_confidence, p_utility_type_guess,
+    p_job_site_id, p_related_work_order_id, p_notes, p_raw_data_url,
+    p_captured_at, p_captured_by_email, p_rtk_accuracy_m,
+    v_tenant
+  ) returning id into v_id;
+
+  insert into system_events (platform, event_type, severity, message, details)
+  values ('fieldpack-pro', 'gpr_trace_captured', 'info',
+    format('GPR trace %s captured by %s (%s)', v_id, p_device_model, coalesce(p_utility_type_guess, 'unknown')),
+    jsonb_build_object('trace_id', v_id, 'device', p_device_model, 'depth_m', p_estimated_depth_m, 'tenant_id', v_tenant));
+
+  return v_id;
+end;
+$function$
+;
+
+CREATE OR REPLACE FUNCTION public.save_ar_calibration(p_reference_points jsonb, p_transform_matrix jsonb, p_technician_email text, p_technician_id uuid DEFAULT NULL::uuid, p_job_site_id uuid DEFAULT NULL::uuid, p_job_id uuid DEFAULT NULL::uuid, p_device_id text DEFAULT NULL::text, p_ios_version text DEFAULT NULL::text, p_arkit_version text DEFAULT NULL::text, p_expires_in_hours integer DEFAULT 24)
+ RETURNS uuid
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public', 'pg_catalog'
+AS $function$
+declare
+  v_id uuid;
+  v_tenant uuid;
+  v_avg_acc double precision;
+  v_worst_acc double precision;
+  v_count int;
+begin
+  -- Validate reference points
+  v_count := jsonb_array_length(p_reference_points);
+  if v_count < 3 then
+    raise exception 'Need at least 3 reference points for AR calibration, got %', v_count;
+  end if;
+
+  -- Compute accuracy stats
+  select 
+    avg((rp->>'rtk_accuracy_m')::double precision),
+    max((rp->>'rtk_accuracy_m')::double precision)
+  into v_avg_acc, v_worst_acc
+  from jsonb_array_elements(p_reference_points) rp
+  where rp ? 'rtk_accuracy_m';
+
+  if v_avg_acc is null or v_avg_acc > 0.05 then
+    raise exception 'Average RTK accuracy %sm exceeds 5cm threshold for AR calibration', round(coalesce(v_avg_acc, 999)::numeric, 4);
+  end if;
+
+  -- Tenant scope
+  select tenant_id into v_tenant from technicians where id=p_technician_id;
+  v_tenant := coalesce(v_tenant, '00000000-0000-0000-0000-000000000001'::uuid);
+
+  insert into ar_calibration_anchors (
+    job_site_id, job_id, technician_id, technician_email,
+    reference_point_count, reference_points, transform_matrix,
+    rtk_accuracy_avg_m, rtk_accuracy_worst_m,
+    device_id, ios_version, arkit_version,
+    expires_at, tenant_id
+  ) values (
+    p_job_site_id, p_job_id, p_technician_id, p_technician_email,
+    v_count, p_reference_points, p_transform_matrix,
+    v_avg_acc, v_worst_acc,
+    p_device_id, p_ios_version, p_arkit_version,
+    now() + (p_expires_in_hours || ' hours')::interval, v_tenant
+  ) returning id into v_id;
+
+  insert into system_events (platform, event_type, severity, message, details)
+  values ('fieldpack-pro', 'ar_calibration_saved', 'info',
+    format('AR calibration %s by %s (avg %scm)', v_id, p_technician_email, round((v_avg_acc * 100)::numeric, 1)),
+    jsonb_build_object('calibration_id', v_id, 'avg_accuracy_m', v_avg_acc, 'worst_accuracy_m', v_worst_acc, 'tenant_id', v_tenant));
+
+  return v_id;
+end;
+$function$
+;
+
+CREATE OR REPLACE FUNCTION public.tenant_descendants(p_tenant_id uuid)
+ RETURNS TABLE(tenant_id uuid, depth integer)
+ LANGUAGE sql
+ STABLE SECURITY DEFINER
+ SET search_path TO 'public', 'pg_catalog'
+AS $function$
+  with recursive tree as (
+    select id as tenant_id, 0 as depth from tenants where id = p_tenant_id
+    union all
+    select t.id, tree.depth + 1
+    from tenants t
+    inner join tree on t.parent_tenant_id = tree.tenant_id
+    where tree.depth < 10  -- safety: max 10 levels deep
+  )
+  select tenant_id, depth from tree;
+$function$
+;
+
+CREATE OR REPLACE FUNCTION public.tenant_ancestors(p_tenant_id uuid)
+ RETURNS TABLE(tenant_id uuid, depth integer)
+ LANGUAGE sql
+ STABLE SECURITY DEFINER
+ SET search_path TO 'public', 'pg_catalog'
+AS $function$
+  with recursive tree as (
+    select id as tenant_id, parent_tenant_id, 0 as depth 
+    from tenants where id = p_tenant_id
+    union all
+    select t.id, t.parent_tenant_id, tree.depth + 1
+    from tenants t
+    inner join tree on tree.parent_tenant_id = t.id
+    where tree.depth < 10
+  )
+  select tenant_id, depth from tree where depth > 0;
+$function$
+;
+
+CREATE OR REPLACE FUNCTION public.user_tenant_id(p_user_email text DEFAULT NULL::text)
+ RETURNS uuid
+ LANGUAGE sql
+ STABLE SECURITY DEFINER
+ SET search_path TO 'public', 'pg_catalog'
+AS $function$
+  select coalesce(
+    -- 1. From explicit JWT claim
+    nullif(auth.jwt()->>'tenant_id', '')::uuid,
+    -- 2. From profiles table
+    (select tenant_id from profiles 
+     where email = coalesce(p_user_email, auth.jwt()->>'email')
+     limit 1),
+    -- 3. Default to Tellinex Jamaica for legacy users
+    '00000000-0000-0000-0000-000000000001'::uuid
+  );
+$function$
+;
+
+CREATE OR REPLACE FUNCTION public.tenants_peered_for_scope(p_tenant_a uuid, p_tenant_b uuid, p_scope text DEFAULT NULL::text)
+ RETURNS boolean
+ LANGUAGE sql
+ STABLE SECURITY DEFINER
+ SET search_path TO 'public', 'pg_catalog'
+AS $function$
+  select exists(
+    select 1 from tenant_peering_agreements
+    where active = true
+      and revoked_at is null
+      and (expires_at is null or expires_at > now())
+      and (
+        (tenant_a_id = p_tenant_a and tenant_b_id = p_tenant_b)
+        or
+        (tenant_a_id = p_tenant_b and tenant_b_id = p_tenant_a)
+      )
+      and (
+        p_scope is null
+        or p_scope = any(shared_scopes)
+        or 'all' = any(shared_scopes)
+      )
+  );
+$function$
+;
+
+CREATE OR REPLACE FUNCTION public.user_can_access_tenant_row(p_row_tenant_id uuid, p_scope text DEFAULT NULL::text)
+ RETURNS boolean
+ LANGUAGE plpgsql
+ STABLE SECURITY DEFINER
+ SET search_path TO 'public', 'pg_catalog'
+AS $function$
+declare
+  v_user_tenant_id uuid;
+  v_user_email text;
+begin
+  -- 0. NULL tenant_id rows are accessible to all (legacy/global data)
+  if p_row_tenant_id is null then
+    return true;
+  end if;
+
+  -- 1. Get current user's email + tenant
+  v_user_email := auth.jwt()->>'email';
+  
+  -- 2. Tellinex staff (@tellinex.com) — see EVERYTHING regardless of tenant
+  -- This implements the "Group HQ sees all" Q3 decision
+  -- Even before formal Group HQ tenant assignment, staff have global visibility
+  if v_user_email is not null and v_user_email like '%@tellinex.com' then
+    return true;
+  end if;
+
+  -- 3. Resolve user's home tenant
+  v_user_tenant_id := user_tenant_id();
+  
+  -- If we can't determine the user's tenant, deny by default
+  if v_user_tenant_id is null then
+    return false;
+  end if;
+
+  -- 4. Same tenant — direct ownership
+  if v_user_tenant_id = p_row_tenant_id then
+    return true;
+  end if;
+
+  -- 5. Hierarchy check: is the row's tenant a descendant of the user's tenant?
+  -- HQ users see all their franchisee data; franchisee users only see their own
+  if exists(
+    select 1 from tenant_descendants(v_user_tenant_id) td
+    where td.tenant_id = p_row_tenant_id
+  ) then
+    return true;
+  end if;
+
+  -- 6. Peering check: do the two tenants have an active peering agreement covering this scope?
+  if tenants_peered_for_scope(v_user_tenant_id, p_row_tenant_id, p_scope) then
+    return true;
+  end if;
+
+  -- 7. Otherwise: denied
+  return false;
+end;
+$function$
+;
+
+CREATE OR REPLACE FUNCTION public.explain_tenant_access(p_row_tenant_id uuid, p_scope text DEFAULT NULL::text, p_user_email text DEFAULT NULL::text)
+ RETURNS TABLE(decision text, reason text, user_tenant_id uuid, user_email text)
+ LANGUAGE plpgsql
+ STABLE SECURITY DEFINER
+ SET search_path TO 'public', 'pg_catalog'
+AS $function$
+declare
+  v_user_email text;
+  v_user_tenant_id uuid;
+begin
+  v_user_email := coalesce(p_user_email, auth.jwt()->>'email');
+  
+  if p_row_tenant_id is null then
+    return query select 'GRANTED'::text, 'NULL tenant_id (legacy/global row)'::text, null::uuid, v_user_email;
+    return;
+  end if;
+  
+  if v_user_email like '%@tellinex.com' then
+    return query select 'GRANTED'::text, 'Tellinex staff (@tellinex.com) — global visibility'::text, null::uuid, v_user_email;
+    return;
+  end if;
+  
+  v_user_tenant_id := (select tenant_id from profiles where email=v_user_email limit 1);
+  
+  if v_user_tenant_id is null then
+    return query select 'DENIED'::text, 'User has no resolvable tenant'::text, null::uuid, v_user_email;
+    return;
+  end if;
+  
+  if v_user_tenant_id = p_row_tenant_id then
+    return query select 'GRANTED'::text, 'Same tenant'::text, v_user_tenant_id, v_user_email;
+    return;
+  end if;
+  
+  if exists(select 1 from tenant_descendants(v_user_tenant_id) td where td.tenant_id = p_row_tenant_id) then
+    return query select 'GRANTED'::text, 'Row tenant is descendant of user tenant (hierarchical)'::text, v_user_tenant_id, v_user_email;
+    return;
+  end if;
+  
+  if tenants_peered_for_scope(v_user_tenant_id, p_row_tenant_id, p_scope) then
+    return query select 'GRANTED'::text, format('Active peering agreement covering scope %s', coalesce(p_scope,'<any>'))::text, v_user_tenant_id, v_user_email;
+    return;
+  end if;
+  
+  return query select 'DENIED'::text, 'No tenancy, hierarchy, or peering match'::text, v_user_tenant_id, v_user_email;
+end;
+$function$
+;
+
+CREATE OR REPLACE FUNCTION public.create_tenant(p_name text, p_slug text, p_country text, p_region text DEFAULT NULL::text, p_parent_tenant_id uuid DEFAULT '00000000-0000-0000-0000-00000000aaaa'::uuid, p_tier text DEFAULT 'operator'::text, p_plan text DEFAULT 'enterprise'::text, p_max_users integer DEFAULT 50, p_max_assets integer DEFAULT 50000, p_metadata jsonb DEFAULT '{}'::jsonb)
+ RETURNS uuid
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public', 'pg_catalog'
+AS $function$
+declare
+  v_id uuid;
+  v_actor text;
+begin
+  v_actor := auth.jwt()->>'email';
+  
+  -- Q2 enforcement: only Tellinex staff can create tenants
+  if not is_tellinex_staff() then
+    raise exception 'Only Tellinex HQ staff can create tenants. Caller: %', coalesce(v_actor, '<anonymous>');
+  end if;
+  
+  -- Validate inputs
+  if length(p_slug) < 3 or p_slug !~ '^[a-z0-9-]+$' then
+    raise exception 'Slug must be 3+ chars, lowercase alphanumeric + hyphens only. Got: %', p_slug;
+  end if;
+  
+  if not (p_tier = any(array['platform','operator','franchise','child'])) then
+    raise exception 'Invalid tier: %. Valid: platform, operator, franchise, child', p_tier;
+  end if;
+  
+  -- Verify parent exists
+  if p_parent_tenant_id is not null then
+    if not exists(select 1 from tenants where id = p_parent_tenant_id and status='active') then
+      raise exception 'Parent tenant % not found or inactive', p_parent_tenant_id;
+    end if;
+  end if;
+  
+  -- Insert
+  insert into tenants (
+    name, slug, country, region, status, plan, tier,
+    parent_tenant_id, max_users, max_assets, metadata
+  ) values (
+    p_name, p_slug, p_country, p_region, 'active', p_plan, p_tier,
+    p_parent_tenant_id, p_max_users, p_max_assets, p_metadata
+  ) returning id into v_id;
+  
+  -- Audit trail
+  insert into system_events (platform, event_type, severity, message, details)
+  values ('tcc', 'tenant_created', 'info',
+    format('Tenant %s (%s) created by %s under parent %s', p_name, v_id, v_actor, p_parent_tenant_id),
+    jsonb_build_object('tenant_id', v_id, 'name', p_name, 'slug', p_slug, 'tier', p_tier, 'parent', p_parent_tenant_id, 'actor', v_actor));
+  
+  return v_id;
+end;
+$function$
+;
+
+CREATE OR REPLACE FUNCTION public.deactivate_tenant(p_tenant_id uuid, p_reason text DEFAULT NULL::text)
+ RETURNS void
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public', 'pg_catalog'
+AS $function$
+declare
+  v_actor text;
+  v_tenant_name text;
+begin
+  v_actor := auth.jwt()->>'email';
+  
+  if not is_tellinex_staff() then
+    raise exception 'Only Tellinex HQ staff can deactivate tenants';
+  end if;
+  
+  if p_tenant_id = '00000000-0000-0000-0000-000000000001'::uuid then
+    raise exception 'Cannot deactivate Tellinex Jamaica (root operator)';
+  end if;
+  if p_tenant_id = '00000000-0000-0000-0000-00000000aaaa'::uuid then
+    raise exception 'Cannot deactivate Tellinex Group HQ';
+  end if;
+  
+  select name into v_tenant_name from tenants where id = p_tenant_id;
+  if not found then
+    raise exception 'Tenant % not found', p_tenant_id;
+  end if;
+  
+  update tenants set status='suspended', updated_at=now()
+  where id = p_tenant_id;
+  
+  insert into system_events (platform, event_type, severity, message, details)
+  values ('tcc', 'tenant_deactivated', 'warn',
+    format('Tenant %s (%s) deactivated by %s. Reason: %s', v_tenant_name, p_tenant_id, v_actor, coalesce(p_reason,'<none>')),
+    jsonb_build_object('tenant_id', p_tenant_id, 'reason', p_reason, 'actor', v_actor));
+end;
+$function$
+;
+
+CREATE OR REPLACE FUNCTION public.authorise_peering(p_tenant_a_id uuid, p_tenant_b_id uuid, p_shared_scopes text[], p_authorisation_reason text DEFAULT NULL::text, p_expires_at timestamp with time zone DEFAULT NULL::timestamp with time zone)
+ RETURNS uuid
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public', 'pg_catalog'
+AS $function$
+declare
+  v_id uuid;
+  v_actor text;
+begin
+  v_actor := auth.jwt()->>'email';
+  
+  -- Q3 enforcement: only HQ staff can authorise peering
+  if not is_tellinex_staff() then
+    raise exception 'Only Tellinex HQ staff can authorise tenant peering';
+  end if;
+  
+  if p_tenant_a_id = p_tenant_b_id then
+    raise exception 'Cannot peer a tenant with itself';
+  end if;
+  
+  if array_length(p_shared_scopes, 1) is null or array_length(p_shared_scopes, 1) = 0 then
+    raise exception 'Must specify at least one shared scope';
+  end if;
+  
+  -- Validate both tenants exist and are active
+  if not exists(select 1 from tenants where id = p_tenant_a_id and status='active') then
+    raise exception 'Tenant A (%) not found or inactive', p_tenant_a_id;
+  end if;
+  if not exists(select 1 from tenants where id = p_tenant_b_id and status='active') then
+    raise exception 'Tenant B (%) not found or inactive', p_tenant_b_id;
+  end if;
+  
+  insert into tenant_peering_agreements (
+    tenant_a_id, tenant_b_id, shared_scopes,
+    authorised_by_email, authorisation_reason, expires_at
+  ) values (
+    p_tenant_a_id, p_tenant_b_id, p_shared_scopes,
+    v_actor, p_authorisation_reason, p_expires_at
+  ) returning id into v_id;
+  
+  insert into system_events (platform, event_type, severity, message, details)
+  values ('tcc', 'peering_authorised', 'info',
+    format('Peering between %s and %s authorised by %s for scopes: %s', 
+           p_tenant_a_id, p_tenant_b_id, v_actor, array_to_string(p_shared_scopes, ', ')),
+    jsonb_build_object('peering_id', v_id, 'tenant_a', p_tenant_a_id, 'tenant_b', p_tenant_b_id, 'scopes', p_shared_scopes, 'actor', v_actor));
+  
+  return v_id;
+end;
+$function$
+;
+
+CREATE OR REPLACE FUNCTION public.revoke_peering(p_peering_id uuid, p_reason text DEFAULT NULL::text)
+ RETURNS void
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public', 'pg_catalog'
+AS $function$
+declare
+  v_actor text;
+begin
+  v_actor := auth.jwt()->>'email';
+  
+  if not is_tellinex_staff() then
+    raise exception 'Only Tellinex HQ staff can revoke peering';
+  end if;
+  
+  update tenant_peering_agreements 
+  set active = false,
+      revoked_at = now(),
+      revoked_by_email = v_actor,
+      revocation_reason = p_reason
+  where id = p_peering_id and active = true;
+  
+  if not found then
+    raise exception 'Peering agreement % not found or already revoked', p_peering_id;
+  end if;
+  
+  insert into system_events (platform, event_type, severity, message, details)
+  values ('tcc', 'peering_revoked', 'warn',
+    format('Peering %s revoked by %s. Reason: %s', p_peering_id, v_actor, coalesce(p_reason,'<none>')),
+    jsonb_build_object('peering_id', p_peering_id, 'reason', p_reason, 'actor', v_actor));
+end;
+$function$
+;
+
+CREATE OR REPLACE FUNCTION public.cpm_enforce_single_default()
+ RETURNS trigger
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public', 'pg_catalog'
+AS $function$
+BEGIN
+  -- When a row is set as default, demote any other default for the same user
+  IF NEW.is_default = true AND NEW.deleted_at IS NULL THEN
+    UPDATE public.customer_payment_methods
+       SET is_default = false, updated_at = now()
+     WHERE user_id = NEW.user_id 
+       AND id != NEW.id 
+       AND is_default = true
+       AND deleted_at IS NULL;
+  END IF;
+  RETURN NEW;
+END;
+$function$
+;
+
+CREATE OR REPLACE FUNCTION public.cpm_set_updated_at()
+ RETURNS trigger
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public', 'pg_catalog'
+AS $function$
+BEGIN
+  NEW.updated_at = now();
+  RETURN NEW;
+END;
+$function$
+;
+
+CREATE OR REPLACE FUNCTION public.incidents_set_updated_at()
+ RETURNS trigger
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public', 'pg_catalog'
+AS $function$
+BEGIN
+  NEW.updated_at = now();
+  RETURN NEW;
+END;
+$function$
+;
+
 -- Tables
--- ======
 CREATE TABLE IF NOT EXISTS public.access_audit_log (
   id uuid DEFAULT gen_random_uuid() NOT NULL,
   user_name text NOT NULL,
@@ -7039,9 +14020,11 @@ CREATE TABLE IF NOT EXISTS public.work_orders (
 );
 ALTER TABLE public.work_orders ENABLE ROW LEVEL SECURITY;
 
--- ===========
--- Constraints
--- ===========
+-- SERIAL OWNED BY
+ALTER SEQUENCE public.audit_log_id_seq OWNED BY public.audit_log.id;
+ALTER SEQUENCE public.i18n_translations_id_seq OWNED BY public.i18n_translations.id;
+
+-- Constraints (skip those on extension tables)
 DO $idem$ BEGIN ALTER TABLE public.access_audit_log ADD CONSTRAINT access_audit_log_pkey PRIMARY KEY (id); EXCEPTION WHEN duplicate_object OR duplicate_table OR unique_violation THEN NULL; END $idem$;
 DO $idem$ BEGIN ALTER TABLE public.access_requests ADD CONSTRAINT access_requests_pkey PRIMARY KEY (id); EXCEPTION WHEN duplicate_object OR duplicate_table OR unique_violation THEN NULL; END $idem$;
 DO $idem$ BEGIN ALTER TABLE public.activity_log ADD CONSTRAINT activity_log_pkey PRIMARY KEY (id); EXCEPTION WHEN duplicate_object OR duplicate_table OR unique_violation THEN NULL; END $idem$;
@@ -7372,7 +14355,6 @@ DO $idem$ BEGIN ALTER TABLE public.social_campaigns ADD CONSTRAINT social_campai
 DO $idem$ BEGIN ALTER TABLE public.social_impact ADD CONSTRAINT social_impact_pkey PRIMARY KEY (id); EXCEPTION WHEN duplicate_object OR duplicate_table OR unique_violation THEN NULL; END $idem$;
 DO $idem$ BEGIN ALTER TABLE public.social_posts ADD CONSTRAINT social_posts_pkey PRIMARY KEY (id); EXCEPTION WHEN duplicate_object OR duplicate_table OR unique_violation THEN NULL; END $idem$;
 DO $idem$ BEGIN ALTER TABLE public.social_templates ADD CONSTRAINT social_templates_pkey PRIMARY KEY (id); EXCEPTION WHEN duplicate_object OR duplicate_table OR unique_violation THEN NULL; END $idem$;
-DO $idem$ BEGIN ALTER TABLE public.spatial_ref_sys ADD CONSTRAINT spatial_ref_sys_pkey PRIMARY KEY (srid); EXCEPTION WHEN duplicate_object OR duplicate_table OR unique_violation THEN NULL; END $idem$;
 DO $idem$ BEGIN ALTER TABLE public.speed_test_history ADD CONSTRAINT speed_test_history_pkey PRIMARY KEY (id); EXCEPTION WHEN duplicate_object OR duplicate_table OR unique_violation THEN NULL; END $idem$;
 DO $idem$ BEGIN ALTER TABLE public.speed_tests ADD CONSTRAINT speed_tests_pkey PRIMARY KEY (id); EXCEPTION WHEN duplicate_object OR duplicate_table OR unique_violation THEN NULL; END $idem$;
 DO $idem$ BEGIN ALTER TABLE public.splice_trays ADD CONSTRAINT splice_trays_pkey PRIMARY KEY (id); EXCEPTION WHEN duplicate_object OR duplicate_table OR unique_violation THEN NULL; END $idem$;
@@ -8086,7 +15068,6 @@ DO $idem$ BEGIN ALTER TABLE public.social_posts ADD CONSTRAINT social_posts_data
 DO $idem$ BEGIN ALTER TABLE public.social_posts ADD CONSTRAINT social_posts_media_type_check CHECK ((media_type = ANY (ARRAY['image'::text, 'video'::text, 'carousel'::text, 'none'::text]))); EXCEPTION WHEN duplicate_object OR duplicate_table OR unique_violation THEN NULL; END $idem$;
 DO $idem$ BEGIN ALTER TABLE public.social_posts ADD CONSTRAINT social_posts_platform_check CHECK ((platform = ANY (ARRAY['instagram'::text, 'linkedin'::text, 'facebook'::text, 'twitter'::text]))); EXCEPTION WHEN duplicate_object OR duplicate_table OR unique_violation THEN NULL; END $idem$;
 DO $idem$ BEGIN ALTER TABLE public.social_posts ADD CONSTRAINT social_posts_status_check CHECK ((status = ANY (ARRAY['draft'::text, 'scheduled'::text, 'publishing'::text, 'published'::text, 'failed'::text]))); EXCEPTION WHEN duplicate_object OR duplicate_table OR unique_violation THEN NULL; END $idem$;
-DO $idem$ BEGIN ALTER TABLE public.spatial_ref_sys ADD CONSTRAINT spatial_ref_sys_srid_check CHECK (((srid > 0) AND (srid <= 998999))); EXCEPTION WHEN duplicate_object OR duplicate_table OR unique_violation THEN NULL; END $idem$;
 DO $idem$ BEGIN ALTER TABLE public.speed_test_history ADD CONSTRAINT speed_test_history_data_source_check CHECK (is_valid_data_source(data_source)); EXCEPTION WHEN duplicate_object OR duplicate_table OR unique_violation THEN NULL; END $idem$;
 DO $idem$ BEGIN ALTER TABLE public.speed_test_history ADD CONSTRAINT speed_test_history_test_type_check CHECK ((test_type = ANY (ARRAY['auto'::text, 'manual'::text, 'synthetic'::text]))); EXCEPTION WHEN duplicate_object OR duplicate_table OR unique_violation THEN NULL; END $idem$;
 DO $idem$ BEGIN ALTER TABLE public.speed_tests ADD CONSTRAINT speed_tests_data_source_check CHECK (is_valid_data_source(data_source)); EXCEPTION WHEN duplicate_object OR duplicate_table OR unique_violation THEN NULL; END $idem$;
@@ -8477,9 +15458,7 @@ DO $idem$ BEGIN ALTER TABLE public.work_orders ADD CONSTRAINT work_orders_tenant
 DO $idem$ BEGIN ALTER TABLE public.work_orders ADD CONSTRAINT work_orders_triggering_asset_id_fkey FOREIGN KEY (triggering_asset_id) REFERENCES network_assets(id) ON DELETE SET NULL; EXCEPTION WHEN duplicate_object OR duplicate_table OR unique_violation THEN NULL; END $idem$;
 DO $idem$ BEGIN ALTER TABLE public.work_orders ADD CONSTRAINT work_orders_triggering_health_score_id_fkey FOREIGN KEY (triggering_health_score_id) REFERENCES asset_health_scores(id) ON DELETE SET NULL; EXCEPTION WHEN duplicate_object OR duplicate_table OR unique_violation THEN NULL; END $idem$;
 
--- =======
--- Indexes
--- =======
+-- Indexes (skip those on extension tables)
 CREATE INDEX IF NOT EXISTS idx_activity_created ON public.opus_activity_log USING btree (created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_activity_entity ON public.activity_log USING btree (entity_type, entity_id);
 CREATE INDEX IF NOT EXISTS idx_activity_platform ON public.opus_activity_log USING btree (platform);
@@ -8865,2453 +15844,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS ux_one_feedback_per_wo ON public.predictive_fe
 CREATE UNIQUE INDEX IF NOT EXISTS ux_one_unresolved_alert_per_component ON public.system_health_alerts USING btree (alert_type, component) WHERE (resolved_at IS NULL);
 CREATE UNIQUE INDEX IF NOT EXISTS ux_predictive_alerts_open_asset_type ON public.predictive_alerts USING btree (asset_id, alert_type) WHERE ((asset_id IS NOT NULL) AND (resolved_at IS NULL));
 
--- =========
--- Functions
--- =========
-CREATE OR REPLACE FUNCTION public.rls_auto_enable()
- RETURNS event_trigger
- LANGUAGE plpgsql
- SECURITY DEFINER
- SET search_path TO 'pg_catalog'
-AS $function$
-DECLARE
-  cmd record;
-BEGIN
-  FOR cmd IN
-    SELECT *
-    FROM pg_event_trigger_ddl_commands()
-    WHERE command_tag IN ('CREATE TABLE', 'CREATE TABLE AS', 'SELECT INTO')
-      AND object_type IN ('table','partitioned table')
-  LOOP
-     IF cmd.schema_name IS NOT NULL AND cmd.schema_name IN ('public') AND cmd.schema_name NOT IN ('pg_catalog','information_schema') AND cmd.schema_name NOT LIKE 'pg_toast%' AND cmd.schema_name NOT LIKE 'pg_temp%' THEN
-      BEGIN
-        EXECUTE format('alter table if exists %s enable row level security', cmd.object_identity);
-        RAISE LOG 'rls_auto_enable: enabled RLS on %', cmd.object_identity;
-      EXCEPTION
-        WHEN OTHERS THEN
-          RAISE LOG 'rls_auto_enable: failed to enable RLS on %', cmd.object_identity;
-      END;
-     ELSE
-        RAISE LOG 'rls_auto_enable: skip % (either system schema or not in enforced list: %.)', cmd.object_identity, cmd.schema_name;
-     END IF;
-  END LOOP;
-END;
-$function$
-;
-
-CREATE OR REPLACE FUNCTION public.handle_new_user()
- RETURNS trigger
- LANGUAGE plpgsql
- SECURITY DEFINER
- SET search_path TO 'public', 'pg_catalog', 'extensions'
-AS $function$
-begin
-  insert into public.profiles (id, email, full_name)
-  values (new.id, new.email, coalesce(new.raw_user_meta_data->>'full_name', split_part(new.email, '@', 1)));
-  return new;
-end;
-$function$
-;
-
-CREATE OR REPLACE FUNCTION public.update_updated_at()
- RETURNS trigger
- LANGUAGE plpgsql
- SET search_path TO 'public', 'pg_catalog', 'extensions'
-AS $function$
-BEGIN
-  NEW.updated_at = NOW();
-  RETURN NEW;
-END;
-$function$
-;
-
-CREATE OR REPLACE FUNCTION public.set_document_title()
- RETURNS trigger
- LANGUAGE plpgsql
- SET search_path TO 'public', 'pg_catalog', 'extensions'
-AS $function$
-BEGIN
-  IF NEW.title IS NULL OR NEW.title = '' THEN
-    NEW.title := NEW.name;
-  END IF;
-  RETURN NEW;
-END;
-$function$
-;
-
-CREATE OR REPLACE FUNCTION public.update_quote_updated_at()
- RETURNS trigger
- LANGUAGE plpgsql
- SET search_path TO 'public', 'pg_catalog', 'extensions'
-AS $function$ BEGIN NEW.updated_at = NOW(); RETURN NEW; END; $function$
-;
-
-CREATE OR REPLACE FUNCTION public.dedupe_quote_by_email()
- RETURNS trigger
- LANGUAGE plpgsql
- SET search_path TO 'public', 'pg_catalog', 'extensions'
-AS $function$
-DECLARE
-  existing_id INTEGER;
-BEGIN
-  -- Clean garbage locations (not real addresses)
-  IF NEW.location IS NOT NULL AND NEW.location != '' THEN
-    IF NOT (
-      NEW.location ~ '[0-9]' OR
-      NEW.location ~* '(road|rd|street|st|avenue|ave|drive|dr|way|lane|crescent|close|kingston|jamaica|parish|boulevard|blvd)'
-    ) THEN
-      NEW.location = NULL;
-    END IF;
-  END IF;
-
-  -- If we have an email, check for existing row
-  IF NEW.customer_email IS NOT NULL AND NEW.customer_email != '' THEN
-    SELECT id INTO existing_id FROM quote_requests 
-    WHERE customer_email = NEW.customer_email 
-    ORDER BY created_at DESC LIMIT 1;
-    
-    IF existing_id IS NOT NULL THEN
-      -- Update existing row with better data
-      UPDATE quote_requests SET
-        customer_name = CASE WHEN NEW.customer_name IS NOT NULL AND NEW.customer_name != 'Unknown' AND NEW.customer_name != '' THEN NEW.customer_name ELSE quote_requests.customer_name END,
-        customer_phone = COALESCE(NULLIF(NEW.customer_phone, ''), quote_requests.customer_phone),
-        location = COALESCE(NEW.location, quote_requests.location),
-        latitude = COALESCE(NEW.latitude, quote_requests.latitude),
-        longitude = COALESCE(NEW.longitude, quote_requests.longitude),
-        satellite_image_url = COALESCE(NEW.satellite_image_url, quote_requests.satellite_image_url),
-        street_view_url = COALESCE(NEW.street_view_url, quote_requests.street_view_url),
-        bandwidth_required = COALESCE(NULLIF(NEW.bandwidth_required, ''), quote_requests.bandwidth_required),
-        service_requested = COALESCE(NULLIF(NEW.service_requested, ''), quote_requests.service_requested),
-        updated_at = NOW()
-      WHERE id = existing_id;
-      RETURN NULL; -- Prevent the INSERT
-    END IF;
-  END IF;
-
-  -- If we have a phone but no email, check for existing row by phone
-  IF (NEW.customer_email IS NULL OR NEW.customer_email = '') AND NEW.customer_phone IS NOT NULL AND NEW.customer_phone != '' THEN
-    SELECT id INTO existing_id FROM quote_requests 
-    WHERE customer_phone = NEW.customer_phone 
-    ORDER BY created_at DESC LIMIT 1;
-    
-    IF existing_id IS NOT NULL THEN
-      UPDATE quote_requests SET
-        customer_name = CASE WHEN NEW.customer_name IS NOT NULL AND NEW.customer_name != 'Unknown' AND NEW.customer_name != '' THEN NEW.customer_name ELSE quote_requests.customer_name END,
-        customer_email = COALESCE(NULLIF(NEW.customer_email, ''), quote_requests.customer_email),
-        location = COALESCE(NEW.location, quote_requests.location),
-        latitude = COALESCE(NEW.latitude, quote_requests.latitude),
-        longitude = COALESCE(NEW.longitude, quote_requests.longitude),
-        satellite_image_url = COALESCE(NEW.satellite_image_url, quote_requests.satellite_image_url),
-        street_view_url = COALESCE(NEW.street_view_url, quote_requests.street_view_url),
-        bandwidth_required = COALESCE(NULLIF(NEW.bandwidth_required, ''), quote_requests.bandwidth_required),
-        service_requested = COALESCE(NULLIF(NEW.service_requested, ''), quote_requests.service_requested),
-        updated_at = NOW()
-      WHERE id = existing_id;
-      RETURN NULL;
-    END IF;
-  END IF;
-
-  -- New customer - allow INSERT
-  RETURN NEW;
-END;
-$function$
-;
-
-CREATE OR REPLACE FUNCTION public.calculate_expansion_forecast(p_route_id uuid)
- RETURNS TABLE(route_name text, distance_m numeric, juf_count integer, estimated_days numeric, estimated_cost numeric, completion_date date, stock_warnings text[])
- LANGUAGE plpgsql
- SET search_path TO 'public', 'pg_catalog', 'extensions'
-AS $function$
-DECLARE
-  v_route planned_routes%ROWTYPE;
-  v_velocity numeric;
-  v_days numeric;
-  v_cost numeric;
-  v_warnings text[] := '{}';
-  v_stock stock_levels%ROWTYPE;
-BEGIN
-  SELECT * INTO v_route FROM planned_routes WHERE id = p_route_id;
-  IF NOT FOUND THEN RAISE EXCEPTION 'Route not found'; END IF;
-
-  -- Get average velocity (metres per crew per week)
-  SELECT COALESCE(AVG(b.metres_built), 500) INTO v_velocity FROM build_logs b;
-
-  -- Calculate days (assuming current crew count from latest log)
-  v_days := ROUND(v_route.distance_m / NULLIF(v_velocity, 0) * 7, 1);
-
-  -- Calculate cost (material + labour)
-  SELECT v_route.distance_m * COALESCE(s.unit_cost, 3.20) INTO v_cost
-  FROM stock_levels s WHERE s.item_key = 'viper288f';
-  v_cost := v_cost + (v_route.distance_m * 8.50); -- microduct
-  v_cost := v_cost + (v_route.juf_count * 605);    -- JUF + splice labour
-  v_cost := v_cost + (v_route.distance_m * 4.50);  -- HDPE
-
-  -- Check stock warnings
-  FOR v_stock IN SELECT * FROM stock_levels LOOP
-    IF v_stock.item_key IN ('viper288f','microduct12','hdpe_50mm')
-       AND v_stock.current_qty < v_route.distance_m THEN
-      v_warnings := array_append(v_warnings, v_stock.item_name || ': need ' || v_route.distance_m || v_stock.unit || ', have ' || v_stock.current_qty || v_stock.unit);
-    END IF;
-    IF v_stock.item_key = 'juf_chambers' AND v_stock.current_qty < v_route.juf_count THEN
-      v_warnings := array_append(v_warnings, v_stock.item_name || ': need ' || v_route.juf_count || ', have ' || v_stock.current_qty);
-    END IF;
-  END LOOP;
-
-  RETURN QUERY SELECT
-    v_route.name, v_route.distance_m, v_route.juf_count,
-    v_days, v_cost,
-    (CURRENT_DATE + (v_days || ' days')::interval)::date,
-    v_warnings;
-END;
-$function$
-;
-
-CREATE OR REPLACE FUNCTION public.get_stock_forecast()
- RETURNS TABLE(item_key text, item_name text, current_qty numeric, unit text, weekly_usage numeric, weeks_left numeric, reorder_in_weeks numeric, needs_order boolean, supplier text, lead_time_days integer)
- LANGUAGE plpgsql
- SET search_path TO 'public', 'pg_catalog', 'extensions'
-AS $function$
-DECLARE
-  v_avg_metres numeric;
-  v_avg_jufs numeric;
-BEGIN
-  SELECT COALESCE(AVG(b.metres_built), 500) INTO v_avg_metres FROM build_logs b;
-  SELECT COALESCE(AVG(b.jufs_installed), 4) INTO v_avg_jufs FROM build_logs b;
-
-  RETURN QUERY
-  SELECT
-    s.item_key, s.item_name, s.current_qty, s.unit,
-    CASE
-      WHEN s.item_key IN ('viper288f','microduct12','hdpe_50mm') THEN v_avg_metres
-      WHEN s.item_key = 'juf_chambers' THEN v_avg_jufs
-      WHEN s.item_key = 'onts' THEN ROUND(v_avg_metres / 1000 * 625 * 0.3, 1)
-      ELSE v_avg_jufs
-    END as weekly_usage,
-    CASE
-      WHEN s.item_key IN ('viper288f','microduct12','hdpe_50mm') THEN ROUND(s.current_qty / NULLIF(v_avg_metres, 0), 1)
-      WHEN s.item_key = 'juf_chambers' THEN ROUND(s.current_qty / NULLIF(v_avg_jufs, 0), 1)
-      ELSE ROUND(s.current_qty / NULLIF(v_avg_jufs, 0), 1)
-    END as weeks_left,
-    GREATEST(0, CASE
-      WHEN s.item_key IN ('viper288f','microduct12','hdpe_50mm') THEN ROUND(s.current_qty / NULLIF(v_avg_metres, 0) - CEIL(s.lead_time_days::numeric / 7), 1)
-      ELSE ROUND(s.current_qty / NULLIF(v_avg_jufs, 0) - CEIL(s.lead_time_days::numeric / 7), 1)
-    END) as reorder_in_weeks,
-    CASE
-      WHEN s.item_key IN ('viper288f','microduct12','hdpe_50mm') THEN s.current_qty / NULLIF(v_avg_metres, 0) - CEIL(s.lead_time_days::numeric / 7) <= 2
-      ELSE s.current_qty / NULLIF(v_avg_jufs, 0) - CEIL(s.lead_time_days::numeric / 7) <= 2
-    END as needs_order,
-    s.supplier, s.lead_time_days
-  FROM stock_levels s
-  ORDER BY weeks_left ASC;
-END;
-$function$
-;
-
-CREATE OR REPLACE FUNCTION public.get_average_velocity(p_soil_type text DEFAULT NULL::text)
- RETURNS TABLE(soil text, avg_metres_per_day numeric, avg_jufs_per_day numeric, sample_weeks bigint)
- LANGUAGE plpgsql
- SET search_path TO 'public', 'pg_catalog', 'extensions'
-AS $function$
-BEGIN
-  IF p_soil_type IS NOT NULL THEN
-    RETURN QUERY SELECT b.soil_type, ROUND(AVG(b.metres_built/NULLIF(b.crew_size,0)),1), ROUND(AVG(b.jufs_installed::numeric/NULLIF(b.crew_size,0)),2), COUNT(*) FROM build_logs b WHERE b.soil_type=p_soil_type GROUP BY b.soil_type;
-  ELSE
-    RETURN QUERY SELECT b.soil_type, ROUND(AVG(b.metres_built/NULLIF(b.crew_size,0)),1), ROUND(AVG(b.jufs_installed::numeric/NULLIF(b.crew_size,0)),2), COUNT(*) FROM build_logs b GROUP BY b.soil_type;
-  END IF;
-END;
-$function$
-;
-
-CREATE OR REPLACE FUNCTION public.update_asset_from_validation()
- RETURNS trigger
- LANGUAGE plpgsql
- SET search_path TO 'public', 'pg_catalog', 'extensions'
-AS $function$
-BEGIN
-  IF NEW.verdict = 'pass' THEN
-    UPDATE work_orders SET status = 'validated', updated_at = now() WHERE id = NEW.work_order_id;
-    INSERT INTO asset_register (work_order_id, validation_id, asset_type, asset_reference, metres, cost_usd, valuation_usd, status, commissioned_at)
-    SELECT NEW.work_order_id, NEW.id, 'fibre_route', wo.reference, wo.executed_metres, wo.executed_metres * 25, wo.executed_metres * 25 * 2.5, 'asset', now()
-    FROM work_orders wo WHERE wo.id = NEW.work_order_id
-    ON CONFLICT DO NOTHING;
-  ELSIF NEW.verdict = 'fail' THEN
-    UPDATE work_orders SET status = 'rejected', deviation_flag = true, updated_at = now() WHERE id = NEW.work_order_id;
-  END IF;
-  RETURN NEW;
-END;
-$function$
-;
-
-CREATE OR REPLACE FUNCTION public.award_xp(p_email text, p_xp integer)
- RETURNS void
- LANGUAGE plpgsql
- SET search_path TO 'public', 'pg_catalog', 'extensions'
-AS $function$
-BEGIN
-  INSERT INTO technician_stats (technician_email, date, xp_earned)
-  VALUES (p_email, CURRENT_DATE, p_xp)
-  ON CONFLICT (technician_email, date)
-  DO UPDATE SET xp_earned = technician_stats.xp_earned + p_xp,
-    level = GREATEST(1, (technician_stats.xp_earned + p_xp) / 500 + 1);
-END;
-$function$
-;
-
-CREATE OR REPLACE FUNCTION public.award_inspection_xp()
- RETURNS trigger
- LANGUAGE plpgsql
- SET search_path TO 'public', 'pg_catalog', 'extensions'
-AS $function$
-BEGIN
-  IF NEW.ai_verdict = 'pass' THEN
-    PERFORM award_xp(NEW.technician_email, 50);
-  ELSIF NEW.ai_verdict = 'warning' THEN
-    PERFORM award_xp(NEW.technician_email, 20);
-  END IF;
-  RETURN NEW;
-END;
-$function$
-;
-
-CREATE OR REPLACE FUNCTION public.check_golden_seal()
- RETURNS trigger
- LANGUAGE plpgsql
- SET search_path TO 'public', 'pg_catalog', 'extensions'
-AS $function$
-DECLARE
-  inv_num TEXT;
-BEGIN
-  -- Check if all three gates passed
-  IF NEW.scan_status = 'SCAN_APPROVED' 
-     AND NEW.quality_status = 'QUALITY_PASSED' 
-     AND NEW.network_status = 'NETWORK_LIVE' 
-     AND NEW.golden_seal = false THEN
-    
-    -- Calculate financials
-    NEW.approved_amount_usd := NEW.validated_metres * NEW.unit_price_usd;
-    NEW.savings_usd := NEW.claimed_amount_usd - NEW.approved_amount_usd;
-    NEW.escrow_amount_usd := NEW.approved_amount_usd * (NEW.escrow_hold_pct / 100);
-    NEW.escrow_release_date := CURRENT_DATE + 30;
-    NEW.golden_seal := true;
-    NEW.seal_granted_at := now();
-    
-    -- Auto-generate invoice
-    inv_num := 'TLX-INV-' || LPAD(nextval('invoice_seq')::TEXT, 5, '0');
-    INSERT INTO invoices (invoice_number, work_order_id, payment_approval_id, contractor_name, description, metres, unit_price_usd, subtotal_usd, escrow_held_usd, net_payable_usd)
-    VALUES (inv_num, NEW.work_order_id, NEW.id, NEW.contractor_name,
-      'Fibre build: ' || NEW.validated_metres || 'm validated by Opus AI',
-      NEW.validated_metres, NEW.unit_price_usd, NEW.approved_amount_usd,
-      NEW.escrow_amount_usd, NEW.approved_amount_usd - NEW.escrow_amount_usd);
-    
-    -- Update work order
-    UPDATE work_orders SET status = 'completed', updated_at = now() WHERE id = NEW.work_order_id;
-  END IF;
-  RETURN NEW;
-END;
-$function$
-;
-
-CREATE OR REPLACE FUNCTION public.link_ddaa_to_payment()
- RETURNS trigger
- LANGUAGE plpgsql
- SET search_path TO 'public', 'pg_catalog', 'extensions'
-AS $function$
-BEGIN
-  UPDATE payment_approvals 
-  SET digital_acceptance_signed = true,
-      digital_acceptance_hash = NEW.evidence_seal_hash,
-      digital_acceptance_at = NEW.terms_accepted_at,
-      gps_at_signature_lat = NEW.gps_lat,
-      gps_at_signature_lng = NEW.gps_lng,
-      updated_at = now()
-  WHERE id = NEW.payment_approval_id;
-  RETURN NEW;
-END;
-$function$
-;
-
-CREATE OR REPLACE FUNCTION public.notify_golden_seal()
- RETURNS trigger
- LANGUAGE plpgsql
- SET search_path TO 'public', 'pg_catalog', 'extensions'
-AS $function$
-DECLARE
-  wo_ref TEXT;
-  tech_name TEXT;
-BEGIN
-  IF NEW.golden_seal = true AND (OLD.golden_seal = false OR OLD.golden_seal IS NULL) THEN
-    SELECT reference INTO wo_ref FROM work_orders WHERE id = NEW.work_order_id;
-    tech_name := NEW.contractor_name;
-    
-    -- CEO notification (Omar)
-    INSERT INTO notification_queue (event_type, work_order_ref, recipient_type, recipient_phone, channel, message, amount_usd)
-    VALUES ('golden_seal', wo_ref, 'ceo', '+18764825866', 'imessage',
-      'Tellinex Alpha: ' || wo_ref || ' validated with ' || ROUND(NEW.lidar_accuracy::numeric * 100, 1) || '% LiDAR precision. $' || ROUND(NEW.approved_amount_usd::numeric, 2) || ' approved for billing. Savings: $' || ROUND(NEW.savings_usd::numeric, 2) || '. Great work!',
-      NEW.approved_amount_usd);
-    
-    -- Contractor notification
-    INSERT INTO notification_queue (event_type, work_order_ref, recipient_type, recipient_email, channel, message, amount_usd)
-    VALUES ('golden_seal', wo_ref, 'contractor', NEW.contractor_email, 'email',
-      'Tellinex Golden Seal: Work order ' || wo_ref || ' has been validated by Opus AI. Amount approved: $' || ROUND(NEW.approved_amount_usd::numeric, 2) || ' (escrow held: $' || ROUND(NEW.escrow_amount_usd::numeric, 2) || '). Invoice will be generated automatically.',
-      NEW.approved_amount_usd);
-    
-    -- Management WhatsApp (Rui)
-    INSERT INTO notification_queue (event_type, work_order_ref, recipient_type, recipient_phone, channel, message, amount_usd)
-    VALUES ('golden_seal', wo_ref, 'management', '+351911793045', 'whatsapp',
-      '🏆 GOLDEN SEAL: ' || wo_ref || ' | ' || NEW.validated_metres || 'm validated | $' || ROUND(NEW.approved_amount_usd::numeric, 2) || ' approved | Saved $' || ROUND(NEW.savings_usd::numeric, 2) || ' vs claimed',
-      NEW.approved_amount_usd);
-    
-    -- TCC push notification
-    INSERT INTO notification_queue (event_type, work_order_ref, recipient_type, channel, message, amount_usd, metadata)
-    VALUES ('golden_seal', wo_ref, 'management', 'tcc_push',
-      wo_ref || ' validated — $' || ROUND(NEW.approved_amount_usd::numeric, 2) || ' approved',
-      NEW.approved_amount_usd,
-      jsonb_build_object('contractor', tech_name, 'metres', NEW.validated_metres, 'savings', NEW.savings_usd, 'deviation_cm', NEW.deviation_cm));
-  END IF;
-  RETURN NEW;
-END;
-$function$
-;
-
-CREATE OR REPLACE FUNCTION public.award_training_xp()
- RETURNS trigger
- LANGUAGE plpgsql
- SET search_path TO 'public', 'pg_catalog', 'extensions'
-AS $function$
-BEGIN
-  IF NEW.completed = true AND (OLD.completed = false OR OLD.completed IS NULL) THEN
-    PERFORM award_xp(NEW.technician_email, 100);
-  END IF;
-  RETURN NEW;
-END;
-$function$
-;
-
-CREATE OR REPLACE FUNCTION public.smart_dispatch(p_work_order_id uuid)
- RETURNS TABLE(assigned_email text, assigned_name text, reason text)
- LANGUAGE plpgsql
- SET search_path TO 'public', 'pg_catalog', 'extensions'
-AS $function$
-DECLARE
-  best_tech RECORD;
-  req_role TEXT;
-BEGIN
-  SELECT required_role INTO req_role FROM work_orders WHERE id = p_work_order_id;
-  
-  SELECT tp.email, tp.name, COALESCE(ts.first_time_pass_rate, 80) as pass_rate, 
-         COALESCE(ts.xp_earned, 0) as xp, COALESCE(ts.streak_days, 0) as streak
-  INTO best_tech
-  FROM technician_profiles tp
-  LEFT JOIN technician_stats ts ON tp.email = ts.technician_email AND ts.date = CURRENT_DATE
-  WHERE tp.role = req_role AND tp.available = true AND tp.gold_standard_completed = true
-  ORDER BY COALESCE(ts.first_time_pass_rate, 80) DESC, COALESCE(ts.xp_earned, 0) DESC
-  LIMIT 1;
-
-  IF best_tech IS NULL THEN
-    SELECT tp.email, tp.name, 80::double precision, 0, 0 INTO best_tech
-    FROM technician_profiles tp WHERE tp.role = req_role AND tp.available = true LIMIT 1;
-  END IF;
-
-  IF best_tech IS NULL THEN
-    RETURN QUERY SELECT 'unassigned'::TEXT, 'No available technician'::TEXT, 
-      format('No %s available with Gold Standard certification', req_role);
-    RETURN;
-  END IF;
-
-  UPDATE work_orders SET assigned_email = best_tech.email, assigned_technician = best_tech.name,
-    status = 'dispatched', dispatched_at = now(), updated_at = now() WHERE id = p_work_order_id;
-
-  RETURN QUERY SELECT best_tech.email, best_tech.name,
-    format('%s | %s%% pass | %s XP', req_role, ROUND(best_tech.pass_rate::numeric), best_tech.xp);
-END;
-$function$
-;
-
-CREATE OR REPLACE FUNCTION public.auto_penalty_depth()
- RETURNS trigger
- LANGUAGE plpgsql
- SET search_path TO 'public', 'pg_catalog', 'extensions'
-AS $function$
-DECLARE
-  wo RECORD;
-BEGIN
-  IF NEW.verdict = 'non_compliant' AND NEW.min_depth_cm < NEW.required_depth_cm THEN
-    SELECT * INTO wo FROM work_orders WHERE id = NEW.work_order_id;
-    INSERT INTO sla_penalties (work_order_id, contractor_name, penalty_type, violation_details,
-      measured_value, required_value, penalty_pct, penalty_amount_usd, original_amount_usd, evidence_hash)
-    VALUES (NEW.work_order_id, 'Contractor', 'depth_violation',
-      format('Min depth %scm below required %scm on route %s', NEW.min_depth_cm, NEW.required_depth_cm, NEW.route_name),
-      NEW.min_depth_cm, NEW.required_depth_cm, 20,
-      COALESCE(wo.executed_metres, 0) * 25 * 0.20,
-      COALESCE(wo.executed_metres, 0) * 25,
-      md5(NEW.id::TEXT || NEW.min_depth_cm::TEXT || now()::TEXT));
-  END IF;
-  RETURN NEW;
-END;
-$function$
-;
-
-CREATE OR REPLACE FUNCTION public.notify_scan_approved()
- RETURNS trigger
- LANGUAGE plpgsql
- SET search_path TO 'public', 'pg_catalog', 'extensions'
-AS $function$
-DECLARE
-  tech_xp INTEGER; tech_rank INTEGER; tech_name TEXT; xp_award INTEGER;
-BEGIN
-  IF NEW.status = 'approved' AND (OLD.status IS NULL OR OLD.status != 'approved') THEN
-    xp_award := CASE WHEN NEW.lidar_precision >= 98 THEN 500 WHEN NEW.lidar_precision >= 95 THEN 350 WHEN NEW.lidar_precision >= 90 THEN 200 ELSE 100 END;
-    UPDATE technician_stats SET xp_earned = xp_earned + xp_award, scans_completed = scans_completed + 1
-    WHERE technician_email = NEW.technician_email AND date = CURRENT_DATE
-    RETURNING xp_earned, technician_name INTO tech_xp, tech_name;
-    SELECT COUNT(*) + 1 INTO tech_rank FROM technician_stats WHERE date = CURRENT_DATE AND xp_earned > COALESCE(tech_xp, 0);
-    INSERT INTO notification_queue (event_type, recipient_type, recipient_email, channel, message, metadata)
-    VALUES ('scan_approved', 'technician', NEW.technician_email, 'tcc_push',
-      '🏆 ' || COALESCE(tech_name, 'Technician') || ': Scan approved with ' || ROUND(NEW.lidar_precision::numeric, 1) || '% precision! +' || xp_award || ' XP. You are now #' || tech_rank || ' in Kingston rankings.',
-      jsonb_build_object('xp_awarded', xp_award, 'total_xp', tech_xp, 'rank', tech_rank, 'precision', NEW.lidar_precision));
-  END IF;
-  RETURN NEW;
-END;
-$function$
-;
-
-CREATE OR REPLACE FUNCTION public.check_wo_dependency()
- RETURNS trigger
- LANGUAGE plpgsql
- SET search_path TO 'public', 'pg_catalog', 'extensions'
-AS $function$
-DECLARE dep_wo RECORD;
-BEGIN
-  IF NEW.depends_on IS NOT NULL AND NEW.status = 'dispatched' THEN
-    SELECT * INTO dep_wo FROM work_orders WHERE id = NEW.depends_on;
-    IF dep_wo.status NOT IN ('completed','validated','approved') THEN
-      NEW.blocked := true;
-      NEW.blocked_reason := format('Blocked: %s must be %s first', dep_wo.reference, COALESCE(NEW.dependency_type, 'must_complete'));
-      NEW.status := 'blocked';
-    END IF;
-  END IF;
-  RETURN NEW;
-END;
-$function$
-;
-
-CREATE OR REPLACE FUNCTION public.unblock_dependents()
- RETURNS trigger
- LANGUAGE plpgsql
- SET search_path TO 'public', 'pg_catalog', 'extensions'
-AS $function$
-BEGIN
-  IF NEW.status IN ('completed','validated','approved') AND OLD.status NOT IN ('completed','validated','approved') THEN
-    UPDATE work_orders SET blocked = false, blocked_reason = null, status = 'pending'
-    WHERE depends_on = NEW.id AND blocked = true;
-  END IF;
-  RETURN NEW;
-END;
-$function$
-;
-
-CREATE OR REPLACE FUNCTION public.can_auto_approve(log_id uuid)
- RETURNS boolean
- LANGUAGE plpgsql
- SET search_path TO 'public', 'pg_catalog', 'extensions'
-AS $function$
-DECLARE
-  log_rec RECORD;
-  rule_rec RECORD;
-  severity_rank integer;
-  max_severity_rank integer;
-BEGIN
-  SELECT * INTO log_rec FROM ai_evolution_logs WHERE id = log_id;
-  IF NOT FOUND THEN RETURN false; END IF;
-
-  SELECT * INTO rule_rec FROM ai_auto_approval_rules
-    WHERE component = log_rec.system_component
-      AND category = log_rec.category
-      AND enabled = true
-    LIMIT 1;
-  IF NOT FOUND THEN RETURN false; END IF;
-
-  -- Severity ranking
-  severity_rank := CASE log_rec.severity
-    WHEN 'low' THEN 1 WHEN 'medium' THEN 2
-    WHEN 'high' THEN 3 WHEN 'critical' THEN 4 ELSE 5 END;
-  max_severity_rank := CASE rule_rec.max_severity
-    WHEN 'low' THEN 1 WHEN 'medium' THEN 2
-    WHEN 'high' THEN 3 WHEN 'critical' THEN 4 ELSE 0 END;
-
-  RETURN severity_rank <= max_severity_rank
-    AND log_rec.impact_score <= rule_rec.max_impact_score
-    AND log_rec.confidence >= rule_rec.min_confidence;
-END;
-$function$
-;
-
-CREATE OR REPLACE FUNCTION public.validate_material_usage(p_job_id uuid)
- RETURNS jsonb
- LANGUAGE plpgsql
- SET search_path TO 'public', 'pg_catalog', 'extensions'
-AS $function$
-DECLARE
-  scan_length float;
-  reported_cable float;
-  slack float := 1.15;
-BEGIN
-  SELECT COALESCE(SUM(
-    CASE WHEN s.scan_type = 'trench' THEN 
-      COALESCE((s.metadata->>'trench_length_m')::float, 0) 
-    ELSE 0 END
-  ), 0) INTO scan_length
-  FROM lidar_scans s WHERE s.job_id = p_job_id;
-
-  SELECT COALESCE(SUM(
-    COALESCE((m.metadata->>'cable_metres')::float, 0)
-  ), 0) INTO reported_cable
-  FROM material_logs m WHERE m.job_id = p_job_id;
-
-  IF scan_length = 0 THEN
-    RETURN jsonb_build_object('status', 'NO_SCAN', 'message', 'No LiDAR trench scan found for this job');
-  END IF;
-
-  IF reported_cable > scan_length * slack THEN
-    RETURN jsonb_build_object(
-      'status', 'BLOCKED',
-      'scan_length_m', scan_length,
-      'reported_cable_m', reported_cable,
-      'max_allowed_m', round((scan_length * slack)::numeric, 1),
-      'overage_m', round((reported_cable - scan_length * slack)::numeric, 1),
-      'message', 'Material over-report detected: ' || reported_cable || 'm cable vs ' || round(scan_length::numeric,1) || 'm trench. Photo of surplus required.',
-      'action', 'PHOTO_REQUIRED'
-    );
-  END IF;
-
-  RETURN jsonb_build_object('status', 'PASSED', 'scan_length_m', scan_length, 'reported_cable_m', reported_cable);
-END;
-$function$
-;
-
-CREATE OR REPLACE FUNCTION public.smart_dispatch_v3(p_job_latitude double precision, p_job_longitude double precision, p_terrain_type text DEFAULT 'urban_dense'::text)
- RETURNS TABLE(technician_name text, distance_score double precision, terrain_score double precision, combined_score double precision)
- LANGUAGE plpgsql
- SET search_path TO 'public', 'pg_catalog', 'extensions'
-AS $function$
-BEGIN
-  RETURN QUERY
-  SELECT 
-    ta.technician_name,
-    1.0::float as distance_score,
-    COALESCE(ta.affinity_score, 1.0) as terrain_score,
-    (1.0 * COALESCE(ta.affinity_score, 1.0))::float as combined_score
-  FROM technician_terrain_affinity ta
-  WHERE ta.terrain_type = p_terrain_type
-  ORDER BY ta.affinity_score DESC
-  LIMIT 5;
-END;
-$function$
-;
-
-CREATE OR REPLACE FUNCTION public.trigger_optical_failover(p_switch_ref text, p_trigger_type text DEFAULT 'das_alert'::text, p_trigger_event_id uuid DEFAULT NULL::uuid)
- RETURNS jsonb
- LANGUAGE plpgsql
- SET search_path TO 'public', 'pg_catalog', 'extensions'
-AS $function$
-DECLARE
-  sw RECORD;
-  new_path text;
-BEGIN
-  SELECT * INTO sw FROM optical_switches WHERE switch_ref = p_switch_ref;
-  IF NOT FOUND THEN RETURN jsonb_build_object('status', 'ERROR', 'message', 'Switch not found'); END IF;
-
-  new_path := CASE WHEN sw.current_path = 'primary' THEN 'secondary' ELSE 'primary' END;
-
-  UPDATE optical_switches SET
-    current_path = new_path,
-    last_failover_at = now(),
-    failover_count = failover_count + 1
-  WHERE switch_ref = p_switch_ref;
-
-  INSERT INTO network_failover_events (switch_id, trigger_type, trigger_event_id, from_path, to_path, switchover_time_ms, client_impact, opus_decision_log)
-  VALUES (sw.id, p_trigger_type, p_trigger_event_id, sw.current_path, new_path, 0.5, 'zero', 'Opus 4 auto-failover: DAS threat detected on ' || sw.current_path || ' path. Switched to ' || new_path);
-
-  RETURN jsonb_build_object('status', 'FAILOVER_COMPLETE', 'switch', p_switch_ref, 'from', sw.current_path, 'to', new_path, 'time_ms', 0.5);
-END;
-$function$
-;
-
-CREATE OR REPLACE FUNCTION public.notify_preflight_activity()
- RETURNS trigger
- LANGUAGE plpgsql
- SET search_path TO 'public', 'pg_catalog', 'extensions'
-AS $function$
-BEGIN
-  INSERT INTO activity_log (entity_type, entity_id, action, actor_id, details)
-  VALUES (
-    'system',
-    NEW.id,
-    CASE WHEN NEW.exterior_damage_detected THEN 'alert' ELSE 'health_check' END,
-    COALESCE(NEW.technician_id, gen_random_uuid()),
-    jsonb_build_object(
-      'vehicle_id', NEW.vehicle_id,
-      'technician', COALESCE(NEW.technician_name, 'Unknown'),
-      'status', NEW.overall_status,
-      'damage', NEW.exterior_damage_detected,
-      'message', CASE
-        WHEN NEW.exterior_damage_detected THEN '⚠️ DAMAGE on ' || NEW.vehicle_id || ' by ' || COALESCE(NEW.technician_name, 'Unknown') || ' — ' || COALESCE(LEFT(NEW.damage_description, 80), 'See photos')
-        WHEN NEW.overall_status = 'pass' THEN '✅ ' || NEW.vehicle_id || ' PASSED — ' || COALESCE(NEW.technician_name, 'Unknown') || ' ready for work'
-        ELSE '🟡 ' || NEW.vehicle_id || ' ' || UPPER(NEW.overall_status) || ' — ' || COALESCE(NEW.technician_name, 'Unknown')
-      END
-    )
-  );
-  RETURN NEW;
-END;
-$function$
-;
-
-CREATE OR REPLACE FUNCTION public.notify_violation_activity()
- RETURNS trigger
- LANGUAGE plpgsql
- SET search_path TO 'public', 'pg_catalog', 'extensions'
-AS $function$
-BEGIN
-  INSERT INTO activity_log (entity_type, entity_id, action, actor_id, details)
-  VALUES (
-    'system',
-    NEW.id,
-    'alert',
-    gen_random_uuid(),
-    jsonb_build_object(
-      'vehicle_id', NEW.vehicle_id,
-      'message', '🚨 ' || NEW.vehicle_id || ' GEOFENCE ' || UPPER(NEW.violation_type) || COALESCE(' — ' || NEW.notes, '')
-    )
-  );
-  RETURN NEW;
-END;
-$function$
-;
-
-CREATE OR REPLACE FUNCTION public.notify_restock_activity()
- RETURNS trigger
- LANGUAGE plpgsql
- SET search_path TO 'public', 'pg_catalog', 'extensions'
-AS $function$
-BEGIN
-  INSERT INTO activity_log (entity_type, entity_id, action, actor_id, details)
-  VALUES (
-    'system',
-    NEW.id,
-    'alert',
-    gen_random_uuid(),
-    jsonb_build_object(
-      'vehicle_id', NEW.vehicle_id,
-      'message', '📦 ' || NEW.vehicle_id || ' LOW STOCK — ' || NEW.quantity_requested || ' ' || NEW.material_name
-    )
-  );
-  RETURN NEW;
-END;
-$function$
-;
-
-CREATE OR REPLACE FUNCTION public.fn_auto_ticket_from_asset()
- RETURNS trigger
- LANGUAGE plpgsql
- SET search_path TO 'public', 'pg_catalog', 'extensions'
-AS $function$
-DECLARE
-  v_task TEXT;
-  v_notes TEXT;
-BEGIN
-  IF OLD.status = NEW.status THEN RETURN NEW; END IF;
-
-  IF NEW.status = 'installed' THEN
-    IF NEW.asset_type IN ('chamber', 'joint_closure', 'splitter') THEN
-      v_task := 'splice'; v_notes := NEW.asset_type || ' ' || COALESCE(NEW.asset_ref, '') || ' — Splicing at ' || COALESCE(NEW.address, 'TBD');
-    ELSIF NEW.asset_type IN ('dp', 'ont', 'toby_box') THEN
-      v_task := 'install'; v_notes := NEW.asset_type || ' ' || COALESCE(NEW.asset_ref, '') || ' — Install at ' || COALESCE(NEW.address, 'TBD');
-    ELSE
-      v_task := 'commission'; v_notes := NEW.asset_type || ' ' || COALESCE(NEW.asset_ref, '') || ' — Commission at ' || COALESCE(NEW.address, 'TBD');
-    END IF;
-  ELSIF NEW.status = 'active' AND OLD.status = 'installed' THEN
-    v_task := 'test'; v_notes := NEW.asset_type || ' ' || COALESCE(NEW.asset_ref, '') || ' — OTDR test at ' || COALESCE(NEW.address, 'TBD');
-  ELSIF NEW.status = 'faulty' THEN
-    v_task := 'repair'; v_notes := 'URGENT: ' || NEW.asset_type || ' ' || COALESCE(NEW.asset_ref, '') || ' — Fault at ' || COALESCE(NEW.address, 'TBD');
-  ELSE
-    RETURN NEW;
-  END IF;
-
-  INSERT INTO dispatch_queue (task_type, customer_name, address, latitude, longitude, notes, status, created_at)
-  VALUES (v_task, COALESCE(NEW.asset_ref, 'AUTO'), NEW.address, NEW.latitude, NEW.longitude, v_notes, 'pending', now());
-
-  INSERT INTO activity_log (entity_type, entity_id, action, details, created_at)
-  VALUES ('network_asset', NEW.id, v_task || '_task_created', jsonb_build_object('message', v_notes, 'asset_ref', NEW.asset_ref, 'asset_type', NEW.asset_type, 'old_status', OLD.status, 'new_status', NEW.status), now());
-
-  RETURN NEW;
-END;
-$function$
-;
-
-CREATE OR REPLACE FUNCTION public.fn_auto_ticket_new_asset()
- RETURNS trigger
- LANGUAGE plpgsql
- SET search_path TO 'public', 'pg_catalog', 'extensions'
-AS $function$
-BEGIN
-  IF NEW.status = 'planned' THEN
-    INSERT INTO dispatch_queue (task_type, customer_name, address, latitude, longitude, notes, status, created_at)
-    VALUES ('survey', COALESCE(NEW.asset_ref, 'NEW'), NEW.address, NEW.latitude, NEW.longitude,
-      NEW.asset_type || ' ' || COALESCE(NEW.asset_ref, 'NEW') || ' — Survey at ' || COALESCE(NEW.address, 'TBD'), 'pending', now());
-
-    INSERT INTO activity_log (entity_type, entity_id, action, details, created_at)
-    VALUES ('network_asset', NEW.id, 'survey_task_created', jsonb_build_object('message', 'New ' || NEW.asset_type || ' planned', 'asset_ref', NEW.asset_ref, 'address', NEW.address), now());
-  END IF;
-  RETURN NEW;
-END;
-$function$
-;
-
-CREATE OR REPLACE FUNCTION public.fn_flag_iloq_anomaly()
- RETURNS trigger
- LANGUAGE plpgsql
- SET search_path TO 'public', 'pg_catalog', 'extensions'
-AS $function$
-BEGIN
-  -- Flag denied access
-  IF NEW.action = 'denied' OR NEW.action = 'tamper' THEN
-    NEW.flagged := true;
-    NEW.flag_reason := 'Access ' || NEW.action || ' for ' || COALESCE(NEW.technician_name, 'unknown');
-  END IF;
-  -- Flag access outside schedule window
-  IF NEW.access_window_end IS NOT NULL AND NEW.created_at > NEW.access_window_end THEN
-    NEW.flagged := true;
-    NEW.flag_reason := COALESCE(NEW.flag_reason, '') || ' Outside access window';
-  END IF;
-  -- Flag night access (10pm - 5am)
-  IF EXTRACT(HOUR FROM NEW.created_at) >= 22 OR EXTRACT(HOUR FROM NEW.created_at) < 5 THEN
-    NEW.flagged := true;
-    NEW.flag_reason := COALESCE(NEW.flag_reason, '') || ' Night access';
-  END IF;
-  -- Update lock stats
-  IF NEW.action = 'open' THEN
-    UPDATE iloq_locks SET last_accessed_at = NEW.created_at, last_accessed_by = NEW.technician_name,
-      total_access_count = total_access_count + 1 WHERE lock_id = NEW.lock_id;
-  END IF;
-  RETURN NEW;
-END;
-$function$
-;
-
-CREATE OR REPLACE FUNCTION public.fn_sensor_alert_dispatch()
- RETURNS trigger
- LANGUAGE plpgsql
- SET search_path TO 'public', 'pg_catalog', 'extensions'
-AS $function$
-BEGIN
-  IF NEW.is_alert = true AND NEW.alert_type IS NOT NULL THEN
-    -- Create alert record
-    INSERT INTO chamber_sensor_alerts (sensor_id, asset_ref, alert_type, severity, message, value)
-    VALUES (
-      NEW.sensor_id, NEW.asset_ref, NEW.alert_type,
-      CASE
-        WHEN NEW.alert_type IN ('water_detected','flood','gas_detected','tamper') THEN 'critical'
-        WHEN NEW.alert_type IN ('high_temp','door_open') THEN 'warning'
-        ELSE 'info'
-      END,
-      NEW.alert_type || ' on ' || COALESCE(NEW.asset_ref, NEW.sensor_id) || ': ' || NEW.value || ' ' || COALESCE(NEW.unit, ''),
-      NEW.value
-    );
-
-    -- Auto-dispatch for critical alerts
-    IF NEW.alert_type IN ('water_detected','flood','tamper','gas_detected') THEN
-      INSERT INTO dispatch_queue (task_type, customer_name, address, notes, status, created_at)
-      VALUES (
-        'repair',
-        COALESCE(NEW.asset_ref, NEW.sensor_id),
-        (SELECT location FROM chamber_sensors WHERE sensor_id = NEW.sensor_id LIMIT 1),
-        'SENSOR ALERT: ' || NEW.alert_type || ' — ' || NEW.value || ' ' || COALESCE(NEW.unit, '') || ' on ' || COALESCE(NEW.asset_ref, NEW.sensor_id),
-        'pending', now()
-      );
-    END IF;
-
-    -- Log to activity
-    INSERT INTO activity_log (entity_type, entity_id, action, details, created_at)
-    VALUES ('network_asset', gen_random_uuid(), 'alert',
-      jsonb_build_object('sensor_id', NEW.sensor_id, 'alert_type', NEW.alert_type, 'value', NEW.value, 'asset_ref', NEW.asset_ref),
-      now());
-  END IF;
-  RETURN NEW;
-END;
-$function$
-;
-
-CREATE OR REPLACE FUNCTION public.fn_predictive_auto_dispatch()
- RETURNS trigger
- LANGUAGE plpgsql
- SET search_path TO 'public', 'pg_catalog', 'extensions'
-AS $function$
-declare
-  v_priority text;
-begin
-  if NEW.probability is not null
-     and NEW.probability >= 80
-     and not coalesce(NEW.auto_dispatched, false)
-  then
-    v_priority := case
-      when NEW.severity = 'critical' then 'high'
-      when NEW.severity = 'major'    then 'medium'
-      else 'normal'
-    end;
-
-    insert into dispatch_queue (task_type, customer_name, priority, notes, status)
-    values (
-      'maintenance',
-      coalesce(NEW.asset_ref, NEW.id::text),
-      v_priority,
-      'PREDICTIVE: ' || coalesce(NEW.prediction_type, 'unknown')
-        || ' — ' || NEW.probability || '% probability. '
-        || coalesce(NEW.recommendation, ''),
-      'pending'
-    );
-
-    NEW.auto_dispatched := true;
-
-    insert into activity_log (action, entity_type, entity_id, details)
-    values (
-      'dispatched',
-      'network_asset',
-      coalesce(NEW.asset_id, NEW.id),
-      jsonb_build_object(
-        'kind',         'predictive_auto_dispatch',
-        'type',         NEW.prediction_type,
-        'probability',  NEW.probability,
-        'severity',     NEW.severity,
-        'priority',     v_priority,
-        'asset_ref',    NEW.asset_ref,
-        'alert_id',     NEW.id
-      )
-    );
-  end if;
-  return NEW;
-end;
-$function$
-;
-
-CREATE OR REPLACE FUNCTION public.fn_weather_pre_alert()
- RETURNS trigger
- LANGUAGE plpgsql
- SET search_path TO 'public', 'pg_catalog', 'extensions'
-AS $function$
-BEGIN
-  IF NEW.severity IN ('warning', 'emergency') AND NEW.affected_chambers IS NOT NULL THEN
-    INSERT INTO chamber_sensor_alerts (asset_ref, alert_type, severity, message, resolved)
-    SELECT unnest(NEW.affected_chambers), 'weather_' || NEW.alert_type, 
-      CASE WHEN NEW.severity = 'emergency' THEN 'critical' ELSE 'warning' END,
-      'Weather alert: ' || NEW.alert_type || ' — ' || COALESCE(NEW.message, ''), false;
-    INSERT INTO activity_log (action, entity_type, entity_id, details)
-    VALUES ('weather_alert', 'system', 'weather', json_build_object('type', NEW.alert_type, 'severity', NEW.severity, 'chambers', array_length(NEW.affected_chambers, 1))::text);
-  END IF;
-  RETURN NEW;
-END;
-$function$
-;
-
-CREATE OR REPLACE FUNCTION public.fn_weather_compliance_log()
- RETURNS trigger
- LANGUAGE plpgsql
- SET search_path TO 'public', 'pg_catalog', 'extensions'
-AS $function$
-BEGIN
-  INSERT INTO compliance_records (standard, category, title, description, evidence_type, evidence_table, status, risk_level)
-  VALUES ('ISO_45001', 'Weather Safety', 
-    'Weather alert issued: ' || NEW.alert_type,
-    'Severity: ' || COALESCE(NEW.severity, 'unknown') || '. Affected area: ' || COALESCE(NEW.affected_area, 'unknown') || '. Auto-alerted ' || COALESCE(array_length(NEW.affected_chambers, 1)::text, '0') || ' chambers.',
-    'weather_alert', 'weather_alerts', 'compliant',
-    CASE WHEN NEW.severity = 'emergency' THEN 'critical' WHEN NEW.severity = 'warning' THEN 'high' ELSE 'medium' END);
-  RETURN NEW;
-END;
-$function$
-;
-
-CREATE OR REPLACE FUNCTION public.fn_preflight_compliance_log()
- RETURNS trigger
- LANGUAGE plpgsql
- SET search_path TO 'public', 'pg_catalog', 'extensions'
-AS $function$
-BEGIN
-  INSERT INTO compliance_records (standard, category, title, description, evidence_type, evidence_table, status, risk_level)
-  VALUES ('ISO_45001', 'Vehicle Safety',
-    NEW.vehicle_id || ' pre-flight by ' || NEW.technician_name,
-    'Status: ' || NEW.overall_status || '. Damage: ' || CASE WHEN NEW.exterior_damage_detected THEN 'YES — ' || COALESCE(NEW.damage_description, '') ELSE 'None' END,
-    'vehicle_inspection', 'fleet_preflight_checks',
-    CASE WHEN NEW.overall_status = 'pass' THEN 'compliant' ELSE 'under_review' END,
-    CASE WHEN NEW.exterior_damage_detected THEN 'medium' ELSE 'low' END);
-  RETURN NEW;
-END;
-$function$
-;
-
-CREATE OR REPLACE FUNCTION public.fn_access_compliance_log()
- RETURNS trigger
- LANGUAGE plpgsql
- SET search_path TO 'public', 'pg_catalog', 'extensions'
-AS $function$
-BEGIN
-  IF NEW.flagged THEN
-    INSERT INTO compliance_records (standard, category, title, description, evidence_type, evidence_table, status, risk_level)
-    VALUES (
-      'ISO_27001', 'Physical Access Security',
-      'Flagged access: ' || NEW.action || ' on ' || COALESCE(NEW.asset_ref, 'unknown'),
-      'Technician: ' || COALESCE(NEW.technician_name, 'unknown') || '. Flag reason: ' || COALESCE(NEW.flag_reason, 'anomaly detected'),
-      'access_log', 'iloq_access_log', 'under_review',
-      CASE WHEN NEW.action = 'tamper' THEN 'critical'
-           WHEN NEW.action = 'denied' THEN 'high'
-           ELSE 'medium'
-      END);
-  END IF;
-  RETURN NEW;
-END;
-$function$
-;
-
-CREATE OR REPLACE FUNCTION public.fn_risk_assessment_compliance()
- RETURNS trigger
- LANGUAGE plpgsql
- SET search_path TO 'public', 'pg_catalog', 'extensions'
-AS $function$
-DECLARE
-  hz_count integer := 0;
-  score text := 'low';
-BEGIN
-  -- Count hazards
-  hz_count := (CASE WHEN NEW.hz_working_at_height THEN 1 ELSE 0 END)
-    + (CASE WHEN NEW.hz_confined_space THEN 1 ELSE 0 END)
-    + (CASE WHEN NEW.hz_live_traffic THEN 1 ELSE 0 END)
-    + (CASE WHEN NEW.hz_underground_services THEN 1 ELSE 0 END)
-    + (CASE WHEN NEW.hz_electrical THEN 1 ELSE 0 END)
-    + (CASE WHEN NEW.hz_manual_handling THEN 1 ELSE 0 END)
-    + (CASE WHEN NEW.hz_asbestos THEN 1 ELSE 0 END)
-    + (CASE WHEN NEW.hz_water_flood THEN 1 ELSE 0 END)
-    + (CASE WHEN NEW.hz_extreme_heat THEN 1 ELSE 0 END)
-    + (CASE WHEN NEW.hz_weather THEN 1 ELSE 0 END)
-    + (CASE WHEN NEW.hz_sharp_objects THEN 1 ELSE 0 END)
-    + (CASE WHEN NEW.hz_biological THEN 1 ELSE 0 END)
-    + (CASE WHEN NEW.hz_noise THEN 1 ELSE 0 END)
-    + (CASE WHEN NEW.hz_lone_working THEN 1 ELSE 0 END)
-    + (CASE WHEN NEW.hz_public_interaction THEN 1 ELSE 0 END);
-  
-  NEW.hazard_count := hz_count;
-  
-  -- Calculate risk score
-  IF NEW.hz_asbestos OR NEW.hz_confined_space OR (NEW.hz_working_at_height AND NEW.hz_live_traffic) THEN
-    score := 'critical';
-  ELSIF hz_count >= 5 OR NEW.hz_electrical OR NEW.hz_working_at_height THEN
-    score := 'high';
-  ELSIF hz_count >= 3 THEN
-    score := 'medium';
-  ELSE
-    score := 'low';
-  END IF;
-  
-  NEW.risk_score := score;
-  
-  -- Auto-generate ISO 45001 compliance record
-  INSERT INTO compliance_records (standard, category, title, description, evidence_type, evidence_table, status, risk_level)
-  VALUES ('ISO_45001', 'Risk Assessment',
-    'RAMS: ' || NEW.job_id || ' by ' || NEW.technician_name,
-    'Site: ' || COALESCE(NEW.site_type, 'unknown') || '. Hazards: ' || hz_count || '. Score: ' || score || '. PPE confirmed. Weather checked: ' || CASE WHEN NEW.ctrl_weather_checked THEN 'Yes' ELSE 'No' END,
-    'incident_report', 'job_risk_assessments',
-    CASE WHEN score = 'critical' THEN 'under_review' ELSE 'compliant' END,
-    score);
-  
-  RETURN NEW;
-END;
-$function$
-;
-
-CREATE OR REPLACE FUNCTION public.fn_near_miss_compliance()
- RETURNS trigger
- LANGUAGE plpgsql
- SET search_path TO 'public', 'pg_catalog', 'extensions'
-AS $function$
-BEGIN
-  INSERT INTO compliance_records (standard, category, title, description, evidence_type, evidence_table, status, risk_level)
-  VALUES ('ISO_45001', 'Near Miss Report',
-    'Near miss: ' || NEW.category || ' by ' || NEW.technician_name,
-    COALESCE(NEW.description, '') || ' | Prevention: ' || COALESCE(NEW.what_prevented_injury, ''),
-    'incident_report', 'near_miss_reports', 'under_review', NEW.risk_level);
-  
-  INSERT INTO safety_incidents (incident_date, incident_type, severity, description, location, technician_name, weather_at_time)
-  VALUES (NEW.incident_date, 'near_miss', 
-    CASE WHEN NEW.risk_level = 'critical' THEN 'serious' WHEN NEW.risk_level = 'high' THEN 'moderate' ELSE 'minor' END,
-    NEW.description, NEW.location, NEW.technician_name, NEW.weather_conditions);
-  RETURN NEW;
-END;
-$function$
-;
-
-CREATE OR REPLACE FUNCTION public.fn_auto_clock_in_on_preflight()
- RETURNS trigger
- LANGUAGE plpgsql
- SET search_path TO 'public', 'pg_catalog', 'extensions'
-AS $function$
-BEGIN
-  -- Only clock in if not already clocked in
-  IF NOT EXISTS (
-    SELECT 1 FROM technician_timesheets 
-    WHERE technician_name = NEW.technician_name 
-    AND status = 'clocked_in'
-  ) THEN
-    INSERT INTO technician_timesheets (technician_name, technician_id, vehicle_id, clock_in, status, notes)
-    VALUES (
-      NEW.technician_name,
-      (SELECT id::text FROM profiles WHERE full_name = NEW.technician_name LIMIT 1),
-      NEW.vehicle_id,
-      NOW(),
-      'clocked_in',
-      'AUTO: Opus AI clock-in on pre-flight completion for ' || NEW.vehicle_id
-    );
-  END IF;
-  RETURN NEW;
-END;
-$function$
-;
-
-CREATE OR REPLACE FUNCTION public.fn_timesheet_fraud_check()
- RETURNS trigger
- LANGUAGE plpgsql
- SET search_path TO 'public', 'pg_catalog', 'extensions'
-AS $function$
-DECLARE
-  shift_hours numeric;
-BEGIN
-  IF NEW.clock_out IS NOT NULL AND NEW.clock_in IS NOT NULL THEN
-    shift_hours := EXTRACT(EPOCH FROM (NEW.clock_out - NEW.clock_in)) / 3600;
-    
-    IF shift_hours > 12 THEN
-      NEW.notes := COALESCE(NEW.notes, '') || ' | OPUS: Shift >12h — director review required';
-      NEW.status := 'disputed';
-    END IF;
-    IF EXTRACT(HOUR FROM NEW.clock_in AT TIME ZONE 'America/Jamaica') < 5 THEN
-      NEW.notes := COALESCE(NEW.notes, '') || ' | OPUS: Clock-in before 5AM';
-      NEW.status := 'disputed';
-    END IF;
-    IF EXTRACT(HOUR FROM NEW.clock_out AT TIME ZONE 'America/Jamaica') > 21 THEN
-      NEW.notes := COALESCE(NEW.notes, '') || ' | OPUS: Clock-out after 9PM';
-      NEW.status := 'disputed';
-    END IF;
-    IF shift_hours > 6 AND COALESCE(NEW.break_minutes, 0) = 0 THEN
-      NEW.notes := COALESCE(NEW.notes, '') || ' | OPUS: No break on 6+ hour shift';
-    END IF;
-    IF shift_hours > 8 THEN
-      NEW.overtime := true;
-      NEW.overtime_approved := false;
-      NEW.notes := COALESCE(NEW.notes, '') || ' | OVERTIME: ' || ROUND(shift_hours - 8, 1)::text || 'h — REQUIRES DIRECTOR APPROVAL (Rui/Omar)';
-    END IF;
-  END IF;
-  RETURN NEW;
-END;
-$function$
-;
-
-CREATE OR REPLACE FUNCTION public.fn_opus_auto_clock_out()
- RETURNS void
- LANGUAGE plpgsql
- SET search_path TO 'public', 'pg_catalog', 'extensions'
-AS $function$
-DECLARE
-  stale RECORD;
-BEGIN
-  FOR stale IN
-    SELECT ts.id, ts.technician_name, ts.clock_in
-    FROM technician_timesheets ts
-    WHERE ts.status = 'clocked_in'
-    AND ts.clock_in < NOW() - INTERVAL '10 hours'
-  LOOP
-    UPDATE technician_timesheets
-    SET clock_out = clock_in + INTERVAL '8 hours',
-        status = 'adjusted',
-        break_minutes = 30,
-        notes = 'AUTO: Opus AI auto-clocked out — no activity for 10+ hours. Defaulted to 8h shift + 30min break.'
-    WHERE id = stale.id;
-    
-    INSERT INTO activity_log (action, entity_type, entity_id, details)
-    VALUES ('auto_clock_out', 'system', stale.technician_name, 
-      '{"reason": "No activity for 10+ hours", "defaulted_hours": 8}');
-  END LOOP;
-END;
-$function$
-;
-
-CREATE OR REPLACE FUNCTION public.fn_otdr_opus_validate()
- RETURNS trigger
- LANGUAGE plpgsql
- SET search_path TO 'public', 'pg_catalog', 'extensions'
-AS $function$
-BEGIN
-  -- Validate against industry standards
-  IF NEW.total_loss_db IS NOT NULL THEN
-    -- Check splice loss (max 0.1dB per splice for ribbon, 0.15dB for single)
-    IF NEW.worst_splice_db IS NOT NULL AND NEW.worst_splice_db > 0.15 THEN
-      NEW.opus_validated := false;
-      NEW.opus_validation_notes := COALESCE(NEW.opus_validation_notes, '') || 'FAIL: Worst splice ' || NEW.worst_splice_db || 'dB exceeds 0.15dB limit. ';
-    END IF;
-    -- Check connector loss (max 0.5dB)
-    IF NEW.worst_connector_db IS NOT NULL AND NEW.worst_connector_db > 0.5 THEN
-      NEW.opus_validated := false;
-      NEW.opus_validation_notes := COALESCE(NEW.opus_validation_notes, '') || 'FAIL: Worst connector ' || NEW.worst_connector_db || 'dB exceeds 0.5dB limit. ';
-    END IF;
-    -- Check ORL (min -40dB for APC)
-    IF NEW.orl_db IS NOT NULL AND NEW.orl_db > -40 THEN
-      NEW.opus_validated := false;
-      NEW.opus_validation_notes := COALESCE(NEW.opus_validation_notes, '') || 'FAIL: ORL ' || NEW.orl_db || 'dB exceeds -40dB limit. ';
-    END IF;
-    -- Check loss per km (max 0.35dB/km at 1310, 0.25dB/km at 1550)
-    IF NEW.loss_per_km IS NOT NULL THEN
-      IF NEW.wavelength = '1310nm' AND NEW.loss_per_km > 0.35 THEN
-        NEW.opus_validated := false;
-        NEW.opus_validation_notes := COALESCE(NEW.opus_validation_notes, '') || 'FAIL: Loss/km ' || NEW.loss_per_km || 'dB exceeds 0.35dB/km at 1310nm. ';
-      ELSIF NEW.wavelength = '1550nm' AND NEW.loss_per_km > 0.25 THEN
-        NEW.opus_validated := false;
-        NEW.opus_validation_notes := COALESCE(NEW.opus_validation_notes, '') || 'FAIL: Loss/km ' || NEW.loss_per_km || 'dB exceeds 0.25dB/km at 1550nm. ';
-      END IF;
-    END IF;
-    -- If no failures, mark as validated
-    IF NEW.opus_validated IS NULL OR NEW.opus_validated THEN
-      NEW.opus_validated := true;
-      NEW.opus_validation_notes := 'PASS: All measurements within acceptable limits.';
-    END IF;
-  END IF;
-  
-  -- Auto-create compliance record
-  INSERT INTO compliance_records (standard, category, title, description, evidence_type, evidence_table, status, risk_level)
-  VALUES ('ISO_9001', 'Quality - OTDR Test',
-    COALESCE(NEW.equipment_type, 'OTDR') || ' test: ' || COALESCE(NEW.cable_ref, NEW.fibre_id, 'unknown') || ' by ' || NEW.technician_name,
-    'Route: ' || COALESCE(NEW.route_from, '?') || ' → ' || COALESCE(NEW.route_to, '?') || '. Loss: ' || COALESCE(NEW.total_loss_db::text, '?') || 'dB. Splices: ' || COALESCE(NEW.splice_count::text, '?') || '. Result: ' || CASE WHEN NEW.pass THEN 'PASS' ELSE 'FAIL — ' || COALESCE(NEW.fail_reason, '') END,
-    'equipment_check', 'otdr_reports',
-    CASE WHEN NEW.pass THEN 'compliant' ELSE 'non_compliant' END,
-    CASE WHEN NEW.pass THEN 'low' ELSE 'high' END);
-  
-  RETURN NEW;
-END;
-$function$
-;
-
-CREATE OR REPLACE FUNCTION public.fn_cleanup_stale_presence()
- RETURNS void
- LANGUAGE plpgsql
- SET search_path TO 'public', 'pg_catalog', 'extensions'
-AS $function$
-DECLARE
-  v_idle_count int;
-  v_offline_count int;
-  v_deleted_count int;
-BEGIN
-  -- Idle transition: online -> idle for rows last seen >2min ago.
-  -- FOR UPDATE SKIP LOCKED avoids blocking when a live client is updating its own heartbeat.
-  -- ORDER BY id ensures consistent lock order across all writers on the table.
-  WITH locked AS (
-    SELECT id FROM public.user_presence
-    WHERE last_seen < NOW() - INTERVAL '2 minutes'
-      AND status = 'online'
-    ORDER BY id
-    FOR UPDATE SKIP LOCKED
-  )
-  UPDATE public.user_presence p
-  SET status = 'idle'
-  FROM locked
-  WHERE p.id = locked.id;
-  GET DIAGNOSTICS v_idle_count = ROW_COUNT;
-
-  -- Offline transition: anything-but-offline -> offline for rows last seen >5min ago.
-  WITH locked AS (
-    SELECT id FROM public.user_presence
-    WHERE last_seen < NOW() - INTERVAL '5 minutes'
-      AND status <> 'offline'
-    ORDER BY id
-    FOR UPDATE SKIP LOCKED
-  )
-  UPDATE public.user_presence p
-  SET status = 'offline'
-  FROM locked
-  WHERE p.id = locked.id;
-  GET DIAGNOSTICS v_offline_count = ROW_COUNT;
-
-  -- Delete rows older than 24h. Same deterministic-order pattern.
-  WITH locked AS (
-    SELECT id FROM public.user_presence
-    WHERE last_seen < NOW() - INTERVAL '24 hours'
-    ORDER BY id
-    FOR UPDATE SKIP LOCKED
-  )
-  DELETE FROM public.user_presence p
-  USING locked
-  WHERE p.id = locked.id;
-  GET DIAGNOSTICS v_deleted_count = ROW_COUNT;
-
-  -- Non-invasive log. Leaves trail of whether the function is still being called
-  -- after neutralisations and how much work it actually does.
-  RAISE LOG 'fn_cleanup_stale_presence: idle=% offline=% deleted=%', v_idle_count, v_offline_count, v_deleted_count;
-END;
-$function$
-;
-
-CREATE OR REPLACE FUNCTION public.check_rls_policies()
- RETURNS TABLE(tablename text)
- LANGUAGE plpgsql
- SECURITY DEFINER
- SET search_path TO 'public', 'pg_catalog', 'extensions'
-AS $function$
-BEGIN
-  RETURN QUERY
-  SELECT t.tablename::text
-  FROM pg_tables t
-  WHERE t.schemaname = 'public' AND t.rowsecurity = true
-  AND NOT EXISTS (
-    SELECT 1 FROM pg_policies p 
-    WHERE p.schemaname = 'public' AND p.tablename = t.tablename
-  )
-  ORDER BY t.tablename;
-END;
-$function$
-;
-
-CREATE OR REPLACE FUNCTION public.fix_rls_policies()
- RETURNS json
- LANGUAGE plpgsql
- SECURITY DEFINER
- SET search_path TO 'public', 'pg_catalog', 'extensions'
-AS $function$
-DECLARE
-  tbl text;
-  fix_count int := 0;
-BEGIN
-  FOR tbl IN 
-    SELECT t.tablename 
-    FROM pg_tables t
-    WHERE t.schemaname = 'public' AND t.rowsecurity = true
-    AND NOT EXISTS (
-      SELECT 1 FROM pg_policies p 
-      WHERE p.schemaname = 'public' AND p.tablename = t.tablename
-    )
-  LOOP
-    EXECUTE format('CREATE POLICY anon_all ON public.%I FOR ALL TO public USING (true) WITH CHECK (true)', tbl);
-    fix_count := fix_count + 1;
-    
-    -- Log to audit
-    INSERT INTO access_audit_log (user_name, user_role, platform, action, section, details)
-    VALUES ('Opus Code Guardian', 'admin', 'tcc', 'create_record', 'code_guardian', 
-            'RLS AUTOFIX: Added anon_all policy to ' || tbl);
-  END LOOP;
-  
-  RETURN json_build_object('fixed', fix_count, 'status', 'ok');
-END;
-$function$
-;
-
-CREATE OR REPLACE FUNCTION public.fn_doc_download_counter()
- RETURNS trigger
- LANGUAGE plpgsql
- SET search_path TO 'public', 'pg_catalog', 'extensions'
-AS $function$
-BEGIN
-  UPDATE document_library 
-  SET download_count = download_count + 1,
-      last_downloaded_at = NOW(),
-      last_downloaded_by = NEW.user_name
-  WHERE id = NEW.document_id;
-  RETURN NEW;
-END;
-$function$
-;
-
-CREATE OR REPLACE FUNCTION public.fn_chat_mention_notify()
- RETURNS trigger
- LANGUAGE plpgsql
- SET search_path TO 'public', 'pg_catalog', 'extensions'
-AS $function$
-BEGIN
-  IF NEW.mentions IS NOT NULL AND array_length(NEW.mentions, 1) > 0 THEN
-    INSERT INTO chat_notifications (message_id, recipient_name, sender_name, content_preview)
-    SELECT NEW.id, unnest(NEW.mentions), NEW.sender_name, left(NEW.content, 100);
-  END IF;
-  RETURN NEW;
-END;
-$function$
-;
-
-CREATE OR REPLACE FUNCTION public.fn_task_dependency_check()
- RETURNS trigger
- LANGUAGE plpgsql
- SET search_path TO 'public', 'pg_catalog', 'extensions'
-AS $function$
-BEGIN
-  IF NEW.depends_on IS NOT NULL THEN
-    IF NOT EXISTS (
-      SELECT 1 FROM dispatched_tasks 
-      WHERE id = NEW.depends_on 
-      AND status IN ('completed','validated')
-    ) THEN
-      NEW.blocked := true;
-      NEW.blocked_reason := 'Waiting for previous task to complete';
-    ELSE
-      NEW.blocked := false;
-      NEW.blocked_reason := NULL;
-    END IF;
-  END IF;
-  RETURN NEW;
-END;
-$function$
-;
-
-CREATE OR REPLACE FUNCTION public.fn_unblock_next_task()
- RETURNS trigger
- LANGUAGE plpgsql
- SET search_path TO 'public', 'pg_catalog', 'extensions'
-AS $function$
-BEGIN
-  IF NEW.status IN ('completed','validated') AND OLD.status NOT IN ('completed','validated') THEN
-    UPDATE dispatched_tasks 
-    SET blocked = false, blocked_reason = NULL
-    WHERE depends_on = NEW.id;
-  END IF;
-  RETURN NEW;
-END;
-$function$
-;
-
-CREATE OR REPLACE FUNCTION public.fn_network_gate_check()
- RETURNS trigger
- LANGUAGE plpgsql
- SET search_path TO 'public', 'pg_catalog', 'extensions'
-AS $function$
-BEGIN
-  IF NEW.requires_network_pass = true AND NEW.network_segment_id IS NOT NULL THEN
-    IF NOT EXISTS (
-      SELECT 1 FROM network_segments 
-      WHERE id = NEW.network_segment_id 
-      AND network_validated = true
-    ) THEN
-      NEW.blocked := true;
-      NEW.blocked_reason := 'Network segment not yet validated — CBTs and joints must be OTDR tested and passed before customer installation';
-    END IF;
-  END IF;
-  RETURN NEW;
-END;
-$function$
-;
-
-CREATE OR REPLACE FUNCTION public.fn_network_validated_unblock()
- RETURNS trigger
- LANGUAGE plpgsql
- SET search_path TO 'public', 'pg_catalog', 'extensions'
-AS $function$
-BEGIN
-  IF NEW.network_validated = true AND (OLD.network_validated = false OR OLD.network_validated IS NULL) THEN
-    UPDATE dispatched_tasks 
-    SET blocked = false, blocked_reason = NULL
-    WHERE network_segment_id = NEW.id 
-    AND requires_network_pass = true;
-  END IF;
-  RETURN NEW;
-END;
-$function$
-;
-
-CREATE OR REPLACE FUNCTION public.fn_auto_notify_customer_eta()
- RETURNS trigger
- LANGUAGE plpgsql
- SET search_path TO 'public', 'pg_catalog', 'extensions'
-AS $function$
-BEGIN
-  -- Only notify on customer-facing phases where someone goes to the premises
-  IF NEW.phase NOT IN (
-    'customer_survey', 'customer_civils', 'customer_cbt', 
-    'customer_cabling', 'customer_csp', 'customer_internals', 
-    'customer_install'
-  ) THEN
-    RETURN NEW;
-  END IF;
-
-  -- When task starts → notify customer with ETA
-  IF NEW.status = 'in_progress' AND OLD.status != 'in_progress' 
-     AND NEW.auto_notify_customer = true 
-     AND (NEW.customer_phone IS NOT NULL OR NEW.customer_email IS NOT NULL) THEN
-    
-    -- Different messages per phase
-    INSERT INTO customer_notifications (
-      task_id, job_reference, customer_name, customer_phone, customer_email,
-      notification_type, message, eta_minutes, technician_name,
-      technician_gps_lat, technician_gps_lng
-    ) VALUES (
-      NEW.id, NEW.job_reference, NEW.customer_name, NEW.customer_phone, NEW.customer_email,
-      'engineer_en_route',
-      CASE NEW.phase
-        WHEN 'customer_survey' THEN
-          'Hi ' || COALESCE(NEW.customer_name, 'there') || ', your Tellinex survey engineer ' || 
-          COALESCE(NEW.assigned_to, '') || ' is on the way to assess your property. ETA: ' || 
-          COALESCE(NEW.estimated_drive_mins::text, '15') || ' minutes.'
-        WHEN 'customer_civils' THEN
-          'Hi ' || COALESCE(NEW.customer_name, 'there') || ', our Tellinex civils team is heading to your property to prepare the fibre route. ETA: ' || 
-          COALESCE(NEW.estimated_drive_mins::text, '15') || ' minutes. Some digging work will be needed at the boundary.'
-        WHEN 'customer_internals' THEN
-          'Hi ' || COALESCE(NEW.customer_name, 'there') || ', your Tellinex engineer ' || 
-          COALESCE(NEW.assigned_to, '') || ' is on the way to install your ONT and router — you will be online today! ETA: ' || 
-          COALESCE(NEW.estimated_drive_mins::text, '15') || ' minutes.'
-        ELSE
-          'Hi ' || COALESCE(NEW.customer_name, 'there') || ', your Tellinex engineer ' || 
-          COALESCE(NEW.assigned_to, '') || ' is on the way. ETA: ' || 
-          COALESCE(NEW.estimated_drive_mins::text, '15') || ' minutes.'
-      END,
-      COALESCE(NEW.estimated_drive_mins, 15),
-      NEW.assigned_to,
-      NEW.technician_gps_lat, NEW.technician_gps_lng
-    );
-
-    NEW.technician_en_route := true;
-    NEW.navigation_started_at := now();
-    NEW.navigation_eta_mins := COALESCE(NEW.estimated_drive_mins, 15);
-  END IF;
-
-  -- When customer_internals completed → fibre is live, welcome message
-  IF NEW.status = 'completed' AND OLD.status != 'completed'
-     AND NEW.auto_notify_customer = true
-     AND (NEW.customer_phone IS NOT NULL OR NEW.customer_email IS NOT NULL) THEN
-    
-    INSERT INTO customer_notifications (
-      task_id, job_reference, customer_name, customer_phone, customer_email,
-      notification_type, message, technician_name
-    ) VALUES (
-      NEW.id, NEW.job_reference, NEW.customer_name, NEW.customer_phone, NEW.customer_email,
-      'job_completed',
-      CASE NEW.phase
-        WHEN 'customer_survey' THEN
-          'Hi ' || COALESCE(NEW.customer_name, 'there') || ', your property survey is complete. We will schedule your installation soon.'
-        WHEN 'customer_internals' THEN
-          'Hi ' || COALESCE(NEW.customer_name, 'there') || ', your Tellinex fibre is now LIVE! Your ONT and router are installed and tested. Welcome to Jamaica''s fastest broadband. Any issues? +1-876-555-FIBRE.'
-        WHEN 'customer_install' THEN
-          'Hi ' || COALESCE(NEW.customer_name, 'there') || ', your Tellinex installation is complete! Your fibre connection is now active. Welcome to Tellinex. Any issues? +1-876-555-FIBRE.'
-        ELSE
-          'Hi ' || COALESCE(NEW.customer_name, 'there') || ', today''s work at your property is complete. We will be in touch about the next steps.'
-      END,
-      NEW.assigned_to
-    );
-  END IF;
-
-  RETURN NEW;
-END;
-$function$
-;
-
-CREATE OR REPLACE FUNCTION public.advance_job_dependency_chain(p_job_id text)
- RETURNS void
- LANGUAGE plpgsql
- SET search_path TO 'public', 'pg_catalog', 'extensions'
-AS $function$
-BEGIN
-  -- Mark job certified
-  UPDATE public.fp_jobs
-  SET status = 'certified', updated_at = NOW()
-  WHERE id = p_job_id;
-
-  -- Insert into activity log
-  INSERT INTO public.activity_log (action, entity_type, entity_id, actor_id, metadata)
-  VALUES ('job_certified', 'fp_job', p_job_id::uuid, NULL,
-          jsonb_build_object('auto_approved', true, 'at', NOW()))
-  ON CONFLICT DO NOTHING;
-END;
-$function$
-;
-
-CREATE OR REPLACE FUNCTION public.fire_customer_notification()
- RETURNS trigger
- LANGUAGE plpgsql
- SECURITY DEFINER
- SET search_path TO 'public', 'pg_catalog', 'extensions'
-AS $function$
-BEGIN
-  IF NEW.notify_customers = TRUE AND NEW.notification_sent_at IS NULL THEN
-    -- If no summary yet, call summariser first (async)
-    IF NEW.customer_summary IS NULL THEN
-      PERFORM net.http_post(
-        url := 'https://egztpclpcnizcdtfugsv.supabase.co/functions/v1/opus-incident-summariser',
-        headers := jsonb_build_object('Content-Type', 'application/json'),
-        body := jsonb_build_object('incident_id', NEW.id)
-      );
-    END IF;
-
-    -- Always call notify-customers (it will regenerate summary if missing)
-    PERFORM net.http_post(
-      url := 'https://egztpclpcnizcdtfugsv.supabase.co/functions/v1/notify-customers',
-      headers := jsonb_build_object('Content-Type', 'application/json'),
-      body := jsonb_build_object('incident_id', NEW.id)
-    );
-  END IF;
-  RETURN NEW;
-END $function$
-;
-
-CREATE OR REPLACE FUNCTION public.get_anthropic_key()
- RETURNS text
- LANGUAGE plpgsql
- SECURITY DEFINER
- SET search_path TO 'public', 'vault'
-AS $function$
-DECLARE
-  v_role TEXT;
-  v_key TEXT;
-BEGIN
-  -- Belt-and-braces: refuse any non-service_role caller even if GRANTs are wrong
-  v_role := current_setting('request.jwt.claims', true)::jsonb->>'role';
-  IF v_role IS NULL OR v_role = 'anon' OR v_role = 'authenticated' THEN
-    RAISE EXCEPTION 'get_anthropic_key: forbidden for role %', coalesce(v_role, 'unknown');
-  END IF;
-
-  SELECT decrypted_secret INTO v_key
-  FROM vault.decrypted_secrets
-  WHERE name = 'anthropic_api_key'
-  LIMIT 1;
-
-  IF v_key IS NULL THEN
-    RAISE EXCEPTION 'anthropic_api_key not found in vault';
-  END IF;
-
-  RETURN v_key;
-END $function$
-;
-
-CREATE OR REPLACE FUNCTION public.gdpr_request_export(p_user_id uuid)
- RETURNS uuid
- LANGUAGE plpgsql
- SECURITY DEFINER
- SET search_path TO 'public'
-AS $function$
-DECLARE
-  v_email TEXT;
-  v_request_id UUID;
-BEGIN
-  -- Only the user themselves (or service_role) can request
-  IF current_setting('request.jwt.claim.sub', true)::uuid != p_user_id
-     AND current_setting('request.jwt.claim.role', true) NOT IN ('service_role','postgres') THEN
-    RAISE EXCEPTION 'unauthorized';
-  END IF;
-
-  SELECT email INTO v_email FROM auth.users WHERE id = p_user_id;
-
-  INSERT INTO data_rights_requests (user_id, customer_email, request_type)
-  VALUES (p_user_id, v_email, 'export')
-  RETURNING id INTO v_request_id;
-
-  RETURN v_request_id;
-END $function$
-;
-
-CREATE OR REPLACE FUNCTION public.gdpr_request_delete(p_user_id uuid)
- RETURNS uuid
- LANGUAGE plpgsql
- SECURITY DEFINER
- SET search_path TO 'public'
-AS $function$
-DECLARE
-  v_email TEXT;
-  v_request_id UUID;
-BEGIN
-  IF current_setting('request.jwt.claim.sub', true)::uuid != p_user_id
-     AND current_setting('request.jwt.claim.role', true) NOT IN ('service_role','postgres') THEN
-    RAISE EXCEPTION 'unauthorized';
-  END IF;
-
-  SELECT email INTO v_email FROM auth.users WHERE id = p_user_id;
-
-  INSERT INTO data_rights_requests (user_id, customer_email, request_type)
-  VALUES (p_user_id, v_email, 'delete')
-  RETURNING id INTO v_request_id;
-
-  RETURN v_request_id;
-END $function$
-;
-
-CREATE OR REPLACE FUNCTION public.opus_record_decision(p_decision_type text, p_confidence numeric DEFAULT NULL::numeric, p_inputs jsonb DEFAULT NULL::jsonb, p_outputs jsonb DEFAULT NULL::jsonb, p_outcome text DEFAULT 'success'::text, p_related_job_id text DEFAULT NULL::text, p_related_incident_id uuid DEFAULT NULL::uuid)
- RETURNS TABLE(executed_level integer, configured_level integer, downgrade_reason text, requires_approval boolean, requires_role text, log_id uuid)
- LANGUAGE plpgsql
- SECURITY DEFINER
- SET search_path TO 'public'
-AS $function$
-DECLARE
-  v_registry RECORD;
-  v_executed_level INT;
-  v_downgrade_reason TEXT;
-  v_log_id UUID;
-BEGIN
-  SELECT * INTO v_registry FROM opus_autonomy_registry WHERE decision_type = p_decision_type AND enabled = true;
-
-  IF NOT FOUND THEN
-    RAISE EXCEPTION 'unknown_decision_type: %', p_decision_type;
-  END IF;
-
-  -- Downgrade rules
-  v_executed_level := v_registry.autonomy_level;
-  v_downgrade_reason := NULL;
-
-  IF p_confidence IS NOT NULL AND p_confidence < v_registry.min_confidence AND v_executed_level > 2 THEN
-    v_executed_level := 2;
-    v_downgrade_reason := format('confidence %s below min %s — downgraded to L2', p_confidence, v_registry.min_confidence);
-  END IF;
-
-  INSERT INTO opus_autonomy_log (
-    decision_type, executed_at_level, configured_level,
-    confidence, downgrade_reason, inputs, outputs, outcome,
-    related_job_id, related_incident_id
-  ) VALUES (
-    p_decision_type, v_executed_level, v_registry.autonomy_level,
-    p_confidence, v_downgrade_reason, p_inputs, p_outputs, p_outcome,
-    p_related_job_id, p_related_incident_id
-  )
-  RETURNING id INTO v_log_id;
-
-  executed_level := v_executed_level;
-  configured_level := v_registry.autonomy_level;
-  downgrade_reason := v_downgrade_reason;
-  requires_approval := (v_executed_level = 2);
-  requires_role := v_registry.requires_role;
-  log_id := v_log_id;
-  RETURN NEXT;
-END $function$
-;
-
-CREATE OR REPLACE FUNCTION public.otel_emit_span(p_trace_id uuid, p_parent_span_id uuid, p_service text, p_operation text, p_duration_ms integer, p_status text DEFAULT 'ok'::text, p_error_message text DEFAULT NULL::text, p_attributes jsonb DEFAULT '{}'::jsonb)
- RETURNS uuid
- LANGUAGE plpgsql
- SECURITY DEFINER
- SET search_path TO 'public'
-AS $function$
-DECLARE v_span_id UUID;
-BEGIN
-  INSERT INTO otel_spans (trace_id, parent_span_id, service, operation, duration_ms, status, error_message, attributes, ended_at)
-  VALUES (p_trace_id, p_parent_span_id, p_service, p_operation, p_duration_ms, p_status, p_error_message, p_attributes, NOW())
-  RETURNING span_id INTO v_span_id;
-
-  UPDATE otel_traces SET span_count = span_count + 1 WHERE trace_id = p_trace_id;
-
-  RETURN v_span_id;
-END $function$
-;
-
-CREATE OR REPLACE FUNCTION public.otel_start_trace(p_service text, p_operation text, p_user_id uuid DEFAULT NULL::uuid, p_customer_id uuid DEFAULT NULL::uuid, p_correlation_id text DEFAULT NULL::text, p_attributes jsonb DEFAULT '{}'::jsonb)
- RETURNS uuid
- LANGUAGE plpgsql
- SECURITY DEFINER
- SET search_path TO 'public'
-AS $function$
-DECLARE v_trace_id UUID := gen_random_uuid();
-BEGIN
-  INSERT INTO otel_traces (trace_id, root_service, root_operation, user_id, customer_id, correlation_id, attributes)
-  VALUES (v_trace_id, p_service, p_operation, p_user_id, p_customer_id, p_correlation_id, p_attributes);
-  RETURN v_trace_id;
-END $function$
-;
-
-CREATE OR REPLACE FUNCTION public.otel_finish_trace(p_trace_id uuid, p_status text DEFAULT 'ok'::text)
- RETURNS void
- LANGUAGE plpgsql
- SECURITY DEFINER
- SET search_path TO 'public'
-AS $function$
-BEGIN
-  UPDATE otel_traces SET
-    ended_at = NOW(),
-    duration_ms = EXTRACT(EPOCH FROM (NOW() - started_at)) * 1000,
-    status = p_status
-  WHERE trace_id = p_trace_id;
-END $function$
-;
-
-CREATE OR REPLACE FUNCTION public.activate_household_preset(p_preset_id uuid)
- RETURNS void
- LANGUAGE plpgsql
- SECURITY DEFINER
- SET search_path TO 'public'
-AS $function$
-DECLARE v_user_id UUID;
-BEGIN
-  SELECT user_id INTO v_user_id FROM household_presets WHERE id = p_preset_id;
-  IF v_user_id IS NULL THEN RAISE EXCEPTION 'preset_not_found'; END IF;
-  IF v_user_id != auth.uid()
-     AND current_setting('request.jwt.claim.role', true) NOT IN ('service_role','postgres') THEN
-    RAISE EXCEPTION 'unauthorized';
-  END IF;
-  UPDATE household_presets SET is_active = FALSE WHERE user_id = v_user_id;
-  UPDATE household_presets SET is_active = TRUE, last_activated_at = NOW() WHERE id = p_preset_id;
-END $function$
-;
-
-CREATE OR REPLACE FUNCTION public.fire_crew_handoff(p_job_id text, p_from_tech uuid, p_to_role text, p_lat numeric DEFAULT NULL::numeric, p_lng numeric DEFAULT NULL::numeric)
- RETURNS jsonb
- LANGUAGE plpgsql
- SECURITY DEFINER
- SET search_path TO 'public'
-AS $function$
-DECLARE
-  v_next_tech UUID;
-  v_event_id UUID;
-BEGIN
-  -- Find nearest available tech with the right role
-  SELECT id INTO v_next_tech FROM technicians
-  WHERE role = p_to_role AND status = 'available'
-  LIMIT 1;
-
-  INSERT INTO crew_handoff_events (job_id, event_type, technician_id, receiving_technician_id, detected_at, geo_lat, geo_lng)
-  VALUES (p_job_id, 'handoff_fired', p_from_tech, v_next_tech, NOW(), p_lat, p_lng)
-  RETURNING id INTO v_event_id;
-
-  RETURN jsonb_build_object(
-    'event_id', v_event_id,
-    'next_technician_id', v_next_tech,
-    'handoff_fired_at', NOW()
-  );
-END $function$
-;
-
-CREATE OR REPLACE FUNCTION public.broadcast_twin_asset_change()
- RETURNS trigger
- LANGUAGE plpgsql
- SET search_path TO 'public', 'pg_catalog', 'extensions'
-AS $function$
-BEGIN
-  PERFORM pg_notify(
-    'twin_asset_changed',
-    json_build_object(
-      'asset_id', NEW.id,
-      'asset_type', NEW.asset_type,
-      'geometry_type', NEW.geometry_type,
-      'status', NEW.status,
-      'health_score', NEW.health_score,
-      'lat', NEW.latitude,
-      'lng', NEW.longitude,
-      'changed_at', NOW()
-    )::text
-  );
-  RETURN NEW;
-END $function$
-;
-
-CREATE OR REPLACE FUNCTION public.auto_link_photo_to_asset()
- RETURNS trigger
- LANGUAGE plpgsql
- SET search_path TO 'public', 'pg_catalog', 'extensions'
-AS $function$
-DECLARE
-  v_lat NUMERIC;
-  v_lng NUMERIC;
-  v_asset_id UUID;
-BEGIN
-  -- Skip if explicit asset_id already set
-  IF NEW.network_asset_id IS NOT NULL THEN RETURN NEW; END IF;
-
-  -- Extract GPS per-table
-  IF TG_TABLE_NAME = 'chamber_evidence' THEN
-    v_lat := NEW.latitude; v_lng := NEW.longitude;
-  ELSIF TG_TABLE_NAME = 'field_evidence' THEN
-    v_lat := NEW.gps_lat;  v_lng := NEW.gps_lng;
-  ELSIF TG_TABLE_NAME = 'photo_evidence' THEN
-    v_lat := NEW.latitude; v_lng := NEW.longitude;
-    IF v_lat IS NULL AND NEW.geo_point IS NOT NULL THEN
-      v_lat := (NEW.geo_point->>'lat')::NUMERIC;
-      v_lng := (NEW.geo_point->>'lng')::NUMERIC;
-    END IF;
-  ELSIF TG_TABLE_NAME = 'hs_photos' THEN
-    v_lat := NEW.latitude; v_lng := NEW.longitude;
-  END IF;
-
-  IF v_lat IS NULL OR v_lng IS NULL THEN RETURN NEW; END IF;
-
-  -- Find nearest asset within ~25m using haversine approximation
-  -- 0.000225 degrees ≈ 25m at Kingston latitude
-  SELECT id INTO v_asset_id
-  FROM public.network_assets
-  WHERE latitude IS NOT NULL AND longitude IS NOT NULL
-    AND latitude  BETWEEN v_lat - 0.000225 AND v_lat + 0.000225
-    AND longitude BETWEEN v_lng - 0.000225 AND v_lng + 0.000225
-  ORDER BY ((latitude - v_lat)^2 + (longitude - v_lng)^2) ASC
-  LIMIT 1;
-
-  NEW.network_asset_id := v_asset_id;
-  RETURN NEW;
-END $function$
-;
-
-CREATE OR REPLACE FUNCTION public.trace_fibre_path(start_cable_id uuid, start_fibre_number integer, direction text DEFAULT 'upstream'::text)
- RETURNS TABLE(hop_number integer, cable_id uuid, cable_ref text, fibre_number integer, fibre_colour text, splice_id uuid, tray_id uuid, closure_asset_id uuid, closure_ref text, length_m numeric, loss_db numeric)
- LANGUAGE plpgsql
- SET search_path TO 'public', 'pg_catalog', 'extensions'
-AS $function$
-DECLARE
-  v_hop INTEGER := 0;
-  v_current_cable UUID := start_cable_id;
-  v_current_fibre INTEGER := start_fibre_number;
-  v_max_hops INTEGER := 50;
-  v_splice_id UUID; v_tray_id UUID; v_closure_id UUID; v_closure_ref TEXT;
-  v_next_cable UUID; v_next_fibre INTEGER; v_next_colour TEXT;
-  v_next_cable_ref TEXT; v_next_length NUMERIC; v_loss_db NUMERIC;
-  v_start_colour TEXT; v_start_ref TEXT; v_start_length NUMERIC;
-BEGIN
-  SELECT cp.cable_ref, cp.length_m INTO v_start_ref, v_start_length
-  FROM public.cable_pulls cp WHERE cp.id = start_cable_id;
-
-  v_start_colour := (ARRAY['blue','orange','green','brown','slate','white','red','black','yellow','violet','rose','aqua'])[((start_fibre_number - 1) % 12) + 1];
-
-  hop_number := 0; cable_id := start_cable_id; cable_ref := v_start_ref;
-  fibre_number := start_fibre_number; fibre_colour := v_start_colour;
-  splice_id := NULL; tray_id := NULL; closure_asset_id := NULL; closure_ref := NULL;
-  length_m := v_start_length; loss_db := NULL;
-  RETURN NEXT;
-
-  LOOP
-    EXIT WHEN v_hop >= v_max_hops;
-    v_hop := v_hop + 1;
-    v_splice_id := NULL;
-
-    -- upstream = toward OLT/feeder. Splices are stored (from=feeder, to=drop).
-    --   Starting at a drop: find splice where to_cable=current, next is from_cable.
-    --   Starting at a through-spliced feeder segment: also match to_cable=current.
-    -- downstream = toward customer.
-    --   Starting at a feeder: find splice where from_cable=current, next is to_cable.
-    IF direction = 'upstream' THEN
-      SELECT fs.id, fs.tray_id, st.closure_asset_id, na.asset_ref,
-             fs.from_cable_id, fs.from_fibre_number, fs.from_fibre_colour, fs.loss_db
-      INTO v_splice_id, v_tray_id, v_closure_id, v_closure_ref,
-           v_next_cable, v_next_fibre, v_next_colour, v_loss_db
-      FROM public.fibre_splices fs
-      JOIN public.splice_trays st ON st.id = fs.tray_id
-      JOIN public.network_assets na ON na.id = st.closure_asset_id
-      WHERE fs.to_cable_id = v_current_cable
-        AND fs.to_fibre_number = v_current_fibre
-        AND fs.status = 'active'
-      LIMIT 1;
-    ELSE
-      SELECT fs.id, fs.tray_id, st.closure_asset_id, na.asset_ref,
-             fs.to_cable_id, fs.to_fibre_number, fs.to_fibre_colour, fs.loss_db
-      INTO v_splice_id, v_tray_id, v_closure_id, v_closure_ref,
-           v_next_cable, v_next_fibre, v_next_colour, v_loss_db
-      FROM public.fibre_splices fs
-      JOIN public.splice_trays st ON st.id = fs.tray_id
-      JOIN public.network_assets na ON na.id = st.closure_asset_id
-      WHERE fs.from_cable_id = v_current_cable
-        AND fs.from_fibre_number = v_current_fibre
-        AND fs.status = 'active'
-      LIMIT 1;
-    END IF;
-
-    EXIT WHEN v_splice_id IS NULL;
-
-    SELECT cp.cable_ref, cp.length_m INTO v_next_cable_ref, v_next_length
-    FROM public.cable_pulls cp WHERE cp.id = v_next_cable;
-    EXIT WHEN v_next_cable_ref IS NULL;
-
-    hop_number := v_hop; cable_id := v_next_cable; cable_ref := v_next_cable_ref;
-    fibre_number := v_next_fibre; fibre_colour := v_next_colour;
-    splice_id := v_splice_id; tray_id := v_tray_id;
-    closure_asset_id := v_closure_id; closure_ref := v_closure_ref;
-    length_m := v_next_length; loss_db := v_loss_db;
-    RETURN NEXT;
-
-    v_current_cable := v_next_cable;
-    v_current_fibre := v_next_fibre;
-  END LOOP;
-END $function$
-;
-
-CREATE OR REPLACE FUNCTION public.fn_auto_opus_vision_on_evidence()
- RETURNS trigger
- LANGUAGE plpgsql
- SET search_path TO 'public', 'pg_catalog', 'extensions'
-AS $function$
-DECLARE
-  asset_type_guess TEXT;
-  fn_url TEXT := 'https://egztpclpcnizcdtfugsv.supabase.co/functions/v1/opus-vision-validate';
-BEGIN
-  IF NEW.photo_url IS NULL OR NEW.photo_url = '' OR NEW.opus_validated IS TRUE THEN
-    RETURN NEW;
-  END IF;
-  asset_type_guess := CASE
-    WHEN NEW.photo_type ILIKE '%splice%' OR NEW.photo_type ILIKE '%closure%' THEN 'splice_closure'
-    WHEN NEW.photo_type ILIKE '%termination%' OR NEW.photo_type ILIKE '%csp%' OR NEW.photo_type ILIKE '%ont%' THEN 'fibre_termination'
-    WHEN NEW.photo_type ILIKE '%duct%' OR NEW.photo_type ILIKE '%microduct%' THEN 'microduct_12way'
-    WHEN NEW.photo_type ILIKE '%toby%' OR NEW.photo_type ILIKE '%tb%' THEN 'toby_box'
-    WHEN NEW.photo_type ILIKE '%pole%' OR NEW.photo_type ILIKE '%aerial%' THEN 'pole'
-    ELSE 'chamber'
-  END;
-  -- 45 second timeout for Opus vision call
-  PERFORM net.http_post(
-    url := fn_url,
-    headers := '{"Content-Type":"application/json"}'::jsonb,
-    body := jsonb_build_object(
-      'source_table', 'chamber_evidence',
-      'source_row_id', NEW.id::text,
-      'photo_url', NEW.photo_url,
-      'asset_type', asset_type_guess,
-      'asset_id', NEW.network_asset_id
-    ),
-    timeout_milliseconds := 45000
-  );
-  RETURN NEW;
-END;
-$function$
-;
-
-CREATE OR REPLACE FUNCTION public.fn_backfill_opus_validated()
- RETURNS trigger
- LANGUAGE plpgsql
- SET search_path TO 'public', 'pg_catalog', 'extensions'
-AS $function$
-BEGIN
-  IF NEW.photo_source_table = 'chamber_evidence' AND NEW.photo_source_id IS NOT NULL THEN
-    UPDATE public.chamber_evidence
-    SET opus_validated = (NEW.overall_verdict = 'pass'),
-        opus_score = NEW.overall_score,
-        opus_notes = (
-          SELECT string_agg(f->>'description', '; ')
-          FROM jsonb_array_elements(NEW.findings) f
-          WHERE f->>'severity' IN ('high','medium')
-        )
-    WHERE id = NEW.photo_source_id;
-  END IF;
-  RETURN NEW;
-END;
-$function$
-;
-
-CREATE OR REPLACE FUNCTION public.is_valid_data_source(src text)
- RETURNS boolean
- LANGUAGE sql
- IMMUTABLE
- SET search_path TO 'public', 'pg_catalog', 'extensions'
-AS $function$
-  SELECT src = ANY (ARRAY[
-    'website_form',
-    'chatbot',
-    'fieldpack_pro_ios',
-    'my_tellinex_app',
-    'tcc_manual_entry',
-    'stripe_webhook',
-    'powertranz_webhook',
-    'iloq_cloud_webhook',
-    'axis_webhook',
-    'lorawan_ns',
-    'exfo_upload',
-    'fujikura_bluetooth',
-    'proceq_upload',
-    'exodigo_webhook',
-    'cad_import',
-    'csv_import',
-    'real_api_integration',
-    'postgres_trigger',
-    'api_v1',           -- NEW: public REST API
-    'system'            -- NEW: internal system jobs (cron, triggers' synthetic rows like webhook deliveries)
-  ]);
-$function$
-;
-
-CREATE OR REPLACE FUNCTION public.tellinex_data_audit()
- RETURNS TABLE(table_name text, row_count bigint, data_sources text)
- LANGUAGE plpgsql
- SET search_path TO 'public', 'pg_catalog', 'extensions'
-AS $function$
-DECLARE
-  t TEXT;
-  cnt BIGINT;
-  sources TEXT;
-BEGIN
-  FOR t IN
-    SELECT c.table_name
-    FROM information_schema.columns c
-    WHERE c.table_schema = 'public'
-      AND c.column_name = 'data_source'
-    ORDER BY c.table_name
-  LOOP
-    EXECUTE format('SELECT COUNT(*) FROM public.%I', t) INTO cnt;
-    IF cnt > 0 THEN
-      EXECUTE format(
-        'SELECT string_agg(data_source || ''='' || c::text, '', '' ORDER BY c DESC) FROM (SELECT data_source, COUNT(*) c FROM public.%I GROUP BY data_source) x',
-        t
-      ) INTO sources;
-      table_name := t;
-      row_count := cnt;
-      data_sources := sources;
-      RETURN NEXT;
-    END IF;
-  END LOOP;
-END;
-$function$
-;
-
-CREATE OR REPLACE FUNCTION public.opus_evolution_snapshot()
- RETURNS jsonb
- LANGUAGE plpgsql
- SECURITY DEFINER
- SET search_path TO 'public'
-AS $function$
-DECLARE
-  result jsonb;
-BEGIN
-  SELECT jsonb_build_object(
-    'generated_at', NOW(),
-    'window', '24 hours',
-
-    'cron', jsonb_build_object(
-      'active_jobs', (
-        SELECT COALESCE(jsonb_agg(jsonb_build_object('jobname', jobname, 'schedule', schedule)), '[]'::jsonb)
-        FROM cron.job WHERE active = true
-      ),
-      'total_runs_24h', (
-        SELECT COUNT(*) FROM cron.job_run_details WHERE start_time > NOW() - INTERVAL '24 hours'
-      ),
-      'failed_runs_24h', (
-        SELECT COUNT(*) FROM cron.job_run_details
-        WHERE start_time > NOW() - INTERVAL '24 hours' AND status = 'failed'
-      ),
-      'failures_sample', (
-        SELECT COALESCE(jsonb_agg(
-          jsonb_build_object(
-            'jobname', j.jobname,
-            'status', jr.status,
-            'error', LEFT(jr.return_message, 400),
-            'start_time', jr.start_time
-          ) ORDER BY jr.start_time DESC
-        ), '[]'::jsonb)
-        FROM (
-          SELECT * FROM cron.job_run_details
-          WHERE start_time > NOW() - INTERVAL '7 days' AND status = 'failed'
-          ORDER BY start_time DESC LIMIT 10
-        ) jr
-        JOIN cron.job j ON jr.jobid = j.jobid
-      )
-    ),
-
-    'http', jsonb_build_object(
-      'total_24h', (SELECT COUNT(*) FROM net._http_response WHERE created > NOW() - INTERVAL '24 hours'),
-      'errors_24h', (
-        SELECT COUNT(*) FROM net._http_response
-        WHERE created > NOW() - INTERVAL '24 hours'
-          AND (status_code >= 400 OR error_msg IS NOT NULL)
-      ),
-      'errors_sample', (
-        SELECT COALESCE(jsonb_agg(
-          jsonb_build_object(
-            'status_code', status_code,
-            'error_msg', LEFT(error_msg, 200),
-            'response_preview', LEFT(content::text, 300),
-            'created', created
-          ) ORDER BY created DESC
-        ), '[]'::jsonb)
-        FROM (
-          SELECT * FROM net._http_response
-          WHERE created > NOW() - INTERVAL '24 hours'
-            AND (status_code >= 400 OR error_msg IS NOT NULL)
-          ORDER BY created DESC LIMIT 15
-        ) x
-      )
-    ),
-
-    'tables', jsonb_build_object(
-      'bloated', (
-        SELECT COALESCE(jsonb_agg(
-          jsonb_build_object(
-            'table', relname,
-            'live', n_live_tup,
-            'dead', n_dead_tup,
-            'last_autovacuum', last_autovacuum
-          ) ORDER BY n_dead_tup DESC
-        ), '[]'::jsonb)
-        FROM pg_stat_user_tables
-        WHERE schemaname = 'public'
-          AND n_live_tup > 0
-          AND n_dead_tup > n_live_tup * 2
-        LIMIT 10
-      ),
-      'total_public_tables', (
-        SELECT COUNT(*) FROM pg_stat_user_tables WHERE schemaname = 'public'
-      )
-    ),
-
-    'connections', jsonb_build_object(
-      'total_active', (SELECT COUNT(*) FROM pg_stat_activity WHERE state IS NOT NULL),
-      'idle_in_transaction_over_5min', (
-        SELECT COUNT(*) FROM pg_stat_activity
-        WHERE state = 'idle in transaction'
-          AND xact_start < NOW() - INTERVAL '5 minutes'
-      ),
-      'long_running_queries_over_1min', (
-        SELECT COALESCE(jsonb_agg(
-          jsonb_build_object(
-            'pid', pid,
-            'duration_seconds', EXTRACT(EPOCH FROM (NOW() - query_start))::int,
-            'query', LEFT(query, 200)
-          )
-        ), '[]'::jsonb)
-        FROM pg_stat_activity
-        WHERE state = 'active'
-          AND query_start < NOW() - INTERVAL '1 minute'
-          AND query NOT LIKE '%opus_evolution_snapshot%'
-      )
-    ),
-
-    -- Database-level stats WITH uptime context.
-    -- counters_since: clusters started / stats reset; used to compute per-day rate.
-    'database', (
-      SELECT jsonb_build_object(
-        'commits', xact_commit,
-        'rollbacks', xact_rollback,
-        'deadlocks', deadlocks,
-        'conflicts', conflicts,
-        'temp_files', temp_files,
-        'stats_reset', stats_reset,
-        'counters_since', COALESCE(stats_reset, pg_postmaster_start_time()),
-        'uptime_seconds', EXTRACT(EPOCH FROM (NOW() - COALESCE(stats_reset, pg_postmaster_start_time())))::bigint,
-        'uptime_days', ROUND(EXTRACT(EPOCH FROM (NOW() - COALESCE(stats_reset, pg_postmaster_start_time())))::numeric / 86400, 1),
-        'deadlocks_per_day', CASE
-          WHEN EXTRACT(EPOCH FROM (NOW() - COALESCE(stats_reset, pg_postmaster_start_time()))) > 0
-          THEN ROUND(deadlocks::numeric / EXTRACT(EPOCH FROM (NOW() - COALESCE(stats_reset, pg_postmaster_start_time()))) * 86400, 2)
-          ELSE NULL
-        END,
-        'note', 'deadlocks/conflicts/temp_files are CUMULATIVE since counters_since, NOT last 24h. Use *_per_day for rate.'
-      )
-      FROM pg_stat_database
-      WHERE datname = current_database()
-    )
-  ) INTO result;
-
-  RETURN result;
-END;
-$function$
-;
-
-CREATE OR REPLACE FUNCTION public.get_totp_encryption_key()
- RETURNS text
- LANGUAGE plpgsql
- SECURITY DEFINER
- SET search_path TO 'public', 'vault'
-AS $function$
-DECLARE
-  v_role TEXT;
-  v_key TEXT;
-BEGIN
-  v_role := current_setting('request.jwt.claims', true)::jsonb->>'role';
-  IF v_role IS NULL OR v_role = 'anon' OR v_role = 'authenticated' THEN
-    RAISE EXCEPTION 'get_totp_encryption_key: forbidden for role %', coalesce(v_role, 'unknown');
-  END IF;
-
-  SELECT decrypted_secret INTO v_key
-  FROM vault.decrypted_secrets
-  WHERE name = 'totp_encryption_key'
-  LIMIT 1;
-
-  IF v_key IS NULL THEN
-    RAISE EXCEPTION 'totp_encryption_key not found in vault';
-  END IF;
-
-  RETURN v_key;
-END $function$
-;
-
-CREATE OR REPLACE FUNCTION public.audit_cascade_orphans()
- RETURNS jsonb
- LANGUAGE plpgsql
- SECURITY DEFINER
- SET search_path TO 'public'
-AS $function$
-DECLARE
-  v_report JSONB := '[]'::jsonb;
-  v_count INTEGER;
-BEGIN
-  -- 1. activity_log polymorphic entity_id against known entity_type tables with matching uuid PKs.
-  --    quote_requests excluded (bigint PK, incompatible with entity_id uuid).
-  SELECT COUNT(*)::int INTO v_count
-  FROM activity_log al
-  WHERE al.entity_type IN ('work_order', 'fleet_preflight_check', 'dispatched_task')
-    AND al.entity_id IS NOT NULL
-    AND NOT EXISTS (
-      SELECT 1 FROM work_orders wo WHERE al.entity_type = 'work_order' AND wo.id = al.entity_id
-      UNION ALL
-      SELECT 1 FROM fleet_preflight_checks pc WHERE al.entity_type = 'fleet_preflight_check' AND pc.id = al.entity_id
-      UNION ALL
-      SELECT 1 FROM dispatched_tasks dt WHERE al.entity_type = 'dispatched_task' AND dt.id = al.entity_id
-    );
-  IF v_count > 0 THEN
-    v_report := v_report || jsonb_build_object('check', 'activity_log.entity_id', 'orphan_count', v_count);
-  END IF;
-
-  -- 2. compliance_records.evidence_ref polymorphic against known evidence_table values.
-  SELECT COUNT(*)::int INTO v_count
-  FROM compliance_records cr
-  WHERE cr.evidence_ref IS NOT NULL
-    AND cr.evidence_table = 'otdr_reports'
-    AND NOT EXISTS (SELECT 1 FROM otdr_reports o WHERE o.id = cr.evidence_ref);
-  IF v_count > 0 THEN
-    v_report := v_report || jsonb_build_object('check', 'compliance_records.evidence_ref[otdr_reports]', 'orphan_count', v_count);
-  END IF;
-
-  SELECT COUNT(*)::int INTO v_count
-  FROM compliance_records cr
-  WHERE cr.evidence_ref IS NOT NULL
-    AND cr.evidence_table = 'work_orders'
-    AND NOT EXISTS (SELECT 1 FROM work_orders wo WHERE wo.id = cr.evidence_ref);
-  IF v_count > 0 THEN
-    v_report := v_report || jsonb_build_object('check', 'compliance_records.evidence_ref[work_orders]', 'orphan_count', v_count);
-  END IF;
-
-  -- 3. notification_queue.work_order_ref (text) against work_orders.reference (text).
-  SELECT COUNT(*)::int INTO v_count
-  FROM notification_queue nq
-  WHERE nq.work_order_ref IS NOT NULL AND nq.work_order_ref <> ''
-    AND NOT EXISTS (SELECT 1 FROM work_orders wo WHERE wo.reference = nq.work_order_ref);
-  IF v_count > 0 THEN
-    v_report := v_report || jsonb_build_object('check', 'notification_queue.work_order_ref', 'orphan_count', v_count);
-  END IF;
-
-  -- 4. technician_timesheets.technician_id (text) against technicians.id::text OR technicians.name.
-  SELECT COUNT(*)::int INTO v_count
-  FROM technician_timesheets tt
-  WHERE tt.technician_id IS NOT NULL
-    AND NOT EXISTS (
-      SELECT 1 FROM technicians t
-      WHERE t.id::text = tt.technician_id OR t.name = tt.technician_id
-    );
-  IF v_count > 0 THEN
-    v_report := v_report || jsonb_build_object('check', 'technician_timesheets.technician_id', 'orphan_count', v_count);
-  END IF;
-
-  -- 5. technician_timesheets.vehicle_id (text) against fleet_vehicles.vehicle_id (text).
-  SELECT COUNT(*)::int INTO v_count
-  FROM technician_timesheets tt
-  WHERE tt.vehicle_id IS NOT NULL
-    AND NOT EXISTS (SELECT 1 FROM fleet_vehicles fv WHERE fv.vehicle_id = tt.vehicle_id);
-  IF v_count > 0 THEN
-    v_report := v_report || jsonb_build_object('check', 'technician_timesheets.vehicle_id', 'orphan_count', v_count);
-  END IF;
-
-  RETURN jsonb_build_object(
-    'run_at', now(),
-    'checks_run', 6,
-    'orphans_found', jsonb_array_length(v_report),
-    'findings', v_report
-  );
-END $function$
-;
-
-CREATE OR REPLACE FUNCTION public.audit_cascade_orphans_cron()
- RETURNS void
- LANGUAGE plpgsql
- SECURITY DEFINER
- SET search_path TO 'public'
-AS $function$
-declare
-  v_report jsonb;
-  v_orphans integer;
-begin
-  v_report := public.audit_cascade_orphans();
-  v_orphans := (v_report->>'orphans_found')::int;
-
-  if v_orphans > 0 then
-    insert into public.ai_evolution_logs (
-      system_component, category, severity, observation, root_cause, suggested_fix,
-      status, impact_score, confidence, data_source, evidence_json, fingerprint,
-      observation_count, first_seen_at, last_seen_at, created_at, updated_at
-    ) values (
-      'database_integrity',
-      'cascade_orphan_audit',
-      case when v_orphans >= 10 then 'high' when v_orphans >= 3 then 'medium' else 'low' end,
-      format('Cascade orphan audit found %s categories of orphaned rows across audit/notification tables.', v_orphans),
-      'Audit/notification rows reference a source row (work_order, dispatched_task, etc.) that no longer exists. Root cause is usually over-aggressive cleanup of source rows without cleaning their cascade trail first.',
-      'Review findings_json. For each: delete orphans if safe, add proper FK with ON DELETE semantics, or accept as historical with nulled reference.',
-      'pending',
-      case when v_orphans >= 10 then 7 when v_orphans >= 3 then 5 else 3 end,
-      1.0,
-      'postgres_trigger',
-      v_report,
-      'cascade_orphan_audit_' || to_char(now(), 'YYYY_MM_DD'),
-      1,
-      now(), now(), now(), now()
-    )
-    on conflict (fingerprint) where status='pending'
-    do update set
-      observation_count = ai_evolution_logs.observation_count + 1,
-      last_seen_at = now(),
-      evidence_json = excluded.evidence_json,
-      updated_at = now();
-  end if;
-end;
-$function$
-;
-
-CREATE OR REPLACE FUNCTION public.dispatch_quote_to_fieldpack(p_quote_id bigint, p_crew text DEFAULT NULL::text, p_zone text DEFAULT NULL::text, p_priority text DEFAULT 'medium'::text, p_dispatched_by text DEFAULT 'tcc'::text)
- RETURNS TABLE(fp_job_id text, quote_id bigint, status text, created_at timestamp with time zone)
- LANGUAGE plpgsql
- SECURITY DEFINER
- SET search_path TO 'public'
-AS $function$
-DECLARE
-  v_quote       public.quote_requests;
-  v_fp_id       text;
-  v_zone        text;
-  v_title       text;
-  v_existing_fp text;
-BEGIN
-  -- 1. Fetch the quote
-  SELECT * INTO v_quote FROM public.quote_requests WHERE id = p_quote_id;
-  IF v_quote IS NULL THEN
-    RAISE EXCEPTION 'Quote request % not found', p_quote_id;
-  END IF;
-
-  -- 2. Idempotency: if already dispatched, return the existing dispatch
-  IF v_quote.fp_job_id IS NOT NULL THEN
-    RETURN QUERY
-      SELECT j.id, v_quote.id, j.status, j.created_at
-      FROM public.fp_jobs j
-      WHERE j.id = v_quote.fp_job_id;
-    RETURN;
-  END IF;
-
-  -- 3. Generate FP job id: FP-<quote_id>-<epoch>
-  v_fp_id := format('FP-%s-%s', p_quote_id, to_char(now(), 'YYYYMMDDHH24MISS'));
-
-  -- 4. Derive zone + title
-  v_zone  := COALESCE(p_zone, v_quote.parish, split_part(COALESCE(v_quote.location,''), ',', -1));
-  v_title := format(
-    'Site Survey — %s — %s',
-    COALESCE(NULLIF(v_quote.company_name,''), v_quote.customer_name, 'Customer'),
-    COALESCE(NULLIF(v_quote.location,''), 'Location TBD')
-  );
-
-  -- 5. Insert fp_jobs row
-  INSERT INTO public.fp_jobs (
-    id, title, zone, crew, status, priority,
-    source_quote_id, customer_name, customer_email, customer_phone, company_name,
-    address, parish, latitude, longitude,
-    bandwidth_required, service_type,
-    satellite_image_url, street_view_url,
-    dispatched_at, dispatched_by, data_source
-  ) VALUES (
-    v_fp_id, v_title, v_zone, COALESCE(p_crew,''), 'planned', COALESCE(p_priority,'medium'),
-    v_quote.id, v_quote.customer_name, v_quote.customer_email, v_quote.customer_phone, v_quote.company_name,
-    v_quote.location, v_quote.parish, v_quote.latitude, v_quote.longitude,
-    v_quote.bandwidth_required, COALESCE(v_quote.service_requested, v_quote.quote_type),
-    v_quote.satellite_image_url, v_quote.street_view_url,
-    now(), p_dispatched_by, 'tcc_dispatch'
-  );
-
-  -- 6. Update quote_requests
-  UPDATE public.quote_requests
-     SET fp_job_id          = v_fp_id,
-         exported_to_fp_at  = now(),
-         exported_to_fp_by  = p_dispatched_by,
-         status             = CASE WHEN status = 'new' THEN 'dispatched' ELSE status END,
-         updated_at         = now()
-   WHERE id = p_quote_id;
-
-  -- 7. Return confirmation
-  RETURN QUERY
-    SELECT v_fp_id, p_quote_id, 'planned'::text, now();
-END;
-$function$
-;
-
+-- Functions (deferred)
 CREATE OR REPLACE FUNCTION public._fp_fire_push_notification(p_event_type text, p_job fp_jobs, p_actor text DEFAULT NULL::text, p_reason text DEFAULT NULL::text)
  RETURNS void
  LANGUAGE plpgsql
@@ -11368,389 +15901,6 @@ END;
 $function$
 ;
 
-CREATE OR REPLACE FUNCTION public._fp_jobs_lifecycle_trigger()
- RETURNS trigger
- LANGUAGE plpgsql
- SECURITY DEFINER
- SET search_path TO 'public'
-AS $function$
-DECLARE
-  v_event text;
-  v_prev  text;
-  v_new   text;
-  v_reason text;
-  v_actor text;
-BEGIN
-  IF TG_OP = 'INSERT' THEN
-    v_event := 'dispatched';
-    v_new   := NEW.crew;
-    v_actor := COALESCE(NEW.dispatched_by, 'system');
-
-    INSERT INTO public.fp_job_events (fp_job_id, event_type, new_value, actor, metadata)
-    VALUES (NEW.id, v_event, v_new, v_actor,
-            jsonb_build_object('title', NEW.title, 'status', NEW.status, 'priority', NEW.priority, 'zone', NEW.zone));
-
-    PERFORM public._fp_fire_push_notification('dispatched', NEW, v_actor, NULL);
-
-  ELSIF TG_OP = 'UPDATE' THEN
-    -- Cancellation
-    IF NEW.status = 'cancelled' AND (OLD.status IS DISTINCT FROM 'cancelled') THEN
-      v_reason := NEW.cancellation_reason;
-      v_actor  := COALESCE(NEW.cancelled_by, 'system');
-
-      INSERT INTO public.fp_job_events (fp_job_id, event_type, previous_value, new_value, reason, actor)
-      VALUES (NEW.id, 'cancelled', OLD.status, NEW.status, v_reason, v_actor);
-
-      PERFORM public._fp_fire_push_notification('cancelled', NEW, v_actor, v_reason);
-
-    -- Reassignment (crew changed, not via cancellation)
-    ELSIF NEW.crew IS DISTINCT FROM OLD.crew AND NEW.status <> 'cancelled' THEN
-      v_actor := COALESCE(NEW.reassigned_by, 'system');
-
-      INSERT INTO public.fp_job_events (fp_job_id, event_type, previous_value, new_value, reason, actor, metadata)
-      VALUES (NEW.id, 'reassigned', OLD.crew, NEW.crew, NEW.cancellation_reason, v_actor,
-              jsonb_build_object('previous_crew', OLD.crew, 'new_crew', NEW.crew));
-
-      PERFORM public._fp_fire_push_notification('reassigned', NEW, v_actor, NULL);
-
-    -- Completed
-    ELSIF NEW.status = 'done' AND OLD.status IS DISTINCT FROM 'done' THEN
-      INSERT INTO public.fp_job_events (fp_job_id, event_type, previous_value, new_value)
-      VALUES (NEW.id, 'completed', OLD.status, NEW.status);
-
-    -- Generic status change
-    ELSIF NEW.status IS DISTINCT FROM OLD.status THEN
-      INSERT INTO public.fp_job_events (fp_job_id, event_type, previous_value, new_value)
-      VALUES (NEW.id, 'status_change', OLD.status, NEW.status);
-    END IF;
-  END IF;
-
-  RETURN NEW;
-END;
-$function$
-;
-
-CREATE OR REPLACE FUNCTION public.reassign_fp_job_crew(p_fp_job_id text, p_new_crew text, p_reassigned_by text DEFAULT 'tcc'::text, p_reason text DEFAULT NULL::text)
- RETURNS TABLE(fp_job_id text, previous_crew text, new_crew text, reassigned_at timestamp with time zone)
- LANGUAGE plpgsql
- SECURITY DEFINER
- SET search_path TO 'public'
-AS $function$
-DECLARE
-  v_old_crew text;
-BEGIN
-  IF p_new_crew IS NULL OR p_new_crew = '' THEN
-    RAISE EXCEPTION 'new_crew cannot be empty';
-  END IF;
-
-  SELECT crew INTO v_old_crew FROM public.fp_jobs WHERE id = p_fp_job_id;
-  IF v_old_crew IS NULL THEN
-    RAISE EXCEPTION 'fp_job % not found', p_fp_job_id;
-  END IF;
-
-  IF v_old_crew = p_new_crew THEN
-    RAISE EXCEPTION 'fp_job % is already assigned to crew %', p_fp_job_id, p_new_crew;
-  END IF;
-
-  UPDATE public.fp_jobs
-     SET previous_crew = crew,
-         crew          = p_new_crew,
-         reassigned_at = now(),
-         reassigned_by = p_reassigned_by,
-         cancellation_reason = CASE WHEN p_reason IS NOT NULL THEN p_reason ELSE cancellation_reason END,
-         updated_at    = now()
-   WHERE id = p_fp_job_id;
-
-  RETURN QUERY
-    SELECT p_fp_job_id, v_old_crew, p_new_crew, now();
-END;
-$function$
-;
-
-CREATE OR REPLACE FUNCTION public.cancel_fp_dispatch(p_fp_job_id text, p_reason text, p_cancelled_by text DEFAULT 'tcc'::text)
- RETURNS TABLE(fp_job_id text, source_quote_id bigint, status text, cancelled_at timestamp with time zone)
- LANGUAGE plpgsql
- SECURITY DEFINER
- SET search_path TO 'public'
-AS $function$
-DECLARE
-  v_job public.fp_jobs;
-BEGIN
-  IF p_reason IS NULL OR length(trim(p_reason)) < 3 THEN
-    RAISE EXCEPTION 'cancellation_reason must be at least 3 characters';
-  END IF;
-
-  SELECT * INTO v_job FROM public.fp_jobs WHERE id = p_fp_job_id;
-  IF v_job IS NULL THEN
-    RAISE EXCEPTION 'fp_job % not found', p_fp_job_id;
-  END IF;
-
-  IF v_job.status = 'cancelled' THEN
-    RAISE EXCEPTION 'fp_job % is already cancelled', p_fp_job_id;
-  END IF;
-
-  IF v_job.status = 'done' THEN
-    RAISE EXCEPTION 'fp_job % is already completed — cannot cancel', p_fp_job_id;
-  END IF;
-
-  -- Mark fp_job cancelled (trigger fires push + audit)
-  UPDATE public.fp_jobs
-     SET status              = 'cancelled',
-         cancelled_at        = now(),
-         cancelled_by        = p_cancelled_by,
-         cancellation_reason = p_reason,
-         updated_at          = now()
-   WHERE id = p_fp_job_id;
-
-  -- Release the quote so it can be re-dispatched
-  IF v_job.source_quote_id IS NOT NULL THEN
-    UPDATE public.quote_requests
-       SET fp_job_id         = NULL,
-           exported_to_fp_at = NULL,
-           exported_to_fp_by = NULL,
-           status            = CASE WHEN status = 'dispatched' THEN 'new' ELSE status END,
-           updated_at        = now()
-     WHERE id = v_job.source_quote_id;
-  END IF;
-
-  RETURN QUERY
-    SELECT p_fp_job_id, v_job.source_quote_id, 'cancelled'::text, now();
-END;
-$function$
-;
-
-CREATE OR REPLACE FUNCTION public.private_get_anon_key()
- RETURNS text
- LANGUAGE sql
- SECURITY DEFINER
- SET search_path TO 'vault', 'public'
-AS $function$
-  SELECT decrypted_secret FROM vault.decrypted_secrets WHERE name = 'supabase_anon_key' LIMIT 1;
-$function$
-;
-
-CREATE OR REPLACE FUNCTION public.trg_fp_jobs_push_on_dispatch()
- RETURNS trigger
- LANGUAGE plpgsql
- SECURITY DEFINER
- SET search_path TO 'public', 'extensions'
-AS $function$
-DECLARE
-  v_url         text := 'https://egztpclpcnizcdtfugsv.supabase.co/functions/v1/send-field-push';
-  v_anon_key    text;
-  v_category    text;
-  v_title       text;
-  v_body        text;
-  v_maps_url    text;
-  v_payload     jsonb;
-  v_request_id  bigint;
-BEGIN
-  -- Skip if no crew assigned
-  IF NEW.crew IS NULL OR NEW.crew = '' THEN
-    RETURN NEW;
-  END IF;
-
-  -- On UPDATE, only fire if crew actually changed
-  IF TG_OP = 'UPDATE' THEN
-    IF OLD.crew IS NOT DISTINCT FROM NEW.crew THEN
-      RETURN NEW;
-    END IF;
-    v_category := 'reassignment';
-    v_title    := '🔄 Job Reassigned';
-    v_body     := format('You have been reassigned: %s', NEW.title);
-  ELSE
-    v_category := 'dispatch';
-    v_title    := '📋 New Job Dispatched';
-    v_body     := format('%s — %s', NEW.title, COALESCE(NEW.address, NEW.zone, ''));
-  END IF;
-
-  -- Skip if cancelled
-  IF NEW.status = 'cancelled' THEN
-    RETURN NEW;
-  END IF;
-
-  -- Build Google Maps URL
-  IF NEW.latitude IS NOT NULL AND NEW.longitude IS NOT NULL THEN
-    v_maps_url := format('https://www.google.com/maps/search/?api=1&query=%s,%s', NEW.latitude, NEW.longitude);
-  ELSIF NEW.address IS NOT NULL THEN
-    v_maps_url := 'https://www.google.com/maps/search/?api=1&query=' || replace(NEW.address, ' ', '+');
-  END IF;
-
-  -- Fetch anon key from Vault
-  v_anon_key := private_get_anon_key();
-  IF v_anon_key IS NULL THEN
-    RAISE WARNING 'supabase_anon_key missing from Vault — skipping push for %', NEW.id;
-    RETURN NEW;
-  END IF;
-
-  -- Assemble payload for send-field-push
-  v_payload := jsonb_build_object(
-    'fp_job_id',           NEW.id,
-    'crew',                NEW.crew,
-    'title',               v_title,
-    'body',                v_body,
-    'category',            v_category,
-    'priority',            COALESCE(NEW.priority, 'medium'),
-    'status',              NEW.status,
-    'zone',                NEW.zone,
-    'customer_name',       NEW.customer_name,
-    'company_name',        NEW.company_name,
-    'address',             NEW.address,
-    'parish',              NEW.parish,
-    'latitude',            NEW.latitude,
-    'longitude',           NEW.longitude,
-    'bandwidth_required',  NEW.bandwidth_required,
-    'service_type',        NEW.service_type,
-    'satellite_image_url', NEW.satellite_image_url,
-    'street_view_url',     NEW.street_view_url,
-    'maps_url',            v_maps_url,
-    'source_quote_id',     NEW.source_quote_id,
-    'dispatched_at',       NEW.dispatched_at,
-    'dispatched_by',       NEW.dispatched_by
-  );
-
-  -- Fire-and-forget async HTTP POST via pg_net
-  SELECT net.http_post(
-    url     := v_url,
-    body    := v_payload,
-    headers := jsonb_build_object(
-                 'Content-Type',  'application/json',
-                 'Authorization', 'Bearer ' || v_anon_key
-               ),
-    timeout_milliseconds := 5000
-  ) INTO v_request_id;
-
-  -- Log the attempt (delivery confirmation flows back via edge function updating the log)
-  INSERT INTO public.dispatch_push_log (
-    id, job_reference, technician_id, title, body, category, delivered, apns_response, data_source
-  ) VALUES (
-    gen_random_uuid(), NEW.id, NEW.crew, v_title, v_body, v_category,
-    NULL, format('pg_net request_id=%s', v_request_id), 'tcc_trigger'
-  );
-
-  RETURN NEW;
-END;
-$function$
-;
-
-CREATE OR REPLACE FUNCTION public.fp_jobs_reassign_crew(p_fp_job_id text, p_new_crew text, p_reassigned_by text DEFAULT 'tcc'::text)
- RETURNS TABLE(fp_job_id text, old_crew text, new_crew text, updated_at timestamp with time zone)
- LANGUAGE plpgsql
- SECURITY DEFINER
- SET search_path TO 'public'
-AS $function$
-DECLARE
-  v_job public.fp_jobs;
-BEGIN
-  SELECT * INTO v_job FROM public.fp_jobs WHERE id = p_fp_job_id FOR UPDATE;
-  IF v_job IS NULL THEN
-    RAISE EXCEPTION 'FieldPack job % not found', p_fp_job_id;
-  END IF;
-
-  IF p_new_crew IS NULL OR btrim(p_new_crew) = '' THEN
-    RAISE EXCEPTION 'New crew cannot be empty — use fp_jobs_cancel_dispatch to unassign';
-  END IF;
-
-  IF v_job.status = 'cancelled' THEN
-    RAISE EXCEPTION 'Cannot reassign a cancelled job. Redispatch from the source quote instead.';
-  END IF;
-
-  IF v_job.crew = p_new_crew THEN
-    -- Idempotent: no change
-    RETURN QUERY SELECT v_job.id, v_job.crew, v_job.crew, v_job.updated_at;
-    RETURN;
-  END IF;
-
-  UPDATE public.fp_jobs
-     SET crew          = p_new_crew,
-         dispatched_by = p_reassigned_by,
-         dispatched_at = now(),
-         updated_at    = now(),
-         notes         = COALESCE(notes || E'\n', '') ||
-                         format('[%s] Reassigned from %s to %s by %s',
-                                to_char(now(), 'YYYY-MM-DD HH24:MI'),
-                                COALESCE(NULLIF(v_job.crew,''), 'unassigned'),
-                                p_new_crew,
-                                p_reassigned_by)
-   WHERE id = p_fp_job_id;
-
-  RETURN QUERY
-    SELECT p_fp_job_id, v_job.crew, p_new_crew, now();
-END;
-$function$
-;
-
-CREATE OR REPLACE FUNCTION public.fp_jobs_cancel_dispatch(p_fp_job_id text, p_cancelled_by text DEFAULT 'tcc'::text, p_reason text DEFAULT NULL::text)
- RETURNS TABLE(fp_job_id text, quote_id bigint, status text, cancelled_at timestamp with time zone)
- LANGUAGE plpgsql
- SECURITY DEFINER
- SET search_path TO 'public'
-AS $function$
-DECLARE
-  v_job   public.fp_jobs;
-  v_quote bigint;
-BEGIN
-  SELECT * INTO v_job FROM public.fp_jobs WHERE id = p_fp_job_id FOR UPDATE;
-  IF v_job IS NULL THEN
-    RAISE EXCEPTION 'FieldPack job % not found', p_fp_job_id;
-  END IF;
-
-  IF v_job.status = 'cancelled' THEN
-    -- Idempotent
-    RETURN QUERY SELECT v_job.id, v_job.source_quote_id, v_job.status, v_job.updated_at;
-    RETURN;
-  END IF;
-
-  IF v_job.status = 'done' THEN
-    RAISE EXCEPTION 'Cannot cancel a completed job — create a rework ticket instead';
-  END IF;
-
-  v_quote := v_job.source_quote_id;
-
-  -- Cancel the FP job
-  UPDATE public.fp_jobs
-     SET status     = 'cancelled',
-         updated_at = now(),
-         notes      = COALESCE(notes || E'\n', '') ||
-                      format('[%s] Cancelled by %s. Reason: %s',
-                             to_char(now(), 'YYYY-MM-DD HH24:MI'),
-                             p_cancelled_by,
-                             COALESCE(p_reason, 'not specified'))
-   WHERE id = p_fp_job_id;
-
-  -- Unlink quote_requests so it can be redispatched if needed
-  IF v_quote IS NOT NULL THEN
-    UPDATE public.quote_requests
-       SET fp_job_id         = NULL,
-           exported_to_fp_at = NULL,
-           exported_to_fp_by = NULL,
-           status            = CASE WHEN status = 'dispatched' THEN 'new' ELSE status END,
-           updated_at        = now(),
-           notes             = COALESCE(notes || E'\n', '') ||
-                               format('[%s] Dispatch %s cancelled by %s. Reason: %s',
-                                      to_char(now(), 'YYYY-MM-DD HH24:MI'),
-                                      p_fp_job_id,
-                                      p_cancelled_by,
-                                      COALESCE(p_reason, 'not specified'))
-     WHERE id = v_quote;
-  END IF;
-
-  -- Log explicit cancellation push (trigger won't fire for this path because crew unchanged)
-  INSERT INTO public.dispatch_push_log (
-    id, job_reference, technician_id, title, body, category, delivered, apns_response, data_source
-  ) VALUES (
-    gen_random_uuid(), p_fp_job_id, v_job.crew,
-    '❌ Job Cancelled',
-    format('Job %s cancelled: %s', v_job.title, COALESCE(p_reason, 'no reason provided')),
-    'cancellation',
-    NULL, 'queued-by-cancel-rpc', 'tcc_cancel'
-  );
-
-  RETURN QUERY SELECT p_fp_job_id, v_quote, 'cancelled'::text, now();
-END;
-$function$
-;
-
 CREATE OR REPLACE FUNCTION public.get_latest_session_journal()
  RETURNS SETOF session_journal
  LANGUAGE sql
@@ -11760,3235 +15910,6 @@ AS $function$
   SELECT * FROM public.session_journal
   ORDER BY ended_at DESC
   LIMIT 1;
-$function$
-;
-
-CREATE OR REPLACE FUNCTION public.get_olt_credentials_key()
- RETURNS text
- LANGUAGE plpgsql
- SECURITY DEFINER
- SET search_path TO 'public', 'vault'
-AS $function$
-DECLARE
-  v_role TEXT;
-  v_key TEXT;
-BEGIN
-  v_role := current_setting('request.jwt.claims', true)::jsonb->>'role';
-  IF v_role IS NULL OR v_role = 'anon' OR v_role = 'authenticated' THEN
-    RAISE EXCEPTION 'get_olt_credentials_key: forbidden for role %', coalesce(v_role, 'unknown');
-  END IF;
-
-  SELECT decrypted_secret INTO v_key
-  FROM vault.decrypted_secrets
-  WHERE name = 'olt_credentials_key'
-  LIMIT 1;
-
-  IF v_key IS NULL THEN
-    RAISE EXCEPTION 'olt_credentials_key not found in vault';
-  END IF;
-
-  RETURN v_key;
-END $function$
-;
-
-CREATE OR REPLACE FUNCTION public.build_system_digest()
- RETURNS jsonb
- LANGUAGE plpgsql
- SECURITY DEFINER
- SET search_path TO 'public', 'pg_catalog'
-AS $function$
-DECLARE
-  v_window_start TIMESTAMPTZ := now() - interval '24 hours';
-  v_window_end TIMESTAMPTZ := now();
-  v_digest_date DATE := (v_window_end AT TIME ZONE 'UTC')::date;
-
-  v_http_total INT; v_http_errors INT; v_http_error_rate NUMERIC(5,2); v_http_top_errors JSONB;
-  v_cron_total INT; v_cron_failed INT; v_cron_failed_jobs JSONB;
-  v_evo_new INT; v_evo_by_severity JSONB; v_evo_high_crit JSONB;
-  v_orphans INT;
-  v_deadlocks_now INT; v_rollbacks_now BIGINT; v_commits_now BIGINT;
-  v_fleet_24h INT;
-  v_overall TEXT; v_digest_id UUID;
-BEGIN
-  SELECT COUNT(*) INTO v_http_total FROM net._http_response WHERE created > v_window_start;
-  SELECT COUNT(*) INTO v_http_errors FROM net._http_response
-    WHERE created > v_window_start AND (status_code >= 400 OR error_msg IS NOT NULL);
-  v_http_error_rate := CASE WHEN v_http_total > 0
-    THEN ROUND((v_http_errors::numeric / v_http_total) * 100, 2) ELSE 0 END;
-
-  SELECT COALESCE(jsonb_agg(jsonb_build_object(
-           'status_code', status_code, 'error', error, 'count', cnt
-         ) ORDER BY cnt DESC), '[]'::jsonb)
-    INTO v_http_top_errors
-  FROM (
-    SELECT status_code,
-           COALESCE(LEFT(error_msg, 100), 'HTTP ' || status_code::text) AS error,
-           COUNT(*) AS cnt
-    FROM net._http_response
-    WHERE created > v_window_start AND (status_code >= 400 OR error_msg IS NOT NULL)
-    GROUP BY status_code, LEFT(error_msg, 100)
-    ORDER BY COUNT(*) DESC LIMIT 5
-  ) x;
-
-  SELECT COUNT(*) INTO v_cron_total FROM cron.job_run_details WHERE start_time > v_window_start;
-  SELECT COUNT(*) INTO v_cron_failed FROM cron.job_run_details
-    WHERE start_time > v_window_start AND status = 'failed';
-
-  SELECT COALESCE(jsonb_agg(jsonb_build_object(
-           'jobname', jobname, 'failures', failures, 'last_failure_at', last_failure_at
-         ) ORDER BY failures DESC), '[]'::jsonb)
-    INTO v_cron_failed_jobs
-  FROM (
-    SELECT j.jobname, COUNT(*) AS failures, MAX(jr.start_time) AS last_failure_at
-    FROM cron.job_run_details jr
-    JOIN cron.job j ON j.jobid = jr.jobid
-    WHERE jr.start_time > v_window_start AND jr.status = 'failed'
-    GROUP BY j.jobname
-  ) x;
-
-  -- CHANGE: only count findings newly discovered AND still pending (unresolved).
-  -- Resolved/monitoring findings from the window are tracked but not counted as "new unresolved".
-  SELECT COUNT(*) INTO v_evo_new
-  FROM ai_evolution_logs
-  WHERE first_seen_at > v_window_start
-    AND status = 'pending';
-
-  SELECT COALESCE(jsonb_object_agg(severity, count), '{}'::jsonb) INTO v_evo_by_severity
-  FROM (
-    SELECT severity, COUNT(*) AS count
-    FROM ai_evolution_logs
-    WHERE first_seen_at > v_window_start AND status = 'pending'
-    GROUP BY severity
-  ) x;
-
-  SELECT COALESCE(jsonb_agg(jsonb_build_object(
-           'severity', severity, 'category', category,
-           'observation', LEFT(observation, 200),
-           'fingerprint', fingerprint, 'status', status
-         )), '[]'::jsonb)
-    INTO v_evo_high_crit
-  FROM ai_evolution_logs
-  WHERE first_seen_at > v_window_start
-    AND status = 'pending'
-    AND severity IN ('high', 'critical');
-
-  SELECT COALESCE(MAX((evidence_json->>'orphans_found')::int), 0) INTO v_orphans
-  FROM ai_evolution_logs
-  WHERE category = 'cascade_orphan_audit' AND last_seen_at > v_window_start;
-
-  SELECT deadlocks, xact_rollback, xact_commit
-    INTO v_deadlocks_now, v_rollbacks_now, v_commits_now
-  FROM pg_stat_database WHERE datname = current_database();
-
-  SELECT COUNT(*) INTO v_fleet_24h FROM fleet_telemetry WHERE recorded_at > v_window_start;
-
-  -- Overall: red = unresolved critical OR systemic cron failure; amber = unresolved high or real errors
-  v_overall := CASE
-    WHEN v_cron_failed > 5 OR v_http_error_rate > 10 OR (v_evo_by_severity ? 'critical') THEN 'red'
-    WHEN v_cron_failed > 0 OR v_http_error_rate > 2 OR (v_evo_by_severity ? 'high') OR v_orphans > 0 THEN 'amber'
-    ELSE 'green'
-  END;
-
-  INSERT INTO system_digests (
-    digest_date, window_start, window_end, overall_status,
-    http_total, http_errors, http_error_rate_pct, http_top_errors,
-    cron_total_runs, cron_failed_runs, cron_failed_jobs,
-    evolution_new_findings, evolution_by_severity, evolution_high_critical,
-    cascade_orphans_found,
-    db_deadlocks_delta, db_rollbacks_delta, db_commits_delta,
-    fleet_telemetry_24h, data_source
-  ) VALUES (
-    v_digest_date, v_window_start, v_window_end, v_overall,
-    v_http_total, v_http_errors, v_http_error_rate, v_http_top_errors,
-    v_cron_total, v_cron_failed, v_cron_failed_jobs,
-    v_evo_new, v_evo_by_severity, v_evo_high_crit,
-    v_orphans,
-    v_deadlocks_now, v_rollbacks_now, v_commits_now,
-    v_fleet_24h, 'postgres_trigger'
-  )
-  ON CONFLICT (digest_date) DO UPDATE SET
-    window_start = EXCLUDED.window_start, window_end = EXCLUDED.window_end,
-    overall_status = EXCLUDED.overall_status,
-    http_total = EXCLUDED.http_total, http_errors = EXCLUDED.http_errors,
-    http_error_rate_pct = EXCLUDED.http_error_rate_pct, http_top_errors = EXCLUDED.http_top_errors,
-    cron_total_runs = EXCLUDED.cron_total_runs, cron_failed_runs = EXCLUDED.cron_failed_runs,
-    cron_failed_jobs = EXCLUDED.cron_failed_jobs,
-    evolution_new_findings = EXCLUDED.evolution_new_findings,
-    evolution_by_severity = EXCLUDED.evolution_by_severity,
-    evolution_high_critical = EXCLUDED.evolution_high_critical,
-    cascade_orphans_found = EXCLUDED.cascade_orphans_found,
-    db_deadlocks_delta = EXCLUDED.db_deadlocks_delta,
-    db_rollbacks_delta = EXCLUDED.db_rollbacks_delta,
-    db_commits_delta = EXCLUDED.db_commits_delta,
-    fleet_telemetry_24h = EXCLUDED.fleet_telemetry_24h,
-    created_at = now()
-  RETURNING id INTO v_digest_id;
-
-  RETURN jsonb_build_object(
-    'ok', true, 'digest_id', v_digest_id, 'digest_date', v_digest_date,
-    'overall_status', v_overall, 'http_errors', v_http_errors,
-    'cron_failed', v_cron_failed, 'evolution_new_unresolved', v_evo_new, 'orphans', v_orphans
-  );
-END $function$
-;
-
-CREATE OR REPLACE FUNCTION public.network_snapshots_guard_insert()
- RETURNS trigger
- LANGUAGE plpgsql
- SET search_path TO 'public', 'pg_catalog', 'extensions'
-AS $function$
-BEGIN
-  IF NEW.data_source IS NULL THEN
-    RAISE EXCEPTION 'network_snapshots insert from %: data_source is required. Valid values come from is_valid_data_source(). If you are a new writer, set data_source to the caller identity (e.g. ''real_api_integration'', ''postgres_trigger'', or a producer slug registered in the is_valid_data_source function).',
-      COALESCE(NEW.created_by, 'unknown_producer');
-  END IF;
-  RETURN NEW;
-END $function$
-;
-
-CREATE OR REPLACE FUNCTION public.soc2_signatures_block_update()
- RETURNS trigger
- LANGUAGE plpgsql
- SET search_path TO 'public', 'pg_catalog', 'extensions'
-AS $function$
-BEGIN
-  RAISE EXCEPTION 'soc2_signatures rows are immutable. Create a new row to record a new signature, or archive the policy to invalidate.';
-END $function$
-;
-
-CREATE OR REPLACE FUNCTION public.touch_updated_at()
- RETURNS trigger
- LANGUAGE plpgsql
- SET search_path TO 'public', 'pg_catalog', 'extensions'
-AS $function$
-    BEGIN NEW.updated_at = now(); RETURN NEW; END $function$
-;
-
-CREATE OR REPLACE FUNCTION public.has_soc2_admin_role()
- RETURNS boolean
- LANGUAGE sql
- STABLE SECURITY DEFINER
- SET search_path TO 'public', 'pg_catalog', 'extensions'
-AS $function$
-  SELECT EXISTS (
-    SELECT 1 FROM public.profiles
-    WHERE id = auth.uid() AND role IN ('admin','coo','ceo')
-  );
-$function$
-;
-
-CREATE OR REPLACE FUNCTION public.has_soc2_read_role()
- RETURNS boolean
- LANGUAGE sql
- STABLE SECURITY DEFINER
- SET search_path TO 'public', 'pg_catalog', 'extensions'
-AS $function$
-  SELECT EXISTS (
-    SELECT 1 FROM public.profiles
-    WHERE id = auth.uid() AND role IN ('admin','coo','ceo','auditor')
-  );
-$function$
-;
-
-CREATE OR REPLACE FUNCTION public.touch_claude_artifacts_updated_at()
- RETURNS trigger
- LANGUAGE plpgsql
- SET search_path TO 'public', 'pg_catalog', 'extensions'
-AS $function$
-BEGIN
-    NEW.updated_at = NOW();
-    RETURN NEW;
-END;
-$function$
-;
-
-CREATE OR REPLACE FUNCTION public.is_tellinex_staff()
- RETURNS boolean
- LANGUAGE sql
- STABLE SECURITY DEFINER
- SET search_path TO 'public'
-AS $function$
-  SELECT COALESCE((auth.jwt() ->> 'email') LIKE '%@tellinex.com', false);
-$function$
-;
-
-CREATE OR REPLACE FUNCTION public.fn_audit_row_change()
- RETURNS trigger
- LANGUAGE plpgsql
- SECURITY DEFINER
- SET search_path TO 'public', 'pg_catalog'
-AS $function$
-DECLARE
-  v_old  jsonb;
-  v_new  jsonb;
-  v_diff text[];
-  v_key  text;
-  v_pk   text;
-BEGIN
-  -- Build old/new snapshots depending on op
-  IF TG_OP = 'INSERT' THEN
-    v_old := NULL;
-    v_new := to_jsonb(NEW);
-  ELSIF TG_OP = 'UPDATE' THEN
-    v_old := to_jsonb(OLD);
-    v_new := to_jsonb(NEW);
-  ELSIF TG_OP = 'DELETE' THEN
-    v_old := to_jsonb(OLD);
-    v_new := NULL;
-  END IF;
-
-  -- Compute changed fields for UPDATE (JSONB subtract → object of diffs; keys are field names)
-  IF TG_OP = 'UPDATE' THEN
-    SELECT array_agg(key) INTO v_diff
-    FROM jsonb_each(v_new)
-    WHERE v_new->key IS DISTINCT FROM v_old->key
-      AND key NOT IN ('updated_at');  -- updated_at is set by unrelated triggers, noise in audit
-  END IF;
-
-  -- Derive primary key string — try common names, fall back to empty
-  v_pk := COALESCE(
-    (v_new->>'id'),  (v_old->>'id'),
-    (v_new->>'uuid'),(v_old->>'uuid'),
-    ''
-  );
-
-  INSERT INTO public.audit_log (
-    table_name, operation, row_id,
-    actor_uid, actor_email, actor_role,
-    client_ip, request_path,
-    old_row, new_row, changed_fields
-  ) VALUES (
-    TG_TABLE_NAME, TG_OP, v_pk,
-    auth.uid(),
-    NULLIF(auth.jwt()->>'email', ''),
-    NULLIF(auth.jwt()->>'role',  ''),
-    NULLIF(current_setting('request.headers', true)::jsonb->>'x-real-ip','')::inet,
-    NULLIF(current_setting('request.headers', true)::jsonb->>'x-forwarded-uri',''),
-    v_old, v_new, v_diff
-  );
-
-  IF TG_OP = 'DELETE' THEN RETURN OLD; ELSE RETURN NEW; END IF;
-EXCEPTION WHEN OTHERS THEN
-  -- Never fail the originating operation because of an audit-log issue.
-  -- Log to postgres log and carry on. A missing audit row will surface
-  -- in the SOC2 audit-gap check query (see view below).
-  RAISE WARNING 'audit_log insert failed for %/%: %', TG_TABLE_NAME, TG_OP, SQLERRM;
-  IF TG_OP = 'DELETE' THEN RETURN OLD; ELSE RETURN NEW; END IF;
-END;
-$function$
-;
-
-CREATE OR REPLACE FUNCTION public.fn_ecosystem_backlog_set_updated()
- RETURNS trigger
- LANGUAGE plpgsql
- SET search_path TO 'public', 'pg_catalog', 'extensions'
-AS $function$
-BEGIN
-  NEW.updated_at := now();
-  IF NEW.status = 'done' AND OLD.status <> 'done' THEN
-    NEW.completed_at := now();
-  END IF;
-  RETURN NEW;
-END;
-$function$
-;
-
-CREATE OR REPLACE FUNCTION public.raise_alarm(p_alarm_type text, p_severity text, p_message text, p_source_table text, p_source_row_id uuid DEFAULT NULL::uuid, p_asset_id uuid DEFAULT NULL::uuid, p_details jsonb DEFAULT '{}'::jsonb, p_dedup_window interval DEFAULT '00:05:00'::interval, p_ingestion text DEFAULT 'trigger'::text)
- RETURNS uuid
- LANGUAGE plpgsql
- SECURITY DEFINER
- SET search_path TO 'public'
-AS $function$
-DECLARE
-  v_existing       public.alarms;
-  v_new_id         uuid;
-  v_asset_type     text;
-  v_parish         text;
-  v_lat            double precision;
-  v_lng            double precision;
-BEGIN
-  IF p_severity NOT IN ('info','warning','minor','major','critical') THEN
-    RAISE EXCEPTION 'invalid severity: %', p_severity;
-  END IF;
-
-  IF p_asset_id IS NOT NULL THEN
-    SELECT asset_type, latitude, longitude
-      INTO v_asset_type, v_lat, v_lng
-    FROM public.network_assets
-    WHERE id = p_asset_id;
-  END IF;
-  
-  -- Parish from details payload (weather, customer alarms put it there)
-  v_parish := p_details->>'parish';
-
-  SELECT * INTO v_existing
-  FROM public.alarms
-  WHERE dedup_key = (coalesce(p_asset_id::text, 'noasset') || ':' || p_alarm_type)
-    AND cleared_at IS NULL
-    AND last_seen_at > now() - p_dedup_window
-  ORDER BY raised_at DESC
-  LIMIT 1;
-
-  IF v_existing.id IS NOT NULL THEN
-    UPDATE public.alarms
-    SET reassertion_count = reassertion_count + 1,
-        last_seen_at = now(),
-        details = details || p_details,
-        severity = CASE
-          WHEN array_position(ARRAY['info','warning','minor','major','critical'], p_severity) >
-               array_position(ARRAY['info','warning','minor','major','critical'], severity)
-          THEN p_severity ELSE severity END,
-        message = CASE WHEN reassertion_count > 5 THEN message ELSE p_message END
-    WHERE id = v_existing.id;
-    RETURN v_existing.id;
-  END IF;
-
-  INSERT INTO public.alarms (
-    alarm_type, severity, message, details,
-    asset_id, asset_type_hint, parish, latitude, longitude,
-    source_table, source_row_id, ingestion_method
-  ) VALUES (
-    p_alarm_type, p_severity, p_message, p_details,
-    p_asset_id, v_asset_type, v_parish, v_lat, v_lng,
-    p_source_table, p_source_row_id, p_ingestion
-  )
-  RETURNING id INTO v_new_id;
-
-  RETURN v_new_id;
-END;
-$function$
-;
-
-CREATE OR REPLACE FUNCTION public.clear_alarm(p_alarm_id uuid, p_reason text DEFAULT 'auto-cleared'::text)
- RETURNS boolean
- LANGUAGE plpgsql
- SECURITY DEFINER
- SET search_path TO 'public'
-AS $function$
-BEGIN
-  UPDATE public.alarms
-  SET cleared_at = now(),
-      notes = coalesce(notes || ' | ', '') || 'Cleared: ' || p_reason
-  WHERE id = p_alarm_id AND cleared_at IS NULL;
-  
-  RETURN FOUND;
-END;
-$function$
-;
-
-CREATE OR REPLACE FUNCTION public.auto_clear_stale_alarms()
- RETURNS integer
- LANGUAGE plpgsql
- SECURITY DEFINER
- SET search_path TO 'public'
-AS $function$
-DECLARE
-  v_count integer;
-BEGIN
-  WITH stale AS (
-    UPDATE public.alarms
-    SET cleared_at = now(),
-        notes = coalesce(notes || ' | ', '') || 'auto-cleared (no reassertion 30min)'
-    WHERE cleared_at IS NULL
-      AND last_seen_at < now() - interval '30 minutes'
-    RETURNING id
-  )
-  SELECT count(*) FROM stale INTO v_count;
-  
-  RETURN v_count;
-END;
-$function$
-;
-
-CREATE OR REPLACE FUNCTION public.fn_bridge_chamber_sensor_alerts()
- RETURNS trigger
- LANGUAGE plpgsql
- SET search_path TO 'public', 'pg_catalog', 'extensions'
-AS $function$
-DECLARE
-  v_severity text;
-BEGIN
-  -- Map chamber_sensor_alerts fields to our severity scale.
-  -- Schema-tolerant: if a column doesn't exist, fall back gracefully.
-  v_severity := COALESCE(
-    NULLIF(LOWER(NEW.severity::text), ''),
-    'warning'
-  );
-  IF v_severity NOT IN ('info','warning','minor','major','critical') THEN
-    v_severity := 'warning';
-  END IF;
-  
-  PERFORM public.raise_alarm(
-    p_alarm_type    => 'chamber_sensor_' || COALESCE(NEW.alert_type, 'unknown'),
-    p_severity      => v_severity,
-    p_message       => COALESCE(NEW.description, NEW.alert_type, 'Chamber sensor alert'),
-    p_source_table  => 'chamber_sensor_alerts',
-    p_source_row_id => NEW.id,
-    p_asset_id      => NEW.chamber_id,
-    p_details       => to_jsonb(NEW)
-  );
-  RETURN NEW;
-END;
-$function$
-;
-
-CREATE OR REPLACE FUNCTION public.fn_bridge_predictive_alerts()
- RETURNS trigger
- LANGUAGE plpgsql
- SET search_path TO 'public', 'pg_catalog', 'extensions'
-AS $function$
-BEGIN
-  PERFORM public.raise_alarm(
-    p_alarm_type    => 'predictive_' || COALESCE(NEW.alert_type, 'failure'),
-    p_severity      => CASE
-                         WHEN NEW.confidence_score >= 0.85 THEN 'major'
-                         WHEN NEW.confidence_score >= 0.70 THEN 'warning'
-                         ELSE 'info'
-                       END,
-    p_message       => COALESCE(NEW.description, 'Predictive maintenance alert'),
-    p_source_table  => 'predictive_alerts',
-    p_source_row_id => NEW.id,
-    p_asset_id      => NEW.asset_id,
-    p_details       => to_jsonb(NEW)
-  );
-  RETURN NEW;
-END;
-$function$
-;
-
-CREATE OR REPLACE FUNCTION public.fn_bridge_intrusion_alerts()
- RETURNS trigger
- LANGUAGE plpgsql
- SET search_path TO 'public', 'pg_catalog', 'extensions'
-AS $function$
-BEGIN
-  PERFORM public.raise_alarm(
-    p_alarm_type    => 'security_intrusion',
-    p_severity      => 'major',
-    p_message       => COALESCE(NEW.alert_message, 'Unauthorised chamber access detected'),
-    p_source_table  => 'intrusion_alerts',
-    p_source_row_id => NEW.id,
-    p_asset_id      => NEW.asset_id,
-    p_details       => to_jsonb(NEW)
-  );
-  RETURN NEW;
-END;
-$function$
-;
-
-CREATE OR REPLACE FUNCTION public.fn_bridge_weather_alerts()
- RETURNS trigger
- LANGUAGE plpgsql
- SET search_path TO 'public', 'pg_catalog', 'extensions'
-AS $function$
-BEGIN
-  PERFORM public.raise_alarm(
-    p_alarm_type    => 'weather_' || COALESCE(NEW.alert_type, 'warning'),
-    p_severity      => CASE COALESCE(LOWER(NEW.severity::text), 'warning')
-                         WHEN 'extreme' THEN 'critical'
-                         WHEN 'severe'  THEN 'major'
-                         WHEN 'moderate' THEN 'warning'
-                         ELSE 'info'
-                       END,
-    p_message       => COALESCE(NEW.message, NEW.alert_type, 'Weather alert'),
-    p_source_table  => 'weather_alerts',
-    p_source_row_id => NEW.id,
-    p_asset_id      => NULL,
-    p_details       => to_jsonb(NEW)
-  );
-  RETURN NEW;
-END;
-$function$
-;
-
-CREATE OR REPLACE FUNCTION public.run_fault_correlation()
- RETURNS TABLE(incidents_created integer, incidents_updated integer, alarms_correlated integer)
- LANGUAGE plpgsql
- SECURITY DEFINER
- SET search_path TO 'public'
-AS $function$
-DECLARE
-  v_window_minutes  integer := 15;
-  v_created         integer := 0;
-  v_updated         integer := 0;
-  v_correlated      integer := 0;
-  v_incident_id     uuid;
-  v_grp             record;
-  v_root            record;
-  v_alarm           record;
-  v_incident_sev    text;
-  v_incident_type   text;
-  v_root_alarm_type text;
-BEGIN
-  FOR v_grp IN
-    SELECT
-      COALESCE(a.parish, 'unknown') AS parish_key,
-      date_trunc('minute', a.raised_at) - 
-        (EXTRACT(MINUTE FROM a.raised_at)::integer % v_window_minutes) * interval '1 minute' AS time_bucket,
-      array_agg(a.id) AS alarm_ids,
-      count(*) AS alarm_count,
-      max(a.severity) AS max_severity,
-      min(a.raised_at) AS first_alarm_at
-    FROM public.alarms a
-    WHERE a.primary_incident_id IS NULL
-      AND a.cleared_at IS NULL
-      AND a.raised_at > now() - interval '24 hours'
-    GROUP BY parish_key, time_bucket
-    HAVING count(*) >= 1
-  LOOP
-    SELECT a.asset_id, a.asset_type_hint, a.alarm_type
-    INTO v_root
-    FROM public.alarms a
-    WHERE a.id = ANY(v_grp.alarm_ids) AND a.asset_id IS NOT NULL
-    ORDER BY
-      CASE LOWER(COALESCE(a.asset_type_hint, ''))
-        WHEN 'hub' THEN 1 WHEN 'olt' THEN 2 WHEN 'cabinet' THEN 3
-        WHEN 'fdh' THEN 4 WHEN 'splitter' THEN 5 WHEN 'csp' THEN 6
-        WHEN 'joint_bay' THEN 7 WHEN 'toby_box' THEN 8 ELSE 9 END,
-      a.severity DESC, a.raised_at ASC
-    LIMIT 1;
-    
-    -- If no asset-bound alarm, pick the most-severe one for type derivation
-    IF v_root.alarm_type IS NULL THEN
-      SELECT a.alarm_type INTO v_root_alarm_type
-      FROM public.alarms a
-      WHERE a.id = ANY(v_grp.alarm_ids)
-      ORDER BY a.severity DESC LIMIT 1;
-      v_root.alarm_type := v_root_alarm_type;
-    END IF;
-    
-    v_incident_sev  := public.map_alarm_to_incident_severity(v_grp.max_severity);
-    v_incident_type := public.map_alarm_type_to_incident_type(v_root.asset_type_hint, v_root.alarm_type);
-
-    SELECT id INTO v_incident_id
-    FROM public.network_incidents
-    WHERE status IN ('active','investigating','dispatched')
-      AND (
-        (root_cause_asset_id IS NOT NULL AND root_cause_asset_id = v_root.asset_id)
-        OR (affected_parish IS NOT NULL AND affected_parish = v_grp.parish_key
-            AND created_at > now() - interval '2 hours')
-      )
-    ORDER BY created_at DESC
-    LIMIT 1;
-
-    IF v_incident_id IS NULL THEN
-      INSERT INTO public.network_incidents (
-        type, city, map_x, map_y, title, detail, status,
-        affected_customers, severity, affected_parish,
-        root_cause_asset_id, correlated_alarm_count, first_alarm_at,
-        data_source
-      ) VALUES (
-        v_incident_type,
-        COALESCE(v_grp.parish_key, 'unknown'),
-        0, 0,
-        CASE 
-          WHEN v_grp.alarm_count > 5 THEN 'Major event — ' || v_grp.alarm_count || ' alarms in ' || v_grp.parish_key
-          WHEN v_grp.alarm_count > 1 THEN 'Correlated event — ' || v_grp.alarm_count || ' alarms'
-          ELSE 'Single alarm — ' || v_grp.parish_key
-        END,
-        'Auto-grouped by correlation engine. ' || v_grp.alarm_count || ' raw alarms.',
-        'active', 0, v_incident_sev, v_grp.parish_key,
-        v_root.asset_id, v_grp.alarm_count, v_grp.first_alarm_at,
-        'real_api_integration'
-      )
-      RETURNING id INTO v_incident_id;
-      v_created := v_created + 1;
-    ELSE
-      UPDATE public.network_incidents
-      SET correlated_alarm_count = correlated_alarm_count + v_grp.alarm_count,
-          severity = CASE 
-            WHEN array_position(ARRAY['info','degraded','outage','critical'], v_incident_sev) >
-                 array_position(ARRAY['info','degraded','outage','critical'], severity)
-            THEN v_incident_sev ELSE severity END,
-          updated_at = now()
-      WHERE id = v_incident_id;
-      v_updated := v_updated + 1;
-    END IF;
-
-    FOR v_alarm IN
-      SELECT id, asset_id FROM public.alarms WHERE id = ANY(v_grp.alarm_ids)
-    LOOP
-      UPDATE public.alarms
-      SET primary_incident_id = v_incident_id,
-          correlated_at = now(),
-          correlation_confidence = CASE
-            WHEN v_alarm.asset_id = v_root.asset_id THEN 1.00
-            WHEN v_alarm.asset_id IS NOT NULL AND v_root.asset_id IS NOT NULL
-              AND EXISTS (
-                SELECT 1 FROM public.network_topology_links l
-                WHERE (l.from_asset_id = v_alarm.asset_id AND l.to_asset_id = v_root.asset_id)
-                   OR (l.to_asset_id = v_alarm.asset_id AND l.from_asset_id = v_root.asset_id)
-              ) THEN 0.85
-            WHEN v_alarm.asset_id IS NOT NULL THEN 0.50
-            ELSE 0.30
-          END
-      WHERE id = v_alarm.id;
-      
-      INSERT INTO public.alarm_incident_links (alarm_id, incident_id, confidence, reasoning, is_primary)
-      VALUES (
-        v_alarm.id, v_incident_id,
-        CASE WHEN v_alarm.asset_id = v_root.asset_id THEN 1.00 ELSE 0.50 END,
-        'parish+15min window. Root: ' || COALESCE(v_root.asset_type_hint, 'unknown'),
-        true
-      ) ON CONFLICT (alarm_id, incident_id) DO NOTHING;
-      
-      v_correlated := v_correlated + 1;
-    END LOOP;
-  END LOOP;
-  
-  RETURN QUERY SELECT v_created, v_updated, v_correlated;
-END;
-$function$
-;
-
-CREATE OR REPLACE FUNCTION public.map_alarm_to_incident_severity(p_sev text)
- RETURNS text
- LANGUAGE sql
- IMMUTABLE
- SET search_path TO 'public', 'pg_catalog', 'extensions'
-AS $function$
-  SELECT CASE p_sev
-    WHEN 'critical' THEN 'critical'
-    WHEN 'major'    THEN 'outage'
-    WHEN 'minor'    THEN 'degraded'
-    WHEN 'warning'  THEN 'degraded'
-    WHEN 'info'     THEN 'info'
-    ELSE 'info'
-  END;
-$function$
-;
-
-CREATE OR REPLACE FUNCTION public.map_alarm_type_to_incident_type(p_asset_type text, p_alarm_type text)
- RETURNS text
- LANGUAGE sql
- IMMUTABLE
- SET search_path TO 'public', 'pg_catalog', 'extensions'
-AS $function$
-  SELECT CASE
-    WHEN p_alarm_type LIKE 'weather_%' THEN 'weather'
-    WHEN p_alarm_type LIKE '%cut%' OR p_alarm_type LIKE '%fibre%' THEN 'fibre_cut'
-    WHEN p_alarm_type LIKE '%power%' THEN 'power_outage'
-    WHEN p_alarm_type LIKE '%congestion%' OR p_alarm_type LIKE '%bandwidth%' THEN 'congestion'
-    WHEN p_asset_type IN ('olt','splitter','cabinet','fdh','hub','csp','joint_bay','toby_box') THEN 'equipment_failure'
-    ELSE 'outage'
-  END;
-$function$
-;
-
-CREATE OR REPLACE FUNCTION public.safe_make_point(lat double precision, lng double precision)
- RETURNS geography
- LANGUAGE sql
- IMMUTABLE PARALLEL SAFE
- SET search_path TO 'public', 'pg_catalog', 'extensions'
-AS $function$
-  SELECT CASE
-    WHEN lat IS NULL OR lng IS NULL THEN NULL
-    WHEN lat NOT BETWEEN -90 AND 90 THEN NULL
-    WHEN lng NOT BETWEEN -180 AND 180 THEN NULL
-    ELSE ST_SetSRID(ST_MakePoint(lng, lat), 4326)::geography
-  END
-$function$
-;
-
-CREATE OR REPLACE FUNCTION public.distance_metres(lat1 double precision, lng1 double precision, lat2 double precision, lng2 double precision)
- RETURNS double precision
- LANGUAGE sql
- IMMUTABLE PARALLEL SAFE
- SET search_path TO 'public', 'pg_catalog', 'extensions'
-AS $function$
-  SELECT ST_Distance(
-    public.safe_make_point(lat1, lng1),
-    public.safe_make_point(lat2, lng2)
-  )
-$function$
-;
-
-CREATE OR REPLACE FUNCTION public.trigger_predict_blast_radius()
- RETURNS trigger
- LANGUAGE plpgsql
- SECURITY DEFINER
- SET search_path TO 'public', 'extensions'
-AS $function$
-BEGIN
-  IF NEW.root_cause_asset_id IS NULL THEN
-    RETURN NEW;
-  END IF;
-  IF TG_OP = 'UPDATE' AND OLD.root_cause_asset_id IS NOT DISTINCT FROM NEW.root_cause_asset_id THEN
-    RETURN NEW;
-  END IF;
-
-  PERFORM net.http_post(
-    url     := 'https://egztpclpcnizcdtfugsv.supabase.co/functions/v1/predict-blast-radius',
-    headers := jsonb_build_object(
-      'Content-Type',  'application/json',
-      'Authorization', 'Bearer sb_publishable_BK64lFYCrgPZuTGf4s3Gmg_XBj3-NtU'
-    ),
-    body    := jsonb_build_object('incident_id', NEW.id::text),
-    timeout_milliseconds := 5000
-  );
-
-  RETURN NEW;
-END
-$function$
-;
-
-CREATE OR REPLACE FUNCTION public.refresh_stale_blast_radius_predictions()
- RETURNS integer
- LANGUAGE plpgsql
- SECURITY DEFINER
- SET search_path TO 'public', 'extensions'
-AS $function$
-DECLARE
-  v_incident record;
-  v_count integer := 0;
-BEGIN
-  FOR v_incident IN 
-    SELECT id 
-    FROM public.network_incidents
-    WHERE resolved_at IS NULL
-      AND root_cause_asset_id IS NOT NULL
-      AND (
-        predicted_at IS NULL
-        OR predicted_by_engine_version IS DISTINCT FROM 'v2.0.0'
-        OR predicted_at < (NOW() - INTERVAL '1 hour')
-      )
-    ORDER BY predicted_at NULLS FIRST
-    LIMIT 20
-  LOOP
-    PERFORM net.http_post(
-      url     := 'https://egztpclpcnizcdtfugsv.supabase.co/functions/v1/predict-blast-radius',
-      headers := jsonb_build_object(
-        'Content-Type',  'application/json',
-        'Authorization', 'Bearer sb_publishable_BK64lFYCrgPZuTGf4s3Gmg_XBj3-NtU'
-      ),
-      body    := jsonb_build_object('incident_id', v_incident.id::text),
-      timeout_milliseconds := 5000
-    );
-    v_count := v_count + 1;
-  END LOOP;
-  
-  RETURN v_count;
-END
-$function$
-;
-
-CREATE OR REPLACE FUNCTION public.evaluate_incident_sla(p_incident_id uuid)
- RETURNS integer
- LANGUAGE plpgsql
- SECURITY DEFINER
- SET search_path TO 'public'
-AS $function$
-DECLARE
-  v_incident             record;
-  v_customer_ref         text;
-  v_tier                 text;
-  v_tier_def             record;
-  v_breach_minutes       integer;
-  v_already_billable     integer;
-  v_remaining_allowance  integer;
-  v_billable             integer;
-  v_already_credited     numeric;
-  v_credit_uncapped      numeric;
-  v_credit               numeric;
-  v_count                integer := 0;
-  v_period_start         date;
-  v_period_end           date;
-BEGIN
-  SELECT id, root_cause_asset_id, first_alarm_at, resolved_at, predicted_blast_radius
-  INTO v_incident
-  FROM public.network_incidents
-  WHERE id = p_incident_id;
-
-  IF NOT FOUND OR v_incident.first_alarm_at IS NULL THEN
-    RETURN 0;
-  END IF;
-
-  v_breach_minutes := GREATEST(0, EXTRACT(EPOCH FROM (
-    COALESCE(v_incident.resolved_at, NOW()) - v_incident.first_alarm_at
-  ))::int / 60);
-
-  IF v_breach_minutes <= 0 THEN
-    RETURN 0;
-  END IF;
-
-  v_period_start := date_trunc('month', COALESCE(v_incident.resolved_at, NOW()))::date;
-  v_period_end   := (v_period_start + INTERVAL '1 month' - INTERVAL '1 day')::date;
-
-  IF v_incident.predicted_blast_radius IS NULL OR jsonb_array_length(COALESCE(v_incident.predicted_blast_radius->'affectedCustomerRefs', '[]'::jsonb)) = 0 THEN
-    RETURN 0;
-  END IF;
-
-  FOR v_customer_ref IN
-    SELECT jsonb_array_elements_text(v_incident.predicted_blast_radius->'affectedCustomerRefs')
-  LOOP
-    -- Customer's tier — read from customers.service_tier via account_number
-    -- which is the canonical customer_reference shape. Fall back to silver.
-    SELECT COALESCE(LOWER(service_tier), 'silver')
-    INTO v_tier
-    FROM public.customers
-    WHERE account_number = v_customer_ref
-    LIMIT 1;
-    IF v_tier IS NULL THEN
-      v_tier := 'silver';
-    END IF;
-
-    SELECT * INTO v_tier_def FROM public.sla_tiers WHERE tier = v_tier;
-    IF NOT FOUND THEN
-      RAISE NOTICE 'Unknown SLA tier % for customer %, skipping', v_tier, v_customer_ref;
-      CONTINUE;
-    END IF;
-
-    SELECT COALESCE(SUM(billable_minutes), 0)
-    INTO v_already_billable
-    FROM public.customer_sla_credits
-    WHERE customer_reference = v_customer_ref
-      AND incident_id <> p_incident_id
-      AND created_at >= v_period_start
-      AND created_at <= (v_period_end + INTERVAL '1 day')
-      AND status <> 'waived';
-
-    v_remaining_allowance := GREATEST(0, v_tier_def.monthly_allowance_minutes - v_already_billable);
-    v_billable := GREATEST(0, v_breach_minutes - v_remaining_allowance);
-
-    IF v_billable = 0 THEN CONTINUE; END IF;
-
-    SELECT COALESCE(SUM(credit_amount_usd), 0)
-    INTO v_already_credited
-    FROM public.customer_sla_credits
-    WHERE customer_reference = v_customer_ref
-      AND incident_id <> p_incident_id
-      AND created_at >= v_period_start
-      AND created_at <= (v_period_end + INTERVAL '1 day')
-      AND status <> 'waived';
-
-    v_credit_uncapped := v_billable * v_tier_def.credit_per_minute_usd;
-    v_credit := LEAST(v_credit_uncapped, v_tier_def.monthly_max_credit_usd - v_already_credited);
-    v_credit := GREATEST(0, v_credit);
-
-    IF v_credit = 0 THEN CONTINUE; END IF;
-
-    INSERT INTO public.customer_sla_credits (
-      customer_reference, incident_id, tier_at_breach,
-      breach_started_at, breach_resolved_at,
-      breach_duration_minutes, billable_minutes, credit_amount_usd
-    ) VALUES (
-      v_customer_ref, p_incident_id, v_tier,
-      v_incident.first_alarm_at, v_incident.resolved_at,
-      v_breach_minutes, v_billable, v_credit
-    )
-    ON CONFLICT (customer_reference, incident_id) DO UPDATE
-    SET breach_duration_minutes = EXCLUDED.breach_duration_minutes,
-        billable_minutes        = EXCLUDED.billable_minutes,
-        credit_amount_usd       = EXCLUDED.credit_amount_usd,
-        breach_resolved_at      = EXCLUDED.breach_resolved_at,
-        tier_at_breach          = EXCLUDED.tier_at_breach,
-        updated_at              = NOW();
-
-    v_count := v_count + 1;
-  END LOOP;
-
-  RETURN v_count;
-END
-$function$
-;
-
-CREATE OR REPLACE FUNCTION public.trigger_evaluate_incident_sla()
- RETURNS trigger
- LANGUAGE plpgsql
- SECURITY DEFINER
- SET search_path TO 'public'
-AS $function$
-BEGIN
-  -- Only fire on resolved_at transitioning from NULL to non-NULL
-  IF OLD.resolved_at IS NULL AND NEW.resolved_at IS NOT NULL THEN
-    PERFORM public.evaluate_incident_sla(NEW.id);
-  END IF;
-  RETURN NEW;
-END
-$function$
-;
-
-CREATE OR REPLACE FUNCTION public.evaluate_ongoing_incident_sla()
- RETURNS integer
- LANGUAGE plpgsql
- SECURITY DEFINER
- SET search_path TO 'public'
-AS $function$
-DECLARE
-  v_incident record;
-  v_total integer := 0;
-  v_count integer;
-BEGIN
-  FOR v_incident IN
-    SELECT id FROM public.network_incidents
-    WHERE resolved_at IS NULL
-      AND first_alarm_at IS NOT NULL
-      AND first_alarm_at < (NOW() - INTERVAL '1 hour')
-      AND predicted_blast_radius IS NOT NULL
-  LOOP
-    SELECT public.evaluate_incident_sla(v_incident.id) INTO v_count;
-    v_total := v_total + v_count;
-  END LOOP;
-  RETURN v_total;
-END
-$function$
-;
-
-CREATE OR REPLACE FUNCTION public.trigger_notify_status_page_subscribers()
- RETURNS trigger
- LANGUAGE plpgsql
- SECURITY DEFINER
- SET search_path TO 'public', 'extensions'
-AS $function$
-BEGIN
-  -- Only fire for active (not planned, not archived, not pre-resolved) incidents
-  IF NEW.status IS DISTINCT FROM 'active' THEN
-    RETURN NEW;
-  END IF;
-  IF NEW.resolved_at IS NOT NULL THEN
-    RETURN NEW;
-  END IF;
-
-  PERFORM net.http_post(
-    url     := 'https://egztpclpcnizcdtfugsv.supabase.co/functions/v1/notify-status-page-subscribers',
-    headers := jsonb_build_object(
-      'Content-Type', 'application/json',
-      'Authorization', 'Bearer sb_publishable_BK64lFYCrgPZuTGf4s3Gmg_XBj3-NtU'
-    ),
-    body    := jsonb_build_object('incident_id', NEW.id::text),
-    timeout_milliseconds := 8000
-  );
-
-  RETURN NEW;
-END
-$function$
-;
-
-CREATE OR REPLACE FUNCTION public.emit_incident_webhook_event(p_event_type text, p_incident jsonb)
- RETURNS integer
- LANGUAGE plpgsql
- SECURITY DEFINER
- SET search_path TO 'public'
-AS $function$
-DECLARE
-  v_webhook record;
-  v_count   integer := 0;
-BEGIN
-  FOR v_webhook IN
-    SELECT id
-    FROM public.api_webhooks
-    WHERE status = 'active'
-      AND p_event_type = ANY(event_filter)
-  LOOP
-    INSERT INTO public.api_webhook_deliveries (
-      webhook_id, event_type, payload, status, next_attempt_at, data_source
-    ) VALUES (
-      v_webhook.id,
-      p_event_type,
-      jsonb_build_object(
-        'event',     p_event_type,
-        'occurred_at', now(),
-        'incident',  p_incident
-      ),
-      'pending',
-      now(),
-      'system'
-    );
-    v_count := v_count + 1;
-  END LOOP;
-  RETURN v_count;
-END
-$function$
-;
-
-CREATE OR REPLACE FUNCTION public.trigger_emit_incident_webhooks()
- RETURNS trigger
- LANGUAGE plpgsql
- SECURITY DEFINER
- SET search_path TO 'public'
-AS $function$
-DECLARE
-  v_payload jsonb;
-BEGIN
-  -- Build a slim public-facing payload — same shape as the API.
-  v_payload := jsonb_build_object(
-    'id',                NEW.id,
-    'type',              NEW.type,
-    'severity',          NEW.severity,
-    'status',            NEW.status,
-    'title',             NEW.title,
-    'affected_parish',   NEW.affected_parish,
-    'first_alarm_at',    NEW.first_alarm_at,
-    'created_at',        NEW.created_at,
-    'resolved_at',       NEW.resolved_at,
-    'isolated_metres',   NEW.isolated_metres,
-    'predicted_blast_radius', NEW.predicted_blast_radius,
-    'predicted_at',      NEW.predicted_at
-  );
-
-  IF TG_OP = 'INSERT' THEN
-    PERFORM public.emit_incident_webhook_event('incident.opened', v_payload);
-    RETURN NEW;
-  END IF;
-
-  -- UPDATE branch
-  IF OLD.resolved_at IS NULL AND NEW.resolved_at IS NOT NULL THEN
-    PERFORM public.emit_incident_webhook_event('incident.resolved', v_payload);
-  ELSIF OLD.severity IS DISTINCT FROM NEW.severity 
-     OR OLD.status   IS DISTINCT FROM NEW.status THEN
-    PERFORM public.emit_incident_webhook_event('incident.updated', v_payload);
-  END IF;
-
-  RETURN NEW;
-END
-$function$
-;
-
-CREATE OR REPLACE FUNCTION public.api_consume_rate_token(p_api_key_id uuid)
- RETURNS TABLE(allowed boolean, tokens_remaining numeric, retry_after_seconds integer)
- LANGUAGE plpgsql
- SECURITY DEFINER
- SET search_path TO 'public'
-AS $function$
-DECLARE
-  v_rate           integer;
-  v_bucket_size    numeric;
-  v_tokens         numeric;
-  v_last_refill    timestamptz;
-  v_elapsed_sec    numeric;
-  v_refill         numeric;
-  v_new_tokens     numeric;
-  v_now            timestamptz := now();
-BEGIN
-  -- Lock the row to make the read-modify-write atomic.
-  SELECT 
-    COALESCE(rate_per_minute, 60),
-    bucket_tokens,
-    bucket_last_refill
-  INTO v_rate, v_tokens, v_last_refill
-  FROM public.api_keys
-  WHERE id = p_api_key_id
-  FOR UPDATE;
-
-  IF NOT FOUND THEN
-    -- Should not happen (caller looked up the key already), but be safe.
-    RETURN QUERY SELECT false, 0::numeric, 60;
-    RETURN;
-  END IF;
-
-  v_bucket_size := v_rate; -- bucket size == 1 minute of capacity
-
-  -- Refill: how many tokens to add for elapsed seconds, capped at bucket size.
-  v_elapsed_sec := EXTRACT(EPOCH FROM (v_now - v_last_refill));
-  v_refill      := v_elapsed_sec * v_rate / 60.0;
-  v_new_tokens  := LEAST(v_bucket_size, v_tokens + v_refill);
-
-  IF v_new_tokens >= 1 THEN
-    -- Allow + decrement
-    v_new_tokens := v_new_tokens - 1;
-    UPDATE public.api_keys
-       SET bucket_tokens = v_new_tokens,
-           bucket_last_refill = v_now,
-           request_count = request_count + 1
-     WHERE id = p_api_key_id;
-    RETURN QUERY SELECT true, v_new_tokens, 0;
-  ELSE
-    -- Reject + record refill so we don't double-count next call
-    UPDATE public.api_keys
-       SET bucket_tokens = v_new_tokens,
-           bucket_last_refill = v_now
-     WHERE id = p_api_key_id;
-    -- retry_after = ceil(seconds until next full token)
-    RETURN QUERY SELECT 
-      false,
-      v_new_tokens,
-      CEIL((1.0 - v_new_tokens) * 60.0 / v_rate)::integer;
-  END IF;
-END
-$function$
-;
-
-CREATE OR REPLACE FUNCTION public.compute_asset_health_score(p_asset_id uuid)
- RETURNS TABLE(score numeric, components jsonb, recommended_action text)
- LANGUAGE plpgsql
- STABLE
- SET search_path TO 'public', 'pg_catalog', 'extensions'
-AS $function$
-declare
-  v_alarms_7d int; v_alarms_30d int; v_alarms_90d int; v_critical_30d int;
-  v_open_alarms int; v_max_reassert int; v_oldest_open_age numeric;
-  v_age_years numeric; v_baseline_years numeric; v_age_factor numeric;
-  v_alarm_density numeric; v_severity_factor numeric; v_open_factor numeric;
-  v_reassert_factor numeric; v_score numeric; v_action text;
-  v_components jsonb; v_asset_type text;
-begin
-  select asset_type into v_asset_type from network_assets where id = p_asset_id;
-
-  select
-    count(*) filter (where raised_at > now() - interval '7 days'),
-    count(*) filter (where raised_at > now() - interval '30 days'),
-    count(*) filter (where raised_at > now() - interval '90 days'),
-    count(*) filter (where raised_at > now() - interval '30 days' and severity = 'critical'),
-    count(*) filter (where cleared_at is null),
-    coalesce(max(reassertion_count) filter (where raised_at > now() - interval '30 days'), 0),
-    coalesce(extract(epoch from now() - min(raised_at) filter (where cleared_at is null)) / 3600, 0)
-  into v_alarms_7d, v_alarms_30d, v_alarms_90d, v_critical_30d,
-       v_open_alarms, v_max_reassert, v_oldest_open_age
-  from alarms where asset_id = p_asset_id;
-
-  select coalesce(extract(epoch from now() - installed_date::timestamptz) / (86400 * 365.25), 0)
-  into v_age_years from network_assets where id = p_asset_id;
-
-  v_baseline_years := case
-    when v_asset_type ilike '%olt%'      then 12
-    when v_asset_type ilike '%ont%'      then  8
-    when v_asset_type ilike '%fdp%'      then 25
-    when v_asset_type ilike '%fat%'      then 25
-    when v_asset_type ilike '%joint%'    then 30
-    when v_asset_type ilike '%cable%'    then 30
-    when v_asset_type ilike '%chamber%'  then 50
-    when v_asset_type ilike '%duct%'     then 50
-    when v_asset_type ilike '%cabinet%'  then 20
-    when v_asset_type ilike '%cell%'     then 10
-    else 20
-  end;
-
-  v_alarm_density := greatest(0, 1.0 - (
-    v_alarms_7d  * 0.15 +
-    least(v_alarms_30d - v_alarms_7d, 10) * 0.04 +
-    least(v_alarms_90d - v_alarms_30d, 30) * 0.01
-  ));
-  v_severity_factor := greatest(0, 1.0 - v_critical_30d * 0.20);
-  v_open_factor := case
-    when v_open_alarms = 0 then 1.0
-    else greatest(0.05, 1.0 - least(v_oldest_open_age, 200) / 200.0 * 0.95)
-  end;
-  v_reassert_factor := greatest(0, 1.0 - least(v_max_reassert, 10) * 0.10);
-  v_age_factor := case
-    when v_age_years <= v_baseline_years * 0.5 then 1.0
-    when v_age_years <= v_baseline_years       then 1.0 - (v_age_years - v_baseline_years*0.5) / (v_baseline_years*0.5) * 0.5
-    when v_age_years <= v_baseline_years * 1.5 then 0.5 - (v_age_years - v_baseline_years) / (v_baseline_years*0.5) * 0.3
-    else 0.2
-  end;
-
-  v_score := round(
-    power(v_alarm_density,    0.30) *
-    power(v_severity_factor,  0.20) *
-    power(v_open_factor,      0.20) *
-    power(v_reassert_factor,  0.15) *
-    power(v_age_factor,       0.15)
-  , 3);
-  v_score := greatest(0, least(1, v_score));
-
-  v_action := case
-    when v_score < 0.10 then 'CRITICAL: pre-failure likely — schedule maintenance immediately'
-    when v_score < 0.30 then 'WARNING: schedule maintenance within 7 days'
-    when v_score < 0.60 then 'WATCH: monitor; consider preventive inspection at next visit'
-    when v_age_years > v_baseline_years then 'AGE: end-of-life by class baseline; plan replacement'
-    else 'OK: no action needed'
-  end;
-
-  v_components := jsonb_build_object(
-    'alarms_7d', v_alarms_7d, 'alarms_30d', v_alarms_30d, 'alarms_90d', v_alarms_90d,
-    'critical_30d', v_critical_30d, 'open_alarms', v_open_alarms,
-    'oldest_open_age_h', round(v_oldest_open_age, 1),
-    'max_reassert', v_max_reassert, 'age_years', round(v_age_years, 2),
-    'baseline_years', v_baseline_years, 'asset_type', v_asset_type,
-    'factor_alarm_density', round(v_alarm_density, 3),
-    'factor_severity', round(v_severity_factor, 3),
-    'factor_open', round(v_open_factor, 3),
-    'factor_reassert', round(v_reassert_factor, 3),
-    'factor_age', round(v_age_factor, 3)
-  );
-
-  return query select v_score, v_components, v_action;
-end;
-$function$
-;
-
-CREATE OR REPLACE FUNCTION public.refresh_asset_health_score(p_asset_id uuid)
- RETURNS void
- LANGUAGE plpgsql
- SECURITY DEFINER
- SET search_path TO 'public', 'pg_temp'
-AS $function$
-declare
-  v_score numeric; v_comp jsonb; v_action text;
-  v_prev numeric; v_trend text;
-  v_alert_id uuid; v_resolved_count int;
-begin
-  select score, components, recommended_action into v_score, v_comp, v_action
-  from compute_asset_health_score(p_asset_id);
-
-  select score into v_prev from asset_health_scores
-  where asset_id = p_asset_id order by computed_at desc limit 1;
-
-  v_trend := case
-    when v_prev is null then 'stable'
-    when v_score > v_prev + 0.05 then 'improving'
-    when v_score < v_prev - 0.05 then 'degrading'
-    else 'stable'
-  end;
-
-  insert into asset_health_scores (asset_id, score, components, trend, recommended_action)
-  values (p_asset_id, v_score, v_comp, v_trend, v_action);
-
-  update network_assets set health_score = (v_score * 100)::int
-  where id = p_asset_id;
-
-  delete from asset_health_rescore_queue where asset_id = p_asset_id;
-
-  if v_score < 0.30 then
-    v_alert_id := generate_predictive_alert_from_health_score(p_asset_id);
-  end if;
-
-  if v_score >= 0.40 then
-    update predictive_alerts
-    set resolved_at = now()
-    where asset_id = p_asset_id
-      and resolved_at is null
-      and alert_type in ('asset_health_warning', 'asset_health_critical');
-    get diagnostics v_resolved_count = row_count;
-
-    if v_resolved_count > 0 then
-      -- Use 'status_change' (in allow-list) for the auto-resolve event;
-      -- mark the kind in details so it's distinguishable.
-      insert into activity_log (action, entity_type, entity_id, details)
-      values (
-        'status_change',
-        'network_asset',
-        p_asset_id,
-        jsonb_build_object(
-          'kind',             'predictive_alert_auto_resolved',
-          'asset_id',         p_asset_id,
-          'recovered_score',  v_score,
-          'previous_score',   v_prev,
-          'alerts_resolved',  v_resolved_count
-        )
-      );
-    end if;
-  end if;
-end;
-$function$
-;
-
-CREATE OR REPLACE FUNCTION public.queue_asset_for_rescore(p_asset_id uuid, p_reason text DEFAULT NULL::text)
- RETURNS void
- LANGUAGE sql
- SECURITY DEFINER
- SET search_path TO 'public', 'pg_temp'
-AS $function$
-  insert into asset_health_rescore_queue (asset_id, reason)
-  values (p_asset_id, p_reason)
-  on conflict (asset_id) do update
-    set enqueued_at = now(),
-        reason = coalesce(excluded.reason, asset_health_rescore_queue.reason);
-$function$
-;
-
-CREATE OR REPLACE FUNCTION public.trg_alarm_change_queue_rescore()
- RETURNS trigger
- LANGUAGE plpgsql
- SECURITY DEFINER
- SET search_path TO 'public', 'pg_temp'
-AS $function$
-begin
-  if new.asset_id is not null then
-    perform queue_asset_for_rescore(new.asset_id, 'alarm_change:' || coalesce(new.alarm_type, '?'));
-  end if;
-  return new;
-end;
-$function$
-;
-
-CREATE OR REPLACE FUNCTION public.trg_incident_resolved_queue_rescore()
- RETURNS trigger
- LANGUAGE plpgsql
- SECURITY DEFINER
- SET search_path TO 'public', 'pg_temp'
-AS $function$
-begin
-  if new.status = 'resolved' and (old.status is null or old.status <> 'resolved') then
-    insert into asset_health_rescore_queue (asset_id, reason)
-    select distinct a.asset_id, 'incident_resolved:' || new.id::text
-    from alarms a
-    where a.primary_incident_id = new.id and a.asset_id is not null
-    on conflict (asset_id) do update set enqueued_at = now();
-  end if;
-  return new;
-end;
-$function$
-;
-
-CREATE OR REPLACE FUNCTION public.flush_asset_health_rescore_queue(p_limit integer DEFAULT 200)
- RETURNS integer
- LANGUAGE plpgsql
- SECURITY DEFINER
- SET search_path TO 'public', 'pg_temp'
-AS $function$
-declare
-  v_processed int := 0;
-  v_id uuid;
-begin
-  for v_id in
-    select asset_id from asset_health_rescore_queue
-    order by enqueued_at asc
-    limit p_limit
-  loop
-    perform refresh_asset_health_score(v_id);
-    v_processed := v_processed + 1;
-  end loop;
-  return v_processed;
-end;
-$function$
-;
-
-CREATE OR REPLACE FUNCTION public.enqueue_all_active_assets_for_rescore()
- RETURNS integer
- LANGUAGE plpgsql
- SECURITY DEFINER
- SET search_path TO 'public', 'pg_temp'
-AS $function$
-declare
-  v_count int;
-begin
-  insert into asset_health_rescore_queue (asset_id, reason)
-  select id, 'periodic_refresh' from network_assets
-  where status is null or status not in ('decommissioned', 'removed')
-  on conflict (asset_id) do nothing;
-  get diagnostics v_count = row_count;
-  return v_count;
-end;
-$function$
-;
-
-CREATE OR REPLACE FUNCTION public.generate_predictive_alert_from_health_score(p_asset_id uuid)
- RETURNS uuid
- LANGUAGE plpgsql
- SECURITY DEFINER
- SET search_path TO 'public', 'pg_temp'
-AS $function$
-declare
-  v_score numeric;
-  v_components jsonb;
-  v_action text;
-  v_severity text;
-  v_alert_type text;
-  v_probability integer;
-  v_confidence numeric;
-  v_asset_ref text;
-  v_asset_type text;
-  v_address text;
-  v_description text;
-  v_existing_id uuid;
-  v_alert_id uuid;
-begin
-  -- Read latest score
-  select score, components, recommended_action
-  into v_score, v_components, v_action
-  from asset_health_scores
-  where asset_id = p_asset_id
-  order by computed_at desc
-  limit 1;
-
-  if v_score is null then
-    return null;  -- no score yet, can't predict
-  end if;
-
-  -- Score >= 0.30 is 'watch' or 'ok' — do not generate an alert.
-  if v_score >= 0.30 then
-    return null;
-  end if;
-
-  -- Severity & alert_type from score band
-  if v_score < 0.10 then
-    v_severity := 'critical';
-    v_alert_type := 'asset_health_critical';
-  else
-    v_severity := 'warning';
-    v_alert_type := 'asset_health_warning';
-  end if;
-
-  -- Probability: invert health score (lower health = higher failure probability).
-  -- Score 0.10 → ~85%, score 0.05 → ~92%, score 0 → ~95%.
-  -- Above 0.30 we don't generate at all (handled above).
-  v_probability := least(95, greatest(50, round((1.0 - v_score) * 95)::integer));
-
-  -- Confidence: how solid is the signal. Components-driven.
-  -- Higher when alarms_30d > 5 AND open_alarms > 0 AND age_factor < 0.5.
-  v_confidence := least(0.99, greatest(0.30,
-    0.40
-    + case when (v_components->>'alarms_30d')::int > 5 then 0.20 else 0 end
-    + case when (v_components->>'open_alarms')::int > 0 then 0.15 else 0 end
-    + case when (v_components->>'critical_30d')::int > 0 then 0.15 else 0 end
-    + case when (v_components->>'factor_age')::numeric < 0.5 then 0.10 else 0 end
-  ));
-
-  -- Asset metadata for human-readable fields
-  select asset_ref, asset_type, address
-  into v_asset_ref, v_asset_type, v_address
-  from network_assets where id = p_asset_id;
-
-  v_description := format(
-    '%s %s flagged for predictive maintenance: health score %s (%s factors). %s',
-    coalesce(v_asset_type, 'Asset'),
-    coalesce(v_asset_ref, p_asset_id::text),
-    v_score,
-    coalesce(v_components->>'asset_type', 'unknown type'),
-    v_action
-  );
-
-  -- Idempotency: skip if an open alert of this type already exists.
-  -- (The unique partial index would also prevent this, but we want a quiet
-  -- no-op rather than an exception.)
-  select id into v_existing_id
-  from predictive_alerts
-  where asset_id = p_asset_id
-    and alert_type = v_alert_type
-    and resolved_at is null
-  limit 1;
-
-  if v_existing_id is not null then
-    return null;
-  end if;
-
-  -- Generate
-  insert into predictive_alerts (
-    alert_type, severity, asset_id, asset_ref,
-    confidence_score, probability, prediction_type,
-    description, recommendation, customer_message,
-    detected_at, data_source
-  ) values (
-    v_alert_type, v_severity, p_asset_id, v_asset_ref,
-    v_confidence, v_probability, 'asset_health_score',
-    v_description, v_action,
-    null,  -- customer_message left null for asset alerts; weather alerts populate it
-    now(), 'system'
-  )
-  returning id into v_alert_id;
-
-  return v_alert_id;
-end;
-$function$
-;
-
-CREATE OR REPLACE FUNCTION public.generate_predictive_work_order_ref()
- RETURNS text
- LANGUAGE sql
- SET search_path TO 'public', 'pg_catalog', 'extensions'
-AS $function$
-  select 'PM-' || to_char(now(), 'YYYYMMDD') || '-' || substr(replace(gen_random_uuid()::text, '-', ''), 1, 6);
-$function$
-;
-
-CREATE OR REPLACE FUNCTION public.draft_predictive_work_order(p_asset_id uuid, p_health_score_id uuid, p_score numeric, p_components jsonb, p_action text)
- RETURNS uuid
- LANGUAGE plpgsql
- SECURITY DEFINER
- SET search_path TO 'public', 'pg_temp'
-AS $function$
-declare
-  v_existing_id uuid;
-  v_priority text;
-  v_title text;
-  v_description text;
-  v_asset_ref text;
-  v_asset_type text;
-  v_lat double precision;
-  v_lng double precision;
-  v_required_role text;
-  v_new_id uuid;
-  v_score_pct text;
-  v_severity_label text;
-begin
-  v_priority := case
-    when p_score < 0.10 then 'critical'
-    when p_score < 0.30 then 'high'
-    else 'normal'
-  end;
-
-  v_score_pct := round(p_score * 100)::text || '%';
-  v_severity_label := case
-    when p_score < 0.10 then 'CRITICAL — pre-failure likely'
-    when p_score < 0.30 then 'WARNING — schedule within 7 days'
-    else 'WATCH'
-  end;
-
-  select asset_ref, asset_type, latitude, longitude
-  into v_asset_ref, v_asset_type, v_lat, v_lng
-  from network_assets where id = p_asset_id;
-
-  v_required_role := case
-    when v_asset_type ilike '%olt%' or v_asset_type ilike '%ont%'
-      or v_asset_type ilike '%fdp%' or v_asset_type ilike '%fat%'
-      or v_asset_type ilike '%joint%' or v_asset_type ilike '%cable%'
-      then 'fibre_engineer'
-    when v_asset_type ilike '%chamber%' or v_asset_type ilike '%duct%'
-      then 'civils_contractor'
-    when v_asset_type ilike '%cabinet%' or v_asset_type ilike '%cell%'
-      then 'fibre_engineer'
-    else 'fibre_engineer'
-  end;
-
-  select id into v_existing_id
-  from work_orders
-  where triggering_asset_id = p_asset_id
-    and source_kind = 'predictive_maintenance'
-    and status not in ('completed','rejected','blocked')
-  limit 1;
-
-  if v_existing_id is not null then
-    update work_orders set
-      priority = case
-        when v_priority = 'critical' then 'critical'
-        when priority = 'critical' then 'critical'
-        else v_priority end,
-      triggering_health_score_id = p_health_score_id,
-      triggering_score = p_score,
-      triggering_components = p_components,
-      description = format(
-        E'PREDICTIVE MAINTENANCE — refreshed %s\n\nAsset %s (%s) health score %s\n\nAction: %s\n\nComponents:\n%s',
-        to_char(now(), 'YYYY-MM-DD HH24:MI'),
-        coalesce(v_asset_ref, p_asset_id::text),
-        coalesce(v_asset_type, 'unknown type'),
-        v_score_pct,
-        p_action,
-        p_components::text
-      ),
-      updated_at = now()
-    where id = v_existing_id;
-    return v_existing_id;
-  end if;
-
-  v_title := format(
-    'Predictive maintenance — %s (%s) health %s',
-    coalesce(v_asset_ref, p_asset_id::text),
-    coalesce(v_asset_type, 'asset'),
-    v_score_pct
-  );
-
-  v_description := format(
-    E'PREDICTIVE MAINTENANCE — auto-drafted by asset health system\n\n' ||
-    E'Asset %s (%s)\n' ||
-    E'Health score: %s — %s\n\n' ||
-    E'Recommended action: %s\n\n' ||
-    E'Component breakdown:\n%s\n\n' ||
-    E'This work order was created automatically because the asset crossed below the predictive maintenance threshold. ' ||
-    E'A technician should investigate before customer-impacting failure occurs. ' ||
-    E'If false alarm, mark this work order as rejected with notes — that signal feeds the model.',
-    coalesce(v_asset_ref, p_asset_id::text),
-    coalesce(v_asset_type, 'unknown'),
-    v_score_pct,
-    v_severity_label,
-    p_action,
-    p_components::text
-  );
-
-  insert into work_orders (
-    reference, title, description, priority, status, work_type, required_role,
-    planned_start_lat, planned_start_lng, planned_metres,
-    source_kind, triggering_asset_id, triggering_health_score_id,
-    triggering_score, triggering_components, data_source
-  ) values (
-    generate_predictive_work_order_ref(),
-    v_title,
-    v_description,
-    v_priority,
-    'pending',
-    'maintenance',
-    v_required_role,
-    v_lat, v_lng, 0,
-    'predictive_maintenance',
-    p_asset_id,
-    p_health_score_id,
-    p_score,
-    p_components,
-    'system'
-  )
-  returning id into v_new_id;
-
-  return v_new_id;
-end;
-$function$
-;
-
-CREATE OR REPLACE FUNCTION public.trg_health_score_draft_work_order()
- RETURNS trigger
- LANGUAGE plpgsql
- SECURITY DEFINER
- SET search_path TO 'public', 'pg_temp'
-AS $function$
-declare
-  v_action text;
-begin
-  if new.score < 0.30 then
-    v_action := coalesce(new.recommended_action, 'Schedule maintenance');
-    perform draft_predictive_work_order(
-      new.asset_id, new.id, new.score, new.components, v_action
-    );
-  end if;
-  return new;
-end;
-$function$
-;
-
-CREATE OR REPLACE FUNCTION public.emit_work_order_webhook_event(p_event_type text, p_work_order jsonb)
- RETURNS integer
- LANGUAGE plpgsql
- SECURITY DEFINER
- SET search_path TO 'public', 'pg_temp'
-AS $function$
-declare
-  v_webhook record;
-  v_count integer := 0;
-begin
-  for v_webhook in
-    select id from public.api_webhooks
-    where status = 'active' and p_event_type = any(event_filter)
-  loop
-    insert into public.api_webhook_deliveries (
-      webhook_id, event_type, payload, status, next_attempt_at, data_source
-    ) values (
-      v_webhook.id,
-      p_event_type,
-      jsonb_build_object(
-        'event',       p_event_type,
-        'occurred_at', now(),
-        'work_order',  p_work_order
-      ),
-      'pending',
-      now(),
-      'system'
-    );
-    v_count := v_count + 1;
-  end loop;
-  return v_count;
-end;
-$function$
-;
-
-CREATE OR REPLACE FUNCTION public.build_work_order_webhook_payload(p_wo_id uuid)
- RETURNS jsonb
- LANGUAGE sql
- STABLE
- SET search_path TO 'public', 'pg_catalog', 'extensions'
-AS $function$
-  select jsonb_build_object(
-    'id',                      wo.id,
-    'reference',               wo.reference,
-    'title',                   wo.title,
-    'priority',                wo.priority,
-    'status',                  wo.status,
-    'work_type',               wo.work_type,
-    'required_role',           wo.required_role,
-    'source_kind',             wo.source_kind,
-    'created_at',              wo.created_at,
-    'updated_at',              wo.updated_at,
-    'planned_start_lat',       wo.planned_start_lat,
-    'planned_start_lng',       wo.planned_start_lng,
-    'asset', jsonb_build_object(
-      'id',         na.id,
-      'asset_ref',  na.asset_ref,
-      'asset_type', na.asset_type,
-      'address',    na.address,
-      'latitude',   na.latitude,
-      'longitude',  na.longitude
-    ),
-    'health', jsonb_build_object(
-      'score',                 wo.triggering_score,
-      'computed_at',           ahs.computed_at,
-      'trend',                 ahs.trend,
-      'recommended_action',    ahs.recommended_action,
-      'components',            wo.triggering_components,
-      'flag_level',            case
-        when wo.triggering_score < 0.10 then 'critical'
-        when wo.triggering_score < 0.30 then 'warning'
-        else 'watch' end
-    )
-  )
-  from work_orders wo
-  left join network_assets na on na.id = wo.triggering_asset_id
-  left join asset_health_scores ahs on ahs.id = wo.triggering_health_score_id
-  where wo.id = p_wo_id;
-$function$
-;
-
-CREATE OR REPLACE FUNCTION public.trg_wo_predictive_drafted_emit()
- RETURNS trigger
- LANGUAGE plpgsql
- SECURITY DEFINER
- SET search_path TO 'public', 'pg_temp'
-AS $function$
-begin
-  if new.source_kind = 'predictive_maintenance' then
-    perform emit_work_order_webhook_event(
-      'work_order.predictive_drafted',
-      build_work_order_webhook_payload(new.id)
-    );
-  end if;
-  return new;
-end;
-$function$
-;
-
-CREATE OR REPLACE FUNCTION public.trg_wo_predictive_escalated_emit()
- RETURNS trigger
- LANGUAGE plpgsql
- SECURITY DEFINER
- SET search_path TO 'public', 'pg_temp'
-AS $function$
-begin
-  if new.source_kind = 'predictive_maintenance'
-     and new.priority = 'critical'
-     and (old.priority is null or old.priority <> 'critical') then
-    perform emit_work_order_webhook_event(
-      'work_order.predictive_escalated',
-      build_work_order_webhook_payload(new.id)
-    );
-  end if;
-  return new;
-end;
-$function$
-;
-
-CREATE OR REPLACE FUNCTION public._outcome_to_wo_status(p_outcome text)
- RETURNS text
- LANGUAGE sql
- IMMUTABLE
- SET search_path TO 'public', 'pg_catalog', 'extensions'
-AS $function$
-  select case p_outcome
-    when 'confirmed_critical'  then 'completed'
-    when 'confirmed_warning'   then 'completed'
-    when 'completed_proactive' then 'completed'
-    when 'false_positive'      then 'rejected'
-    when 'superseded'          then 'rejected'
-    when 'inaccessible'        then 'blocked'
-    else null
-  end;
-$function$
-;
-
-CREATE OR REPLACE FUNCTION public.submit_predictive_feedback(p_work_order_id uuid, p_outcome text, p_notes text DEFAULT NULL::text, p_marked_by text DEFAULT NULL::text)
- RETURNS uuid
- LANGUAGE plpgsql
- SECURITY DEFINER
- SET search_path TO 'public', 'pg_temp'
-AS $function$
-declare
-  v_wo record;
-  v_latest_score numeric;
-  v_minutes int;
-  v_recovery numeric;
-  v_feedback_id uuid;
-  v_target_status text;
-begin
-  -- Pull the work order with its predictive-source linkage
-  select * into v_wo from work_orders where id = p_work_order_id;
-  if v_wo.id is null then
-    raise exception 'WO_NOT_FOUND: work order % does not exist', p_work_order_id;
-  end if;
-  if v_wo.source_kind <> 'predictive_maintenance' then
-    raise exception 'NOT_PREDICTIVE: work order % is not predictive_maintenance (source_kind=%)', p_work_order_id, v_wo.source_kind;
-  end if;
-  if exists (select 1 from predictive_feedback where work_order_id = p_work_order_id) then
-    raise exception 'FEEDBACK_EXISTS: work order % already has feedback', p_work_order_id;
-  end if;
-
-  v_target_status := _outcome_to_wo_status(p_outcome);
-  if v_target_status is null then
-    raise exception 'INVALID_OUTCOME: % is not a recognised outcome', p_outcome;
-  end if;
-
-  -- Latest health score for the asset (at feedback time)
-  select score into v_latest_score
-  from asset_health_scores
-  where asset_id = v_wo.triggering_asset_id
-  order by computed_at desc
-  limit 1;
-
-  v_minutes := (extract(epoch from now() - v_wo.created_at) / 60)::int;
-  v_recovery := case
-    when v_wo.triggering_score is null or v_wo.triggering_score = 0 then null
-    else round((coalesce(v_latest_score, v_wo.triggering_score) - v_wo.triggering_score) * 100, 2)
-  end;
-
-  insert into predictive_feedback (
-    work_order_id, triggering_asset_id, triggering_health_score_id,
-    triggering_score, triggering_components,
-    outcome, notes, marked_by,
-    draft_to_feedback_minutes, score_at_feedback, score_recovered_pct
-  ) values (
-    p_work_order_id, v_wo.triggering_asset_id, v_wo.triggering_health_score_id,
-    v_wo.triggering_score, v_wo.triggering_components,
-    p_outcome, p_notes, p_marked_by,
-    v_minutes, v_latest_score, v_recovery
-  ) returning id into v_feedback_id;
-
-  -- Transition WO to terminal status
-  update work_orders set
-    status = v_target_status,
-    completed_at = case when v_target_status = 'completed' then now() else completed_at end,
-    updated_at = now()
-  where id = p_work_order_id;
-
-  -- Audit
-  insert into activity_log (action, entity_type, entity_id, details)
-  values (
-    'status_change', 'work_order', p_work_order_id,
-    jsonb_build_object(
-      'kind',                'predictive_feedback_submitted',
-      'outcome',             p_outcome,
-      'new_status',          v_target_status,
-      'minutes_to_feedback', v_minutes,
-      'score_at_draft',      v_wo.triggering_score,
-      'score_at_feedback',   v_latest_score,
-      'recovery_pct',        v_recovery,
-      'marked_by',           p_marked_by
-    )
-  );
-
-  return v_feedback_id;
-end;
-$function$
-;
-
-CREATE OR REPLACE FUNCTION public.escalate_stale_predictive_work_orders()
- RETURNS TABLE(bumped_to_critical_count integer, stale_critical_count integer)
- LANGUAGE plpgsql
- SECURITY DEFINER
- SET search_path TO 'public', 'pg_temp'
-AS $function$
-declare
-  v_bumped int := 0;
-  v_stale int := 0;
-  v_wo record;
-begin
-  -- 1) Bump 'high' to 'critical' if unassigned + >2h old
-  --    The escalated webhook fires from existing trigger
-  for v_wo in
-    select id, reference, triggering_asset_id
-    from work_orders
-    where source_kind = 'predictive_maintenance'
-      and status = 'pending'
-      and priority = 'high'
-      and assigned_technician is null
-      and created_at < now() - interval '2 hours'
-  loop
-    update work_orders
-    set priority = 'critical',
-        updated_at = now()
-    where id = v_wo.id;
-
-    insert into activity_log (action, entity_type, entity_id, details)
-    values ('status_change', 'work_order', v_wo.id, jsonb_build_object(
-      'kind', 'predictive_wo_auto_escalated_stale',
-      'reference', v_wo.reference,
-      'reason', 'unassigned >2h with high priority',
-      'asset_id', v_wo.triggering_asset_id
-    ));
-
-    v_bumped := v_bumped + 1;
-  end loop;
-
-  -- 2) Fire stale_unassigned webhook for critical WOs unassigned >4h.
-  --    Send once per WO using activity_log as the "already-fired" marker.
-  for v_wo in
-    select wo.id, wo.reference, wo.triggering_asset_id
-    from work_orders wo
-    where wo.source_kind = 'predictive_maintenance'
-      and wo.status = 'pending'
-      and wo.priority = 'critical'
-      and wo.assigned_technician is null
-      and wo.created_at < now() - interval '4 hours'
-      and not exists (
-        select 1 from activity_log al
-        where al.entity_type = 'work_order'
-          and al.entity_id = wo.id
-          and al.details->>'kind' = 'predictive_wo_stale_webhook_fired'
-      )
-  loop
-    perform emit_work_order_webhook_event(
-      'work_order.stale_unassigned',
-      build_work_order_webhook_payload(v_wo.id)
-    );
-
-    insert into activity_log (action, entity_type, entity_id, details)
-    values ('status_change', 'work_order', v_wo.id, jsonb_build_object(
-      'kind', 'predictive_wo_stale_webhook_fired',
-      'reference', v_wo.reference,
-      'asset_id', v_wo.triggering_asset_id
-    ));
-
-    v_stale := v_stale + 1;
-  end loop;
-
-  return query select v_bumped, v_stale;
-end;
-$function$
-;
-
-CREATE OR REPLACE FUNCTION public.allocate_maintenance_window_for_wo(p_wo_id uuid)
- RETURNS uuid
- LANGUAGE plpgsql
- SECURITY DEFINER
- SET search_path TO 'public', 'pg_temp'
-AS $function$
-declare
-  v_wo record;
-  v_slot_start timestamptz;
-  v_slot_end timestamptz;
-  v_duration int;
-  v_window_id uuid;
-begin
-  select * into v_wo from work_orders where id = p_wo_id;
-  if v_wo.id is null then
-    raise exception 'WO_NOT_FOUND';
-  end if;
-
-  -- Don't double-book: if already has an active window, return it
-  select id into v_window_id from maintenance_windows
-  where work_order_id = p_wo_id and status in ('tentative','confirmed','in_progress')
-  limit 1;
-  if v_window_id is not null then
-    return v_window_id;
-  end if;
-
-  -- Estimate duration by work_type and asset_type
-  v_duration := case
-    when v_wo.work_type = 'maintenance' and v_wo.required_role = 'fibre_engineer' then 90
-    when v_wo.work_type = 'maintenance' and v_wo.required_role = 'civils_contractor' then 180
-    when v_wo.work_type = 'splice_joint' then 120
-    when v_wo.work_type = 'otdr_test' then 45
-    else 60
-  end;
-
-  -- Allocate slot:
-  --   critical → start in 1h, give a 4h window
-  --   high     → start tomorrow morning local 09:00, 1d window
-  --   normal   → start in 3d at 09:00, 1d window
-  --   low      → start in 7d at 09:00, 1d window
-  v_slot_start := case v_wo.priority
-    when 'critical' then now() + interval '1 hour'
-    when 'high'     then date_trunc('day', now() at time zone 'America/Jamaica') + interval '1 day' + interval '9 hours'
-    when 'normal'   then date_trunc('day', now() at time zone 'America/Jamaica') + interval '3 days' + interval '9 hours'
-    else                date_trunc('day', now() at time zone 'America/Jamaica') + interval '7 days' + interval '9 hours'
-  end;
-
-  v_slot_end := case v_wo.priority
-    when 'critical' then v_slot_start + interval '4 hours'
-    when 'high'     then v_slot_start + (v_duration || ' minutes')::interval + interval '2 hours'
-    else                v_slot_start + (v_duration || ' minutes')::interval + interval '1 hour'
-  end;
-
-  insert into maintenance_windows (
-    work_order_id, asset_id, scheduled_start, scheduled_end,
-    status, source, estimated_duration_minutes, notes, data_source
-  ) values (
-    p_wo_id, v_wo.triggering_asset_id, v_slot_start, v_slot_end,
-    'tentative',
-    case when v_wo.source_kind = 'predictive_maintenance' then 'predictive_maintenance' else 'manual' end,
-    v_duration,
-    format('Auto-allocated for WO %s (priority=%s)', v_wo.reference, v_wo.priority),
-    'system'
-  ) returning id into v_window_id;
-
-  return v_window_id;
-end;
-$function$
-;
-
-CREATE OR REPLACE FUNCTION public.trg_wo_allocate_maintenance_window()
- RETURNS trigger
- LANGUAGE plpgsql
- SECURITY DEFINER
- SET search_path TO 'public', 'pg_temp'
-AS $function$
-begin
-  if new.source_kind = 'predictive_maintenance' then
-    perform allocate_maintenance_window_for_wo(new.id);
-  end if;
-  return new;
-end;
-$function$
-;
-
-CREATE OR REPLACE FUNCTION public.trg_wo_cancel_window_on_close()
- RETURNS trigger
- LANGUAGE plpgsql
- SECURITY DEFINER
- SET search_path TO 'public', 'pg_temp'
-AS $function$
-begin
-  if new.status in ('completed','rejected','blocked')
-     and (old.status is null or old.status not in ('completed','rejected','blocked')) then
-    update maintenance_windows
-    set status = case
-      when new.status = 'completed' and status = 'in_progress' then 'completed'
-      when new.status = 'completed' then 'completed'
-      else 'cancelled'
-    end,
-    updated_at = now()
-    where work_order_id = new.id and status in ('tentative','confirmed','in_progress');
-  end if;
-  return new;
-end;
-$function$
-;
-
-CREATE OR REPLACE FUNCTION public.mark_missed_maintenance_windows()
- RETURNS integer
- LANGUAGE plpgsql
- SECURITY DEFINER
- SET search_path TO 'public', 'pg_temp'
-AS $function$
-declare v_count int;
-begin
-  update maintenance_windows
-  set status = 'missed', updated_at = now()
-  where status in ('tentative','confirmed')
-    and scheduled_end < now() - interval '1 hour';
-  get diagnostics v_count = row_count;
-  return v_count;
-end;
-$function$
-;
-
-CREATE OR REPLACE FUNCTION public.public_predictive_kpis_30d()
- RETURNS TABLE(window_days integer, total_incidents integer, caught_acted integer, caught_total integer, missed integer, catch_rate_pct numeric, caught_acted_rate_pct numeric, avg_lead_time_hours numeric, median_lead_time_hours numeric, predictive_wo_drafted integer, unique_assets_protected integer)
- LANGUAGE sql
- STABLE SECURITY DEFINER
- SET search_path TO 'public', 'pg_temp'
-AS $function$
-  with window_incidents as (
-    select id, first_alarm_at
-    from network_incidents
-    where created_at >= now() - interval '30 days'
-  ),
-  per_incident as (
-    select
-      wi.id as incident_id,
-      min(case
-        when vpi.prediction_outcome = 'caught_acted' then 1
-        when vpi.prediction_outcome = 'caught_unacted' then 2
-        when vpi.prediction_outcome = 'caught_dismissed' then 3
-        when vpi.prediction_outcome is null or vpi.prediction_outcome = 'missed' then 4
-        else 5
-      end) as best_rank,
-      min(vpi.lead_time_hours) as best_lead_time
-    from window_incidents wi
-    left join v_predicted_incidents vpi on vpi.incident_id = wi.id
-    group by wi.id
-  ),
-  drafted_in_window as (
-    select count(*)::int as drafted, count(distinct triggering_asset_id)::int as assets
-    from work_orders
-    where source_kind = 'predictive_maintenance'
-      and created_at >= now() - interval '30 days'
-  )
-  select
-    30 as window_days,
-    (select count(*) from per_incident)::int as total_incidents,
-    (select count(*) from per_incident where best_rank = 1)::int as caught_acted,
-    (select count(*) from per_incident where best_rank in (1,2,3))::int as caught_total,
-    (select count(*) from per_incident where best_rank = 4)::int as missed,
-    case when (select count(*) from per_incident) = 0 then null
-         else round(
-           (select count(*) from per_incident where best_rank in (1,2,3))::numeric
-           / (select count(*) from per_incident)::numeric * 100, 1)
-    end as catch_rate_pct,
-    case when (select count(*) from per_incident) = 0 then null
-         else round(
-           (select count(*) from per_incident where best_rank = 1)::numeric
-           / (select count(*) from per_incident)::numeric * 100, 1)
-    end as caught_acted_rate_pct,
-    (select round(avg(best_lead_time)::numeric, 1) from per_incident where best_rank in (1,2,3) and best_lead_time is not null) as avg_lead_time_hours,
-    (select round(percentile_cont(0.5) within group (order by best_lead_time)::numeric, 1) from per_incident where best_rank in (1,2,3) and best_lead_time is not null) as median_lead_time_hours,
-    (select drafted from drafted_in_window) as predictive_wo_drafted,
-    (select assets  from drafted_in_window) as unique_assets_protected;
-$function$
-;
-
-CREATE OR REPLACE FUNCTION public.public_predictive_weekly_trend()
- RETURNS TABLE(week_start date, total_incidents integer, caught_acted integer, missed integer, catch_rate_pct numeric)
- LANGUAGE sql
- STABLE SECURITY DEFINER
- SET search_path TO 'public', 'pg_temp'
-AS $function$
-  with weeks as (
-    select generate_series(
-      date_trunc('week', current_date - interval '11 weeks'),
-      date_trunc('week', current_date),
-      interval '1 week'
-    )::date as week_start
-  ),
-  bucketed as (
-    select
-      date_trunc('week', ni.first_alarm_at)::date as week_start,
-      ni.id as incident_id,
-      min(case
-        when vpi.prediction_outcome = 'caught_acted' then 1
-        when vpi.prediction_outcome = 'caught_unacted' then 2
-        when vpi.prediction_outcome = 'caught_dismissed' then 3
-        when vpi.prediction_outcome is null or vpi.prediction_outcome = 'missed' then 4
-        else 5
-      end) as best_rank
-    from network_incidents ni
-    left join v_predicted_incidents vpi on vpi.incident_id = ni.id
-    where ni.first_alarm_at >= current_date - interval '12 weeks'
-    group by 1, 2
-  )
-  select
-    w.week_start,
-    coalesce(count(b.incident_id), 0)::int as total_incidents,
-    coalesce(sum(case when b.best_rank = 1 then 1 else 0 end), 0)::int as caught_acted,
-    coalesce(sum(case when b.best_rank = 4 then 1 else 0 end), 0)::int as missed,
-    case when count(b.incident_id) = 0 then null
-         else round(
-           sum(case when b.best_rank in (1,2,3) then 1 else 0 end)::numeric
-           / count(b.incident_id)::numeric * 100, 1)
-    end as catch_rate_pct
-  from weeks w
-  left join bucketed b on b.week_start = w.week_start
-  group by w.week_start
-  order by w.week_start asc;
-$function$
-;
-
-CREATE OR REPLACE FUNCTION public._next_business_day_morning()
- RETURNS timestamp with time zone
- LANGUAGE sql
- STABLE
- SET search_path TO 'public', 'pg_catalog', 'extensions'
-AS $function$
-  with target as (
-    select case
-      when extract(hour from now() at time zone 'America/Jamaica') >= 16
-        then ((now() at time zone 'America/Jamaica')::date + interval '1 day')::date
-      else (now() at time zone 'America/Jamaica')::date
-    end as base_date
-  )
-  select (case extract(dow from base_date)
-    when 0 then base_date + interval '1 day'
-    when 6 then base_date + interval '2 days'
-    else base_date::timestamp
-  end + interval '9 hours') at time zone 'America/Jamaica'
-  from target;
-$function$
-;
-
-CREATE OR REPLACE FUNCTION public.check_system_health()
- RETURNS TABLE(alert_type text, severity text, component text, message text, details jsonb)
- LANGUAGE plpgsql
- STABLE
- SET search_path TO 'public', 'pg_catalog', 'extensions'
-AS $function$
-declare
-  v_critical_crons text[] := array[
-    'run_fault_correlation',
-    'flush_asset_health_rescore_queue',
-    'flush_webhook_deliveries',
-    'auto_clear_stale_alarms',
-    'refresh_blast_radius_predictions'
-  ];
-  v_cron text;
-  v_last_run timestamptz;
-  v_max_age_min int;
-  v_rescore_queue_size int;
-  v_pending_webhooks int;
-  v_failing_webhooks int;
-  v_recent_critical_assets int;
-  v_recent_predictive_drafts int;
-begin
-  -- 1) Cron freshness: each critical cron should have run recently
-  foreach v_cron in array v_critical_crons loop
-    select max(start_time) into v_last_run
-    from cron.job_run_details jrd
-    join cron.job j on j.jobid = jrd.jobid
-    where j.jobname = v_cron;
-
-    -- Tolerance per job (max minutes between runs before alert)
-    v_max_age_min := case v_cron
-      when 'run_fault_correlation'                  then 5    -- 1m schedule, 5m tolerance
-      when 'flush_asset_health_rescore_queue'       then 15   -- 5m schedule
-      when 'flush_webhook_deliveries'               then 5    -- 30s schedule
-      when 'auto_clear_stale_alarms'                then 15   -- 5m schedule
-      when 'refresh_blast_radius_predictions'       then 15
-      else 60
-    end;
-
-    if v_last_run is null then
-      return query select 'cron_stale'::text, 'critical'::text,
-        ('cron:' || v_cron)::text,
-        ('Cron job ' || v_cron || ' has never run')::text,
-        jsonb_build_object('jobname', v_cron, 'last_run', null);
-    elsif v_last_run < now() - (v_max_age_min || ' minutes')::interval then
-      return query select 'cron_stale'::text, 'error'::text,
-        ('cron:' || v_cron)::text,
-        ('Cron job ' || v_cron || ' last ran ' || round(extract(epoch from now() - v_last_run)/60, 1) || ' min ago (tolerance ' || v_max_age_min || ' min)')::text,
-        jsonb_build_object(
-          'jobname', v_cron, 'last_run', v_last_run,
-          'minutes_since_last_run', round(extract(epoch from now() - v_last_run)/60, 1),
-          'tolerance_min', v_max_age_min
-        );
-    end if;
-  end loop;
-
-  -- 2) Asset health rescore queue backed up
-  select count(*) into v_rescore_queue_size from asset_health_rescore_queue;
-  if v_rescore_queue_size > 1000 then
-    return query select 'queue_backed_up'::text, 'critical'::text,
-      'queue:asset_health_rescore'::text,
-      ('Asset health rescore queue has ' || v_rescore_queue_size || ' items pending (threshold 1000)')::text,
-      jsonb_build_object('queue_size', v_rescore_queue_size, 'threshold', 1000);
-  elsif v_rescore_queue_size > 500 then
-    return query select 'queue_backed_up'::text, 'warning'::text,
-      'queue:asset_health_rescore'::text,
-      ('Asset health rescore queue has ' || v_rescore_queue_size || ' items pending')::text,
-      jsonb_build_object('queue_size', v_rescore_queue_size, 'threshold', 500);
-  end if;
-
-  -- 3) Webhook delivery failures
-  select count(*) into v_pending_webhooks
-  from api_webhook_deliveries
-  where status = 'pending' and attempt_count > 2 and created_at < now() - interval '15 minutes';
-
-  if v_pending_webhooks > 50 then
-    return query select 'webhook_delivery_failures'::text, 'error'::text,
-      'webhooks:retry_pending'::text,
-      ('Webhook delivery has ' || v_pending_webhooks || ' rows stuck in retry (threshold 50)')::text,
-      jsonb_build_object('stuck_count', v_pending_webhooks);
-  end if;
-
-  -- 4) Webhooks with 5+ consecutive failures
-  select count(*) into v_failing_webhooks
-  from api_webhooks where consecutive_failures >= 5 and status = 'active';
-
-  if v_failing_webhooks > 0 then
-    return query select 'webhook_delivery_failures'::text, 'warning'::text,
-      'webhooks:consecutive_failures'::text,
-      (v_failing_webhooks || ' webhook(s) have 5+ consecutive failures — partner endpoints may be down')::text,
-      jsonb_build_object('failing_webhook_count', v_failing_webhooks);
-  end if;
-
-  -- 5) Predictive pipeline idle: critical assets but no draft work_orders
-  select count(*) into v_recent_critical_assets
-  from asset_health_scores ahs
-  where ahs.computed_at > now() - interval '1 hour' and ahs.score < 0.10;
-
-  select count(*) into v_recent_predictive_drafts
-  from work_orders
-  where source_kind = 'predictive_maintenance'
-    and created_at > now() - interval '1 hour';
-
-  if v_recent_critical_assets > 0 and v_recent_predictive_drafts = 0 then
-    return query select 'predictive_pipeline_idle'::text, 'error'::text,
-      'pipeline:predictive_maintenance'::text,
-      ('Detected ' || v_recent_critical_assets || ' critical asset(s) in last hour but 0 predictive work orders drafted — trigger may be broken')::text,
-      jsonb_build_object('critical_assets', v_recent_critical_assets, 'drafts', v_recent_predictive_drafts);
-  end if;
-
-  -- 6) Predictive pipeline overload: too many drafts in short time → likely a cascade
-  if v_recent_predictive_drafts > 50 then
-    return query select 'predictive_pipeline_overload'::text, 'warning'::text,
-      'pipeline:predictive_maintenance'::text,
-      (v_recent_predictive_drafts || ' predictive work orders drafted in last hour — investigate for false-positive cascade')::text,
-      jsonb_build_object('drafts_last_hour', v_recent_predictive_drafts);
-  end if;
-end;
-$function$
-;
-
-CREATE OR REPLACE FUNCTION public.run_system_health_check()
- RETURNS integer
- LANGUAGE plpgsql
- SECURITY DEFINER
- SET search_path TO 'public', 'pg_temp'
-AS $function$
-declare
-  v_alert record;
-  v_count int := 0;
-  v_alert_id uuid;
-begin
-  update system_health_alerts
-  set resolved_at = now()
-  where resolved_at is null and detected_at < now() - interval '2 hours';
-
-  for v_alert in select * from check_system_health() loop
-    begin
-      insert into system_health_alerts (
-        alert_type, severity, component, message, details
-      ) values (
-        v_alert.alert_type, v_alert.severity, v_alert.component, v_alert.message, v_alert.details
-      ) returning id into v_alert_id;
-
-      perform emit_system_webhook_event(
-        'system.health_alert',
-        jsonb_build_object(
-          'alert_id', v_alert_id,
-          'alert_type', v_alert.alert_type,
-          'severity', v_alert.severity,
-          'component', v_alert.component,
-          'message', v_alert.message,
-          'details', v_alert.details
-        )
-      );
-      v_count := v_count + 1;
-    exception when unique_violation then null;
-    end;
-  end loop;
-
-  return v_count;
-end;
-$function$
-;
-
-CREATE OR REPLACE FUNCTION public.emit_system_webhook_event(p_event_type text, p_payload jsonb)
- RETURNS integer
- LANGUAGE plpgsql
- SECURITY DEFINER
- SET search_path TO 'public', 'pg_temp'
-AS $function$
-declare
-  v_webhook record;
-  v_count integer := 0;
-begin
-  for v_webhook in
-    select id from public.api_webhooks
-    where status = 'active' and p_event_type = any(event_filter)
-  loop
-    insert into public.api_webhook_deliveries (
-      webhook_id, event_type, payload, status, next_attempt_at, data_source
-    ) values (
-      v_webhook.id, p_event_type,
-      jsonb_build_object(
-        'event', p_event_type,
-        'occurred_at', now(),
-        'system_alert', p_payload
-      ),
-      'pending', now(), 'system'
-    );
-    v_count := v_count + 1;
-  end loop;
-  return v_count;
-end;
-$function$
-;
-
-CREATE OR REPLACE FUNCTION public.admin_create_api_key(p_name text, p_scopes text[], p_rate_per_minute integer DEFAULT 60, p_expires_at timestamp with time zone DEFAULT NULL::timestamp with time zone, p_customer_reference text DEFAULT NULL::text)
- RETURNS TABLE(id uuid, token text, token_prefix text)
- LANGUAGE plpgsql
- SECURITY DEFINER
- SET search_path TO 'public', 'pg_temp'
-AS $function$
-declare
-  v_token text;
-  v_token_hash text;
-  v_token_prefix text;
-  v_id uuid;
-  v_allowed_scopes text[] := array[
-    'incidents.read','incidents.write','sla.read',
-    'webhooks.manage','work_orders.read','work_orders.feedback','*'
-  ];
-  v_scope text;
-begin
-  if not is_tellinex_staff() then
-    raise exception 'NOT_AUTHORIZED: only Tellinex staff may issue API keys';
-  end if;
-  if p_name is null or length(trim(p_name)) = 0 then
-    raise exception 'INVALID_NAME: name is required';
-  end if;
-  if p_scopes is null or array_length(p_scopes, 1) is null then
-    raise exception 'INVALID_SCOPES: at least one scope required';
-  end if;
-  foreach v_scope in array p_scopes loop
-    if not (v_scope = any(v_allowed_scopes)) then
-      raise exception 'INVALID_SCOPE: % not in allowed list (%)', v_scope, array_to_string(v_allowed_scopes, ', ');
-    end if;
-  end loop;
-  if p_rate_per_minute is null or p_rate_per_minute < 1 or p_rate_per_minute > 6000 then
-    raise exception 'INVALID_RATE: rate_per_minute must be 1..6000';
-  end if;
-
-  -- Generate 32-byte random token hex-encoded with prefix
-  v_token := 'tk_' || encode(gen_random_bytes(32), 'hex');
-  v_token_hash := encode(digest(v_token, 'sha256'), 'hex');
-  v_token_prefix := substring(v_token from 1 for 12);
-
-  insert into api_keys (
-    token_hash, token_prefix, name, scopes, rate_per_minute,
-    status, expires_at, customer_reference, created_by, data_source,
-    bucket_tokens, bucket_last_refill
-  ) values (
-    v_token_hash, v_token_prefix, trim(p_name), p_scopes, p_rate_per_minute,
-    'active', p_expires_at, p_customer_reference, auth.uid(), 'admin_ui',
-    p_rate_per_minute, now()
-  ) returning api_keys.id into v_id;
-
-  return query select v_id, v_token, v_token_prefix;
-end;
-$function$
-;
-
-CREATE OR REPLACE FUNCTION public.admin_revoke_api_key(p_id uuid)
- RETURNS boolean
- LANGUAGE plpgsql
- SECURITY DEFINER
- SET search_path TO 'public', 'pg_temp'
-AS $function$
-begin
-  if not is_tellinex_staff() then
-    raise exception 'NOT_AUTHORIZED';
-  end if;
-  update api_keys set status = 'revoked' where id = p_id;
-  if not found then
-    raise exception 'NOT_FOUND: api_key %', p_id;
-  end if;
-  -- Also pause all webhooks for this key
-  update api_webhooks set status = 'paused' where api_key_id = p_id and status = 'active';
-  return true;
-end;
-$function$
-;
-
-CREATE OR REPLACE FUNCTION public.admin_reactivate_api_key(p_id uuid)
- RETURNS boolean
- LANGUAGE plpgsql
- SECURITY DEFINER
- SET search_path TO 'public', 'pg_temp'
-AS $function$
-begin
-  if not is_tellinex_staff() then
-    raise exception 'NOT_AUTHORIZED';
-  end if;
-  update api_keys set status = 'active' 
-  where id = p_id and status in ('revoked','paused');
-  if not found then
-    raise exception 'NOT_FOUND_OR_INVALID_STATE';
-  end if;
-  return true;
-end;
-$function$
-;
-
-CREATE OR REPLACE FUNCTION public.admin_set_webhook_status(p_id uuid, p_status text)
- RETURNS boolean
- LANGUAGE plpgsql
- SECURITY DEFINER
- SET search_path TO 'public', 'pg_temp'
-AS $function$
-begin
-  if not is_tellinex_staff() then
-    raise exception 'NOT_AUTHORIZED';
-  end if;
-  if p_status not in ('active','paused','revoked') then
-    raise exception 'INVALID_STATUS: must be active|paused|revoked';
-  end if;
-  update api_webhooks set status = p_status where id = p_id;
-  if not found then
-    raise exception 'NOT_FOUND';
-  end if;
-  return true;
-end;
-$function$
-;
-
-CREATE OR REPLACE FUNCTION public.admin_test_webhook(p_id uuid)
- RETURNS uuid
- LANGUAGE plpgsql
- SECURITY DEFINER
- SET search_path TO 'public', 'pg_temp'
-AS $function$
-declare
-  v_delivery_id uuid;
-begin
-  if not is_tellinex_staff() then
-    raise exception 'NOT_AUTHORIZED';
-  end if;
-  insert into api_webhook_deliveries (
-    webhook_id, event_type, payload, status, next_attempt_at, data_source
-  ) values (
-    p_id, 'webhook.test',
-    jsonb_build_object(
-      'event', 'webhook.test',
-      'occurred_at', now(),
-      'message', 'Test ping from Tellinex admin UI',
-      'triggered_by', (select email from auth.users where id = auth.uid())
-    ),
-    'pending', now(), 'admin_ui'
-  ) returning id into v_delivery_id;
-  return v_delivery_id;
-end;
-$function$
-;
-
-CREATE OR REPLACE FUNCTION public.escalate_overdue_lone_worker_checkins()
- RETURNS TABLE(escalated_count integer, marked_overdue_count integer)
- LANGUAGE plpgsql
- SECURITY DEFINER
- SET search_path TO 'public', 'pg_temp'
-AS $function$
-declare
-  v_escalated int := 0;
-  v_overdue int := 0;
-  v_row record;
-begin
-  -- 1) Mark overdue if past due
-  update lone_worker_checkins
-  set status = 'overdue'
-  where status = 'active' and next_checkin_due_at < now();
-  get diagnostics v_overdue = row_count;
-
-  -- 2) Escalate if overdue >5 min (no recovery happened)
-  for v_row in
-    select id, technician_id, technician_name, job_id, last_checkin_at,
-           latitude, longitude, emergency_contact_phone, emergency_contact_name
-    from lone_worker_checkins
-    where status = 'overdue' and next_checkin_due_at < now() - interval '5 minutes'
-      and escalated_at is null
-  loop
-    update lone_worker_checkins
-    set status = 'escalated', escalated_at = now()
-    where id = v_row.id;
-
-    -- Insert into activity_log so dispatch sees it
-    insert into activity_log (action, entity_type, entity_id, details)
-    values ('lone_worker_overdue', 'technician', v_row.id, jsonb_build_object(
-      'kind', 'lone_worker_escalation',
-      'technician_id', v_row.technician_id,
-      'technician_name', v_row.technician_name,
-      'job_id', v_row.job_id,
-      'last_checkin_at', v_row.last_checkin_at,
-      'minutes_overdue', round(extract(epoch from now() - v_row.last_checkin_at)/60),
-      'last_known_lat', v_row.latitude,
-      'last_known_lng', v_row.longitude,
-      'emergency_contact_phone', v_row.emergency_contact_phone,
-      'emergency_contact_name', v_row.emergency_contact_name
-    ));
-
-    -- Fire system webhook so external alerting (PagerDuty/Slack) catches it
-    perform emit_system_webhook_event('lone_worker.escalated', jsonb_build_object(
-      'technician_id', v_row.technician_id,
-      'technician_name', v_row.technician_name,
-      'job_id', v_row.job_id,
-      'minutes_overdue', round(extract(epoch from now() - v_row.last_checkin_at)/60),
-      'last_known_location', case 
-        when v_row.latitude is not null then jsonb_build_object('lat', v_row.latitude, 'lng', v_row.longitude)
-        else null
-      end,
-      'emergency_contact', jsonb_build_object('phone', v_row.emergency_contact_phone, 'name', v_row.emergency_contact_name)
-    ));
-
-    v_escalated := v_escalated + 1;
-  end loop;
-
-  return query select v_escalated, v_overdue;
-end;
-$function$
-;
-
-CREATE OR REPLACE FUNCTION public.validate_technician_for_job(p_technician_id text, p_job_type text)
- RETURNS TABLE(allowed boolean, reason text, required_training text[], missing_training text[], expired_training text[])
- LANGUAGE plpgsql
- STABLE
- SET search_path TO 'public', 'pg_catalog', 'extensions'
-AS $function$
-declare
-  v_required text[];
-  v_held text[];
-  v_expired text[];
-  v_missing text[];
-begin
-  -- Required mandatory training for this job type
-  select array_agg(required_training)
-    into v_required
-  from training_requirements
-  where job_type = p_job_type and mandatory = true;
-
-  if v_required is null or array_length(v_required, 1) = 0 then
-    return query select true, 'No mandatory training required for ' || p_job_type, 
-                        array[]::text[], array[]::text[], array[]::text[];
-    return;
-  end if;
-
-  -- What this tech has, valid + not expired
-  select array_agg(certification_type)
-    into v_held
-  from training_records
-  where technician_id = p_technician_id
-    and passed = true
-    and (expiry_date is null or expiry_date >= current_date);
-
-  -- What's expired (held but past expiry)
-  select array_agg(certification_type)
-    into v_expired
-  from training_records
-  where technician_id = p_technician_id
-    and passed = true
-    and expiry_date is not null and expiry_date < current_date
-    and certification_type = any(v_required);
-
-  v_held := coalesce(v_held, array[]::text[]);
-  v_expired := coalesce(v_expired, array[]::text[]);
-
-  -- Missing = required minus held
-  select array_agg(req) into v_missing
-  from unnest(v_required) as req
-  where req != all(v_held);
-
-  v_missing := coalesce(v_missing, array[]::text[]);
-
-  if array_length(v_missing, 1) is null and array_length(v_expired, 1) is null then
-    return query select true, 'All required training valid'::text,
-                        v_required, array[]::text[], array[]::text[];
-  else
-    return query select false,
-      case 
-        when array_length(v_expired, 1) > 0 and array_length(v_missing, 1) > 0 
-          then 'Missing required training and has expired certifications'
-        when array_length(v_expired, 1) > 0 
-          then 'Has expired certifications that need renewal'
-        else 'Missing required training'
-      end::text,
-      v_required, v_missing, v_expired;
-  end if;
-end;
-$function$
-;
-
-CREATE OR REPLACE FUNCTION public.tech_can_perform_work(p_technician_id uuid, p_required_certs text[])
- RETURNS boolean
- LANGUAGE sql
- STABLE
- SET search_path TO 'public', 'pg_catalog', 'extensions'
-AS $function$
-  select case
-    when p_required_certs is null or array_length(p_required_certs,1) is null then true
-    when (
-      select count(distinct cert_type) from technician_certifications
-      where technician_id = p_technician_id and status = 'valid'
-        and (expires_at is null or expires_at > current_date)
-        and cert_type = any(p_required_certs)
-    ) >= array_length(p_required_certs,1) then true
-    else false
-  end;
-$function$
-;
-
-CREATE OR REPLACE FUNCTION public.submit_lone_worker_checkin(p_technician_id uuid, p_job_id uuid DEFAULT NULL::uuid, p_latitude numeric DEFAULT NULL::numeric, p_longitude numeric DEFAULT NULL::numeric, p_battery_pct integer DEFAULT NULL::integer, p_interval_minutes integer DEFAULT 60)
- RETURNS TABLE(checkin_id uuid, next_checkin_due_at timestamp with time zone)
- LANGUAGE plpgsql
- SECURITY DEFINER
- SET search_path TO 'public', 'pg_temp'
-AS $function$
-declare 
-  v_id uuid; 
-  v_next timestamptz;
-  v_tech_name text;
-begin
-  select name into v_tech_name from technicians where id = p_technician_id;
-  
-  -- Resolve outstanding active checkins for this tech
-  update lone_worker_checkins
-  set status = 'resolved', ended_at = now()
-  where technician_id = p_technician_id and status in ('active','overdue');
-  
-  v_next := now() + (p_interval_minutes || ' minutes')::interval;
-  
-  insert into lone_worker_checkins (
-    technician_id, technician_name, job_id, status,
-    started_at, last_checkin_at, next_checkin_due_at, checkin_interval_minutes,
-    latitude, longitude, battery_pct
-  ) values (
-    p_technician_id, v_tech_name, p_job_id, 'active',
-    now(), now(), v_next, p_interval_minutes,
-    p_latitude, p_longitude, p_battery_pct
-  ) returning id into v_id;
-
-  return query select v_id, v_next;
-end;
-$function$
-;
-
-CREATE OR REPLACE FUNCTION public.record_iloq_scan_with_wo_check(p_lock_id text, p_technician_id uuid, p_action text DEFAULT 'unlock'::text, p_access_method text DEFAULT 'mobile_nfc'::text, p_latitude numeric DEFAULT NULL::numeric, p_longitude numeric DEFAULT NULL::numeric, p_dispatch_task_id uuid DEFAULT NULL::uuid)
- RETURNS TABLE(access_log_id uuid, asset_id uuid, work_order_id uuid)
- LANGUAGE plpgsql
- SECURITY DEFINER
- SET search_path TO 'public', 'pg_temp'
-AS $function$
-declare
-  v_log_id uuid;
-  v_asset_id uuid;
-  v_asset_ref text;
-  v_alarm_count int;
-  v_wo_id uuid := null;
-  v_wo_ref text;
-  v_tech_name text;
-  v_tech_email text;
-begin
-  -- Look up asset from lock
-  select asset_id, asset_ref into v_asset_id, v_asset_ref 
-  from iloq_locks where lock_id = p_lock_id;
-
-  -- Look up tech details
-  select name, email into v_tech_name, v_tech_email
-  from technicians where id = p_technician_id;
-
-  -- Record access log entry
-  insert into iloq_access_log (
-    lock_id, asset_ref, technician_id, technician_name, technician_email,
-    action, access_method, latitude, longitude, dispatch_task_id, granted_by
-  ) values (
-    p_lock_id, v_asset_ref, p_technician_id, v_tech_name, v_tech_email,
-    p_action, p_access_method, p_latitude, p_longitude, p_dispatch_task_id, 'auto'
-  ) returning id into v_log_id;
-
-  -- If asset has active (uncleared) alarms, auto-open inspection WO
-  if v_asset_id is not null then
-    select count(*) into v_alarm_count from alarms
-    where asset_id = v_asset_id and cleared_at is null;
-
-    if v_alarm_count > 0 then
-      v_wo_ref := 'TAG-' || to_char(now(),'YYYYMMDD') || '-' || substr(gen_random_uuid()::text,1,6);
-      insert into work_orders (
-        reference, title, description, source_kind, status, priority,
-        triggering_asset_id, assigned_technician, work_type, required_role, data_source
-      ) values (
-        v_wo_ref,
-        'iLOQ scan triggered work order at ' || coalesce(v_asset_ref,'asset'),
-        'Tech ' || coalesce(v_tech_name,'unknown') || ' scanned iLOQ lock ' || p_lock_id || 
-          '. Asset has ' || v_alarm_count || ' active alarm(s). Auto-opened.',
-        'iloq_scan', 'in_progress', 'normal',
-        v_asset_id, p_technician_id::text, 'inspection', 'fibre_engineer', 'fp_pro'
-      ) returning id into v_wo_id;
-    end if;
-  end if;
-
-  return query select v_log_id, v_asset_id, v_wo_id;
-end;
-$function$
-;
-
-CREATE OR REPLACE FUNCTION public.admin_create_webhook(p_api_key_id uuid, p_url text, p_event_filter text[])
- RETURNS TABLE(id uuid, signing_secret text)
- LANGUAGE plpgsql
- SECURITY DEFINER
- SET search_path TO 'public', 'pg_temp'
-AS $function$
-declare
-  v_secret text;
-  v_id uuid;
-  v_allowed_events text[] := array[
-    'incident.opened','incident.updated','incident.resolved',
-    'work_order.predictive_drafted','work_order.predictive_escalated',
-    'work_order.stale_unassigned','work_order.completed',
-    'sla_credit.applied','system.health_alert','lone_worker.overdue'
-  ];
-  v_event text;
-  v_owner_check uuid;
-begin
-  if not is_tellinex_staff() then
-    raise exception 'NOT_AUTHORIZED: only Tellinex staff may create webhooks';
-  end if;
-
-  -- Validate api_key exists and is active
-  select id into v_owner_check from api_keys 
-  where id = p_api_key_id and status = 'active';
-  if v_owner_check is null then
-    raise exception 'INVALID_API_KEY: api_key_id does not exist or is not active';
-  end if;
-
-  -- Validate URL is HTTPS
-  if p_url !~ '^https://' then
-    raise exception 'INVALID_URL: url must start with https://';
-  end if;
-
-  -- Validate events
-  if p_event_filter is null or array_length(p_event_filter, 1) is null then
-    raise exception 'INVALID_EVENTS: at least one event required';
-  end if;
-  foreach v_event in array p_event_filter loop
-    if not (v_event = any(v_allowed_events)) then
-      raise exception 'INVALID_EVENT: % not in allowed list', v_event;
-    end if;
-  end loop;
-
-  -- Generate 32-byte signing secret
-  v_secret := encode(gen_random_bytes(32), 'hex');
-
-  insert into api_webhooks (
-    api_key_id, url, event_filter, signing_secret, status, data_source
-  ) values (
-    p_api_key_id, p_url, p_event_filter, v_secret, 'active', 'admin_ui'
-  ) returning api_webhooks.id into v_id;
-
-  return query select v_id, v_secret;
-end;
-$function$
-;
-
-CREATE OR REPLACE FUNCTION public.etl_record_import(p_source_system text, p_source_table text, p_external_id text, p_payload jsonb, p_imported_by uuid DEFAULT NULL::uuid)
- RETURNS TABLE(import_id uuid, status text, idempotent_match boolean)
- LANGUAGE plpgsql
- SECURITY DEFINER
- SET search_path TO 'public', 'pg_temp'
-AS $function$
-declare
-  v_existing_id uuid;
-  v_existing_status text;
-  v_new_id uuid;
-begin
-  -- Check for prior import with same external_id
-  if p_external_id is not null then
-    select id, status into v_existing_id, v_existing_status
-    from etl_imports
-    where source_system = p_source_system 
-      and external_id = p_external_id
-      and status in ('succeeded','processing','pending')
-    order by created_at desc limit 1;
-    
-    if v_existing_id is not null then
-      return query select v_existing_id, v_existing_status, true;
-      return;
-    end if;
-  end if;
-
-  insert into etl_imports (
-    source_system, source_table, external_id, payload, imported_by
-  ) values (
-    p_source_system, p_source_table, p_external_id, p_payload, p_imported_by
-  ) returning id into v_new_id;
-
-  return query select v_new_id, 'pending'::text, false;
-end;
-$function$
-;
-
-CREATE OR REPLACE FUNCTION public.etl_complete_import(p_import_id uuid, p_status text, p_records_processed integer DEFAULT 0, p_records_failed integer DEFAULT 0, p_error_message text DEFAULT NULL::text, p_error_details jsonb DEFAULT NULL::jsonb)
- RETURNS void
- LANGUAGE plpgsql
- SECURITY DEFINER
- SET search_path TO 'public', 'pg_temp'
-AS $function$
-begin
-  if p_status not in ('succeeded','failed','rejected') then
-    raise exception 'INVALID_STATUS: must be succeeded/failed/rejected';
-  end if;
-  
-  update etl_imports
-  set status = p_status,
-      records_processed = p_records_processed,
-      records_failed = p_records_failed,
-      error_message = p_error_message,
-      error_details = p_error_details,
-      processing_completed_at = now()
-  where id = p_import_id;
-end;
-$function$
-;
-
-CREATE OR REPLACE FUNCTION public.record_form_field_value(p_form_type text, p_field_name text, p_field_value_text text DEFAULT NULL::text, p_field_value_numeric numeric DEFAULT NULL::numeric, p_technician_id text DEFAULT NULL::text, p_work_type text DEFAULT NULL::text, p_region_code text DEFAULT NULL::text, p_asset_id uuid DEFAULT NULL::uuid, p_job_id uuid DEFAULT NULL::uuid, p_is_validated boolean DEFAULT true)
- RETURNS uuid
- LANGUAGE plpgsql
- SECURITY DEFINER
- SET search_path TO 'public'
-AS $function$
-declare
-  v_id uuid;
-begin
-  insert into form_field_history(
-    form_type, field_name, field_value_text, field_value_numeric,
-    technician_id, work_type, region_code, asset_id, job_id, is_validated
-  ) values (
-    p_form_type, p_field_name, p_field_value_text, p_field_value_numeric,
-    p_technician_id, p_work_type, p_region_code, p_asset_id, p_job_id, p_is_validated
-  ) returning id into v_id;
-  return v_id;
-end;
-$function$
-;
-
-CREATE OR REPLACE FUNCTION public.get_smart_form_default(p_form_type text, p_field_name text, p_technician_id text DEFAULT NULL::text, p_work_type text DEFAULT NULL::text, p_region_code text DEFAULT NULL::text)
- RETURNS TABLE(candidate_value_text text, candidate_value_numeric numeric, confidence numeric, source text, sample_size integer)
- LANGUAGE plpgsql
- STABLE SECURITY DEFINER
- SET search_path TO 'public'
-AS $function$
-begin
-  -- Layer 1: technician + work_type
-  return query
-  with recent as (
-    select field_value_text, field_value_numeric
-    from form_field_history
-    where form_type = p_form_type
-      and field_name = p_field_name
-      and technician_id = p_technician_id
-      and (p_work_type is null or work_type = p_work_type)
-      and is_validated
-    order by recorded_at desc
-    limit 50
-  ),
-  ranked as (
-    select 
-      coalesce(field_value_text, field_value_numeric::text) as v_key,
-      field_value_text, field_value_numeric,
-      count(*)::int as freq
-    from recent
-    group by 1, field_value_text, field_value_numeric
-  ),
-  total as (select count(*) as n from recent)
-  select 
-    ranked.field_value_text,
-    ranked.field_value_numeric,
-    round(ranked.freq::numeric / nullif(total.n, 0), 3) as confidence,
-    'technician_history'::text as source,
-    total.n::int as sample_size
-  from ranked, total
-  where total.n >= 3                              -- need at least 3 samples to suggest
-  order by ranked.freq desc
-  limit 3;
-
-  if found then return; end if;
-
-  -- Layer 2: region + work_type
-  return query
-  with recent as (
-    select field_value_text, field_value_numeric
-    from form_field_history
-    where form_type = p_form_type
-      and field_name = p_field_name
-      and (p_region_code is null or region_code = p_region_code)
-      and (p_work_type is null or work_type = p_work_type)
-      and is_validated
-    order by recorded_at desc
-    limit 200
-  ),
-  ranked as (
-    select 
-      coalesce(field_value_text, field_value_numeric::text) as v_key,
-      field_value_text, field_value_numeric,
-      count(*)::int as freq
-    from recent
-    group by 1, field_value_text, field_value_numeric
-  ),
-  total as (select count(*) as n from recent)
-  select 
-    ranked.field_value_text,
-    ranked.field_value_numeric,
-    round(ranked.freq::numeric / nullif(total.n, 0), 3) as confidence,
-    'region_history'::text as source,
-    total.n::int as sample_size
-  from ranked, total
-  where total.n >= 5
-  order by ranked.freq desc
-  limit 3;
-
-  if found then return; end if;
-
-  -- Layer 3: global fallback
-  return query
-  with recent as (
-    select field_value_text, field_value_numeric
-    from form_field_history
-    where form_type = p_form_type
-      and field_name = p_field_name
-      and is_validated
-    order by recorded_at desc
-    limit 500
-  ),
-  ranked as (
-    select 
-      coalesce(field_value_text, field_value_numeric::text) as v_key,
-      field_value_text, field_value_numeric,
-      count(*)::int as freq
-    from recent
-    group by 1, field_value_text, field_value_numeric
-  ),
-  total as (select count(*) as n from recent)
-  select 
-    ranked.field_value_text,
-    ranked.field_value_numeric,
-    round(ranked.freq::numeric / nullif(total.n, 0), 3) as confidence,
-    'global_history'::text as source,
-    total.n::int as sample_size
-  from ranked, total
-  where total.n >= 10
-  order by ranked.freq desc
-  limit 3;
-end;
-$function$
-;
-
-CREATE OR REPLACE FUNCTION public.current_tenant_id()
- RETURNS uuid
- LANGUAGE sql
- STABLE SECURITY DEFINER
- SET search_path TO 'public', 'pg_catalog'
-AS $function$
-  select coalesce(
-    (current_setting('app.current_tenant_id', true))::uuid,
-    '00000000-0000-0000-0000-000000000001'::uuid
-  );
-$function$
-;
-
-CREATE OR REPLACE FUNCTION public.set_tenant_context(p_tenant_id uuid)
- RETURNS void
- LANGUAGE plpgsql
- SECURITY DEFINER
- SET search_path TO 'public', 'pg_catalog'
-AS $function$
-begin
-  if not exists (select 1 from tenants where id=p_tenant_id and status='active') then
-    raise exception 'Tenant % not found or inactive', p_tenant_id;
-  end if;
-  perform set_config('app.current_tenant_id', p_tenant_id::text, false);
-end;
-$function$
-;
-
-CREATE OR REPLACE FUNCTION public.is_tenant_member(p_tenant_id uuid, p_user_email text DEFAULT NULL::text)
- RETURNS boolean
- LANGUAGE sql
- STABLE SECURITY DEFINER
- SET search_path TO 'public', 'pg_catalog'
-AS $function$
-  select case
-    when p_user_email is not null and p_user_email like '%@tellinex.com' then true
-    when exists(
-      select 1 from profiles 
-      where tenant_id = p_tenant_id 
-        and email = coalesce(p_user_email, (auth.jwt()->>'email'))
-    ) then true
-    else false
-  end;
-$function$
-;
-
-CREATE OR REPLACE FUNCTION public.submit_digital_acceptance(p_work_order_id uuid, p_technician_email text, p_technician_name text, p_contractor_company text, p_terms_version text, p_terms_accepted boolean, p_signature_image_url text, p_signature_hash_sha256 text, p_gps_lat double precision DEFAULT NULL::double precision, p_gps_lng double precision DEFAULT NULL::double precision, p_gps_accuracy_m double precision DEFAULT NULL::double precision, p_device_id text DEFAULT NULL::text, p_device_model text DEFAULT NULL::text, p_app_version text DEFAULT NULL::text, p_ip_address text DEFAULT NULL::text, p_declared_metres double precision DEFAULT NULL::double precision, p_lidar_scan_ref text DEFAULT NULL::text, p_photo_evidence_count integer DEFAULT 0, p_evidence_seal_hash text DEFAULT NULL::text, p_payment_approval_id uuid DEFAULT NULL::uuid)
- RETURNS uuid
- LANGUAGE plpgsql
- SECURITY DEFINER
- SET search_path TO 'public', 'pg_catalog'
-AS $function$
-declare
-  v_id uuid;
-  v_tenant uuid;
-begin
-  if not p_terms_accepted then
-    raise exception 'Terms must be accepted to submit digital acceptance';
-  end if;
-  if length(coalesce(p_signature_hash_sha256,'')) <> 64 then
-    raise exception 'signature_hash_sha256 must be 64-char SHA-256';
-  end if;
-
-  select tenant_id into v_tenant from work_orders where id=p_work_order_id;
-  v_tenant := coalesce(v_tenant, '00000000-0000-0000-0000-000000000001'::uuid);
-
-  insert into digital_acceptances (
-    work_order_id, payment_approval_id, technician_email, technician_name, contractor_company,
-    terms_version, terms_accepted, terms_accepted_at,
-    signature_image_url, signature_hash_sha256,
-    gps_lat, gps_lng, gps_accuracy_m,
-    device_id, device_model, app_version, ip_address,
-    declared_metres, lidar_scan_ref, photo_evidence_count, evidence_seal_hash,
-    status, tenant_id, data_source
-  ) values (
-    p_work_order_id, p_payment_approval_id, p_technician_email, p_technician_name, p_contractor_company,
-    p_terms_version, p_terms_accepted, now(),
-    p_signature_image_url, p_signature_hash_sha256,
-    p_gps_lat, p_gps_lng, p_gps_accuracy_m,
-    p_device_id, p_device_model, p_app_version, p_ip_address,
-    p_declared_metres, p_lidar_scan_ref, p_photo_evidence_count, p_evidence_seal_hash,
-    'submitted', v_tenant, 'real'
-  ) returning id into v_id;
-
-  insert into system_events (platform, event_type, severity, message, details, app_version)
-  values ('fieldpack-pro', 'digital_acceptance_submitted', 'info',
-    format('Digital acceptance %s submitted for WO %s', v_id, p_work_order_id),
-    jsonb_build_object('acceptance_id', v_id, 'work_order_id', p_work_order_id, 'declared_metres', p_declared_metres, 'tenant_id', v_tenant),
-    p_app_version);
-
-  return v_id;
-end;
-$function$
-;
-
-CREATE OR REPLACE FUNCTION public.submit_customer_signoff(p_work_order_id uuid, p_customer_name text, p_signoff_type text DEFAULT 'install_completion'::text, p_signature_image_url text DEFAULT NULL::text, p_signature_hash_sha256 text DEFAULT NULL::text, p_satisfaction_rating integer DEFAULT NULL::integer, p_comments text DEFAULT NULL::text, p_customer_id uuid DEFAULT NULL::uuid, p_customer_install_id uuid DEFAULT NULL::uuid, p_customer_email text DEFAULT NULL::text, p_customer_phone text DEFAULT NULL::text, p_gps_lat double precision DEFAULT NULL::double precision, p_gps_lng double precision DEFAULT NULL::double precision, p_terms_version text DEFAULT 'v1'::text, p_device_model text DEFAULT NULL::text, p_app_version text DEFAULT NULL::text)
- RETURNS uuid
- LANGUAGE plpgsql
- SECURITY DEFINER
- SET search_path TO 'public', 'pg_catalog'
-AS $function$
-declare
-  v_id uuid;
-  v_tenant uuid;
-begin
-  if length(coalesce(p_customer_name,'')) < 2 then
-    raise exception 'customer_name required';
-  end if;
-  if p_signature_hash_sha256 is not null and length(p_signature_hash_sha256) <> 64 then
-    raise exception 'signature_hash_sha256 must be 64-char SHA-256';
-  end if;
-
-  select tenant_id into v_tenant from work_orders where id=p_work_order_id;
-  v_tenant := coalesce(v_tenant, '00000000-0000-0000-0000-000000000001'::uuid);
-
-  insert into customer_signoffs (
-    work_order_id, customer_id, customer_install_id, customer_name, customer_email, customer_phone,
-    signoff_type, satisfaction_rating, comments,
-    signature_image_url, signature_hash_sha256,
-    gps_lat, gps_lng,
-    device_model, app_version,
-    terms_version, terms_accepted, terms_accepted_at,
-    status, tenant_id, data_source
-  ) values (
-    p_work_order_id, p_customer_id, p_customer_install_id, p_customer_name, p_customer_email, p_customer_phone,
-    p_signoff_type, p_satisfaction_rating, p_comments,
-    p_signature_image_url, p_signature_hash_sha256,
-    p_gps_lat, p_gps_lng,
-    p_device_model, p_app_version,
-    p_terms_version, true, now(),
-    'submitted', v_tenant, 'real'
-  ) returning id into v_id;
-
-  insert into system_events (platform, event_type, severity, message, details, app_version)
-  values ('my-tellinex', 'customer_signoff_submitted', 'info',
-    format('Customer signoff %s submitted for WO %s', v_id, p_work_order_id),
-    jsonb_build_object('signoff_id', v_id, 'work_order_id', p_work_order_id, 'signoff_type', p_signoff_type, 'rating', p_satisfaction_rating, 'tenant_id', v_tenant),
-    p_app_version);
-
-  return v_id;
-end;
-$function$
-;
-
-CREATE OR REPLACE FUNCTION public.verify_digital_acceptance(p_acceptance_id uuid)
- RETURNS TABLE(acceptance_id uuid, is_valid boolean, reason text, work_order_id uuid, signed_at timestamp with time zone, signed_by text)
- LANGUAGE sql
- STABLE SECURITY DEFINER
- SET search_path TO 'public', 'pg_catalog'
-AS $function$
-  select 
-    da.id,
-    case
-      when da.terms_accepted is not true then false
-      when da.signature_hash_sha256 is null or length(da.signature_hash_sha256) <> 64 then false
-      when da.status not in ('submitted','verified') then false
-      else true
-    end as is_valid,
-    case
-      when da.terms_accepted is not true then 'Terms not accepted'
-      when da.signature_hash_sha256 is null then 'No signature hash'
-      when length(da.signature_hash_sha256) <> 64 then 'Invalid signature hash length'
-      when da.status not in ('submitted','verified') then 'Status: ' || da.status
-      else 'Valid'
-    end as reason,
-    da.work_order_id,
-    da.terms_accepted_at,
-    da.technician_email
-  from digital_acceptances da
-  where da.id = p_acceptance_id;
 $function$
 ;
 
@@ -15024,937 +15945,7 @@ AS $function$
 $function$
 ;
 
-CREATE OR REPLACE FUNCTION public.tcc_system_summary()
- RETURNS jsonb
- LANGUAGE sql
- STABLE SECURITY DEFINER
- SET search_path TO 'public', 'pg_catalog'
-AS $function$
-  select jsonb_build_object(
-    'cron_total', (select count(*) from cron.job),
-    'cron_active', (select count(*) from cron.job where active),
-    'cron_failing', (select count(*) from v_cron_heartbeat where health in ('failing','last_failed','stale')),
-    'health_alerts_active', (select count(*) from system_health_alerts where resolved_at is null),
-    'webhook_failed_24h', (select count(*) from api_webhook_deliveries where created_at > now()-interval '24 hours' and status='permanent_failure'),
-    'webhook_pending', (select count(*) from api_webhook_deliveries where status in ('pending','retrying')),
-    'work_orders_open', (select count(*) from work_orders where status not in ('completed','cancelled','closed')),
-    'alarms_active', (select count(*) from alarms where cleared_at is null),
-    'predictions_pending', (select count(*) from work_orders where status='predictive_drafted'),
-    'tenants_active', (select count(*) from tenants where status='active'),
-    'events_24h', (select count(*) from system_events where created_at > now()-interval '24 hours'),
-    'audit_changes_24h', (select count(*) from audit_log where occurred_at > now()-interval '24 hours'),
-    'last_health_check', (select max(detected_at) from system_health_alerts),
-    'as_of', now()
-  );
-$function$
-;
-
-CREATE OR REPLACE FUNCTION public.get_translations(p_locale text DEFAULT 'en'::text, p_namespaces text[] DEFAULT NULL::text[])
- RETURNS jsonb
- LANGUAGE sql
- STABLE SECURITY DEFINER
- SET search_path TO 'public', 'pg_catalog'
-AS $function$
-  with prefer as (
-    select 
-      namespace || '.' || key as full_key,
-      coalesce(
-        (select value from i18n_translations t2 where t2.namespace=t.namespace and t2.key=t.key and t2.locale=p_locale),
-        (select value from i18n_translations t3 where t3.namespace=t.namespace and t3.key=t.key and t3.locale='en')
-      ) as value
-    from i18n_translations t
-    where t.locale='en'
-      and (p_namespaces is null or t.namespace = any(p_namespaces))
-    group by t.namespace, t.key
-  )
-  select coalesce(jsonb_object_agg(full_key, value), '{}'::jsonb)
-  from prefer
-  where value is not null;
-$function$
-;
-
-CREATE OR REPLACE FUNCTION public.get_form_suggestions(p_form_name text, p_technician_id uuid DEFAULT NULL::uuid, p_asset_type text DEFAULT NULL::text, p_job_type text DEFAULT NULL::text, p_top_n integer DEFAULT 1)
- RETURNS TABLE(field_name text, suggested_value text, confidence double precision, use_count integer, last_used_at timestamp with time zone, source text)
- LANGUAGE sql
- STABLE SECURITY DEFINER
- SET search_path TO 'public', 'pg_catalog'
-AS $function$
-  with ranked as (
-    select 
-      d.field_name,
-      d.field_value,
-      d.confidence,
-      d.use_count,
-      d.last_used_at,
-      case
-        when d.technician_id = p_technician_id and d.asset_type = p_asset_type and d.job_type = p_job_type then 'exact_match'
-        when d.technician_id = p_technician_id and d.asset_type = p_asset_type then 'tech_asset_match'
-        when d.technician_id = p_technician_id then 'tech_match'
-        when d.asset_type = p_asset_type and d.job_type = p_job_type then 'context_match'
-        else 'global'
-      end as match_source,
-      row_number() over (
-        partition by d.field_name
-        order by 
-          case
-            when d.technician_id = p_technician_id and d.asset_type = p_asset_type and d.job_type = p_job_type then 1
-            when d.technician_id = p_technician_id and d.asset_type = p_asset_type then 2
-            when d.technician_id = p_technician_id then 3
-            when d.asset_type = p_asset_type and d.job_type = p_job_type then 4
-            else 5
-          end,
-          d.confidence desc,
-          d.use_count desc,
-          d.last_used_at desc
-      ) as rn
-    from form_field_defaults d
-    where d.form_name = p_form_name
-      and (d.technician_id is null or d.technician_id = p_technician_id)
-      and (d.asset_type is null or d.asset_type = p_asset_type)
-      and (d.job_type is null or d.job_type = p_job_type)
-      and d.confidence > 0.3
-  )
-  select field_name, field_value, confidence, use_count, last_used_at, match_source
-  from ranked
-  where rn <= p_top_n
-  order by field_name;
-$function$
-;
-
-CREATE OR REPLACE FUNCTION public.record_form_submission(p_form_name text, p_field_values jsonb, p_technician_id uuid DEFAULT NULL::uuid, p_asset_type text DEFAULT NULL::text, p_job_type text DEFAULT NULL::text, p_contractor_company text DEFAULT NULL::text, p_region text DEFAULT NULL::text)
- RETURNS integer
- LANGUAGE plpgsql
- SECURITY DEFINER
- SET search_path TO 'public', 'pg_catalog'
-AS $function$
-declare
-  v_field record;
-  v_count int := 0;
-  v_tenant uuid;
-begin
-  select tenant_id into v_tenant from technicians where id=p_technician_id;
-  v_tenant := coalesce(v_tenant, '00000000-0000-0000-0000-000000000001'::uuid);
-  
-  for v_field in select * from jsonb_each_text(p_field_values) loop
-    if v_field.value is not null and v_field.value <> '' then
-      insert into form_field_defaults (
-        form_name, field_name, field_value,
-        technician_id, asset_type, job_type, contractor_company, region,
-        use_count, confidence, learned_from, tenant_id, last_used_at
-      )
-      values (
-        p_form_name, v_field.key, v_field.value,
-        p_technician_id, p_asset_type, p_job_type, p_contractor_company, p_region,
-        1, 0.5, 'observation', v_tenant, now()
-      )
-      on conflict (form_name, field_name, field_value, technician_id, asset_type, job_type)
-      do update set
-        use_count = form_field_defaults.use_count + 1,
-        last_used_at = now(),
-        confidence = least(1.0, form_field_defaults.confidence + 0.1),
-        updated_at = now();
-      v_count := v_count + 1;
-    end if;
-  end loop;
-  
-  return v_count;
-end;
-$function$
-;
-
-CREATE OR REPLACE FUNCTION public.submit_rtk_fix(p_technician_id uuid, p_latitude double precision, p_longitude double precision, p_horizontal_accuracy_m double precision, p_fix_type text, p_measurement_purpose text DEFAULT 'custom'::text, p_altitude_m double precision DEFAULT NULL::double precision, p_vertical_accuracy_m double precision DEFAULT NULL::double precision, p_satellite_count integer DEFAULT NULL::integer, p_hdop double precision DEFAULT NULL::double precision, p_age_of_corrections_s double precision DEFAULT NULL::double precision, p_receiver_model text DEFAULT NULL::text, p_receiver_serial text DEFAULT NULL::text, p_device_id text DEFAULT NULL::text, p_work_order_id uuid DEFAULT NULL::uuid, p_asset_id uuid DEFAULT NULL::uuid, p_notes text DEFAULT NULL::text)
- RETURNS TABLE(fix_id uuid, meets_requirement boolean, required_accuracy_m double precision, actual_accuracy_m double precision, required_fix_types text[], actual_fix_type text, reason text)
- LANGUAGE plpgsql
- SECURITY DEFINER
- SET search_path TO 'public', 'pg_catalog'
-AS $function$
-declare
-  v_id uuid;
-  v_req rtk_accuracy_requirements%rowtype;
-  v_meets boolean;
-  v_reason text;
-  v_tenant uuid;
-begin
-  select * into v_req from rtk_accuracy_requirements
-  where measurement_purpose = coalesce(p_measurement_purpose,'custom');
-  if not found then
-    select * into v_req from rtk_accuracy_requirements where measurement_purpose='custom';
-  end if;
-
-  if p_horizontal_accuracy_m > v_req.max_horizontal_accuracy_m then
-    v_meets := false;
-    v_reason := format('Horizontal accuracy %sm exceeds requirement %sm',
-                       round(p_horizontal_accuracy_m::numeric, 3), 
-                       round(v_req.max_horizontal_accuracy_m::numeric, 3));
-  elsif not (p_fix_type = any(v_req.required_fix_types)) then
-    v_meets := false;
-    v_reason := format('Fix type "%s" not in required types: %s',
-                       p_fix_type, array_to_string(v_req.required_fix_types, ', '));
-  else
-    v_meets := true;
-    v_reason := 'Meets requirements';
-  end if;
-
-  select tenant_id into v_tenant from technicians where id=p_technician_id;
-  v_tenant := coalesce(v_tenant, '00000000-0000-0000-0000-000000000001'::uuid);
-
-  insert into rtk_position_fixes (
-    technician_id, device_id, receiver_model, receiver_serial,
-    latitude, longitude, altitude_m,
-    horizontal_accuracy_m, vertical_accuracy_m,
-    fix_type, satellite_count, hdop, age_of_corrections_s,
-    work_order_id, asset_id, measurement_purpose, notes,
-    tenant_id
-  ) values (
-    p_technician_id, p_device_id, p_receiver_model, p_receiver_serial,
-    p_latitude, p_longitude, p_altitude_m,
-    p_horizontal_accuracy_m, p_vertical_accuracy_m,
-    p_fix_type, p_satellite_count, p_hdop, p_age_of_corrections_s,
-    p_work_order_id, p_asset_id, p_measurement_purpose, p_notes,
-    v_tenant
-  ) returning id into v_id;
-
-  insert into system_events (platform, event_type, severity, message, details)
-  values (
-    'fieldpack-pro', 'rtk_fix_captured',
-    case when v_meets then 'info' else 'warn' end,
-    format('RTK fix %s for purpose %s: %s', v_id, p_measurement_purpose, v_reason),
-    jsonb_build_object(
-      'fix_id', v_id, 'work_order_id', p_work_order_id, 'tenant_id', v_tenant,
-      'fix_type', p_fix_type, 'accuracy_m', p_horizontal_accuracy_m,
-      'meets_requirement', v_meets
-    )
-  );
-
-  return query select v_id, v_meets, v_req.max_horizontal_accuracy_m, p_horizontal_accuracy_m,
-                      v_req.required_fix_types, p_fix_type, v_reason;
-end;
-$function$
-;
-
-CREATE OR REPLACE FUNCTION public.transition_procurement_status(p_order_ref text, p_to_status text, p_actor_email text, p_note text DEFAULT NULL::text, p_quoted_total numeric DEFAULT NULL::numeric, p_actual_total numeric DEFAULT NULL::numeric, p_invoice_number text DEFAULT NULL::text, p_tracking_number text DEFAULT NULL::text)
- RETURNS jsonb
- LANGUAGE plpgsql
- SECURITY DEFINER
- SET search_path TO 'public', 'pg_catalog'
-AS $function$
-declare
-  v_order procurement_orders%rowtype;
-  v_old_status text;
-  v_valid_transitions text[] := array['planned','quoting','approved','ordered','shipped','received','partial','rejected','cancelled','in_service'];
-begin
-  select * into v_order from procurement_orders where order_ref=p_order_ref;
-  if not found then raise exception 'Order % not found', p_order_ref; end if;
-
-  if not (p_to_status = any(v_valid_transitions)) then
-    raise exception 'Invalid status %. Valid: %', p_to_status, array_to_string(v_valid_transitions, ', ');
-  end if;
-
-  v_old_status := v_order.status;
-
-  update procurement_orders set
-    status = p_to_status,
-    quoted_total = coalesce(p_quoted_total, quoted_total),
-    actual_total = coalesce(p_actual_total, actual_total),
-    invoice_number = coalesce(p_invoice_number, invoice_number),
-    tracking_number = coalesce(p_tracking_number, tracking_number),
-    quote_received_at = case when p_to_status='quoting' and quote_received_at is null then now() else quote_received_at end,
-    approved_at = case when p_to_status='approved' and approved_at is null then now() else approved_at end,
-    approved_by_email = case when p_to_status='approved' and approved_by_email is null then p_actor_email else approved_by_email end,
-    ordered_at = case when p_to_status='ordered' and ordered_at is null then now() else ordered_at end,
-    shipped_at = case when p_to_status='shipped' and shipped_at is null then now() else shipped_at end,
-    received_at = case when p_to_status in ('received','partial') and received_at is null then now() else received_at end,
-    in_service_at = case when p_to_status='in_service' and in_service_at is null then now() else in_service_at end,
-    updated_at = now()
-  where order_ref = p_order_ref;
-
-  insert into system_events (platform, event_type, severity, message, details)
-  values ('tcc', 'procurement_status_change', 'info',
-    format('PO %s: %s → %s by %s', p_order_ref, v_old_status, p_to_status, p_actor_email),
-    jsonb_build_object(
-      'order_ref', p_order_ref, 'from_status', v_old_status, 'to_status', p_to_status,
-      'actor', p_actor_email, 'note', p_note,
-      'quoted_total', p_quoted_total, 'actual_total', p_actual_total
-    ));
-
-  return jsonb_build_object('order_ref', p_order_ref, 'from_status', v_old_status, 'to_status', p_to_status, 'transitioned_at', now());
-end;
-$function$
-;
-
-CREATE OR REPLACE FUNCTION public.log_procurement_communication(p_order_ref text, p_direction text, p_channel text, p_subject text DEFAULT NULL::text, p_recipient_email text DEFAULT NULL::text, p_sender_email text DEFAULT 'rui@tellinex.com'::text, p_body text DEFAULT NULL::text, p_status text DEFAULT 'drafted'::text, p_quoted_amount numeric DEFAULT NULL::numeric, p_quoted_lead_time_days integer DEFAULT NULL::integer, p_response_required boolean DEFAULT false, p_response_due_by date DEFAULT NULL::date)
- RETURNS uuid
- LANGUAGE plpgsql
- SECURITY DEFINER
- SET search_path TO 'public', 'pg_catalog'
-AS $function$
-declare
-  v_order_id uuid;
-  v_comm_id uuid;
-begin
-  select id into v_order_id from procurement_orders where order_ref = p_order_ref;
-  if v_order_id is null then
-    raise exception 'PO % not found', p_order_ref;
-  end if;
-
-  insert into procurement_communications (
-    order_id, direction, channel, subject, recipient_email, sender_email, body,
-    status, sent_at, received_at, response_required, response_due_by,
-    quoted_amount, quoted_lead_time_days, created_by_email
-  ) values (
-    v_order_id, p_direction, p_channel, p_subject, p_recipient_email, p_sender_email, p_body,
-    p_status,
-    case when p_direction='outbound' and p_status in ('sent','delivered','opened') then now() else null end,
-    case when p_direction='inbound' then now() else null end,
-    p_response_required, p_response_due_by,
-    p_quoted_amount, p_quoted_lead_time_days,
-    p_sender_email
-  ) returning id into v_comm_id;
-
-  -- Auto-advance PO from planned → quoting on first outbound email
-  if p_direction = 'outbound' and p_status in ('sent','delivered') then
-    update procurement_orders 
-    set status = 'quoting', updated_at = now()
-    where id = v_order_id and status = 'planned';
-  end if;
-
-  -- Auto-update quoted_total on inbound quote
-  if p_direction = 'inbound' and p_quoted_amount is not null then
-    update procurement_orders 
-    set quoted_total = p_quoted_amount, quote_received_at = now(), updated_at = now()
-    where id = v_order_id;
-  end if;
-
-  insert into system_events (platform, event_type, severity, message, details)
-  values ('tcc', 'procurement_communication', 'info',
-    format('PO %s: %s %s — %s', p_order_ref, p_direction, p_channel, coalesce(p_subject, p_status)),
-    jsonb_build_object('order_ref', p_order_ref, 'communication_id', v_comm_id, 'direction', p_direction, 'status', p_status));
-
-  return v_comm_id;
-end;
-$function$
-;
-
-CREATE OR REPLACE FUNCTION public.get_assets_within_radius(p_lat double precision, p_lng double precision, p_radius_m double precision DEFAULT 100, p_asset_types text[] DEFAULT NULL::text[], p_include_planned boolean DEFAULT true)
- RETURNS TABLE(asset_id uuid, asset_type text, asset_ref text, status text, latitude double precision, longitude double precision, elevation_m numeric, depth_m numeric, fibre_count integer, cable_type text, hexatronic_model text, geometry_3d jsonb, health_score integer, parent_asset_id uuid, distance_m double precision, last_rtk_accuracy_m double precision, has_active_alarm boolean, metadata jsonb)
- LANGUAGE sql
- STABLE SECURITY DEFINER
- SET search_path TO 'public', 'pg_catalog'
-AS $function$
-  select 
-    na.id,
-    na.asset_type,
-    na.asset_ref,
-    na.status,
-    na.latitude,
-    na.longitude,
-    na.elevation_m,
-    coalesce(na.depth_m, 0.6),  -- default slot-cut depth if not specified
-    na.fibre_count,
-    na.cable_type,
-    na.hexatronic_model,
-    na.geometry_3d,
-    na.health_score,
-    na.parent_asset_id,
-    st_distance(
-      na.geog,
-      st_setsrid(st_makepoint(p_lng, p_lat), 4326)::geography
-    ) as distance_m,
-    (select horizontal_accuracy_m from rtk_position_fixes 
-     where asset_id = na.id 
-     order by captured_at desc limit 1),
-    exists(
-      select 1 from alarms a 
-      where a.asset_id = na.id 
-        and a.cleared_at is null
-    ) as has_active_alarm,
-    jsonb_build_object(
-      'installed_by', na.installed_by,
-      'installed_date', na.installed_date,
-      'last_inspected', na.last_inspected,
-      'inspection_status', na.inspection_status,
-      'splice_count', na.splice_count,
-      'joint_type', na.joint_type,
-      'address', coalesce(na.property_address, na.address),
-      'customer_reference', na.customer_reference,
-      'iloq_tag_id', na.iloq_tag_id,
-      'photo_url', na.photo_url,
-      'twin_last_rendered_at', na.twin_last_rendered_at
-    ) as metadata
-  from network_assets na
-  where na.geog is not null
-    and st_dwithin(
-      na.geog,
-      st_setsrid(st_makepoint(p_lng, p_lat), 4326)::geography,
-      p_radius_m
-    )
-    and (p_asset_types is null or na.asset_type = any(p_asset_types))
-    and (
-      (p_include_planned and na.status in ('active','planned','in_service'))
-      or (not p_include_planned and na.status in ('active','in_service'))
-    )
-  order by distance_m;
-$function$
-;
-
-CREATE OR REPLACE FUNCTION public.get_gpr_traces_within_radius(p_lat double precision, p_lng double precision, p_radius_m double precision DEFAULT 100, p_min_confidence double precision DEFAULT 0.3)
- RETURNS TABLE(trace_id uuid, device_model text, utility_type_guess text, estimated_depth_m double precision, detection_confidence double precision, geometry_geojson jsonb, captured_at timestamp with time zone, notes text, distance_m double precision)
- LANGUAGE sql
- STABLE SECURITY DEFINER
- SET search_path TO 'public', 'pg_catalog'
-AS $function$
-  select 
-    g.id,
-    g.device_model,
-    g.utility_type_guess,
-    g.estimated_depth_m,
-    g.detection_confidence,
-    g.geometry_geojson,
-    g.captured_at,
-    g.notes,
-    st_distance(
-      g.geog,
-      st_setsrid(st_makepoint(p_lng, p_lat), 4326)::geography
-    ) as distance_m
-  from gpr_survey_traces g
-  where g.geog is not null
-    and st_dwithin(
-      g.geog,
-      st_setsrid(st_makepoint(p_lng, p_lat), 4326)::geography,
-      p_radius_m
-    )
-    and coalesce(g.detection_confidence, 1.0) >= p_min_confidence
-  order by distance_m, g.captured_at desc;
-$function$
-;
-
-CREATE OR REPLACE FUNCTION public.submit_gpr_trace(p_device_model text, p_geometry_geojson jsonb, p_captured_at timestamp with time zone DEFAULT now(), p_estimated_depth_m double precision DEFAULT NULL::double precision, p_detection_confidence double precision DEFAULT NULL::double precision, p_utility_type_guess text DEFAULT NULL::text, p_job_site_id uuid DEFAULT NULL::uuid, p_related_work_order_id uuid DEFAULT NULL::uuid, p_captured_by_email text DEFAULT NULL::text, p_device_serial text DEFAULT NULL::text, p_notes text DEFAULT NULL::text, p_rtk_accuracy_m double precision DEFAULT NULL::double precision, p_raw_data_url text DEFAULT NULL::text, p_survey_id uuid DEFAULT NULL::uuid)
- RETURNS uuid
- LANGUAGE plpgsql
- SECURITY DEFINER
- SET search_path TO 'public', 'pg_catalog'
-AS $function$
-declare
-  v_id uuid;
-  v_geog geography;
-  v_tenant uuid;
-begin
-  -- Validate geometry
-  begin
-    v_geog := st_geogfromgeojson(p_geometry_geojson::text);
-  exception when others then
-    raise exception 'Invalid geometry: %', sqlerrm;
-  end;
-
-  if st_geometrytype(v_geog::geometry) <> 'ST_LineString' then
-    raise exception 'GPR trace must be a LineString, got %', st_geometrytype(v_geog::geometry);
-  end if;
-
-  -- Tenant scope
-  select tenant_id into v_tenant from work_orders where id=p_related_work_order_id;
-  v_tenant := coalesce(v_tenant, '00000000-0000-0000-0000-000000000001'::uuid);
-
-  insert into gpr_survey_traces (
-    survey_id, device_model, device_serial,
-    geog, geometry_geojson,
-    estimated_depth_m, detection_confidence, utility_type_guess,
-    job_site_id, related_work_order_id, notes, raw_data_url,
-    captured_at, captured_by_email, rtk_accuracy_m,
-    tenant_id
-  ) values (
-    p_survey_id, p_device_model, p_device_serial,
-    v_geog, p_geometry_geojson,
-    p_estimated_depth_m, p_detection_confidence, p_utility_type_guess,
-    p_job_site_id, p_related_work_order_id, p_notes, p_raw_data_url,
-    p_captured_at, p_captured_by_email, p_rtk_accuracy_m,
-    v_tenant
-  ) returning id into v_id;
-
-  insert into system_events (platform, event_type, severity, message, details)
-  values ('fieldpack-pro', 'gpr_trace_captured', 'info',
-    format('GPR trace %s captured by %s (%s)', v_id, p_device_model, coalesce(p_utility_type_guess, 'unknown')),
-    jsonb_build_object('trace_id', v_id, 'device', p_device_model, 'depth_m', p_estimated_depth_m, 'tenant_id', v_tenant));
-
-  return v_id;
-end;
-$function$
-;
-
-CREATE OR REPLACE FUNCTION public.save_ar_calibration(p_reference_points jsonb, p_transform_matrix jsonb, p_technician_email text, p_technician_id uuid DEFAULT NULL::uuid, p_job_site_id uuid DEFAULT NULL::uuid, p_job_id uuid DEFAULT NULL::uuid, p_device_id text DEFAULT NULL::text, p_ios_version text DEFAULT NULL::text, p_arkit_version text DEFAULT NULL::text, p_expires_in_hours integer DEFAULT 24)
- RETURNS uuid
- LANGUAGE plpgsql
- SECURITY DEFINER
- SET search_path TO 'public', 'pg_catalog'
-AS $function$
-declare
-  v_id uuid;
-  v_tenant uuid;
-  v_avg_acc double precision;
-  v_worst_acc double precision;
-  v_count int;
-begin
-  -- Validate reference points
-  v_count := jsonb_array_length(p_reference_points);
-  if v_count < 3 then
-    raise exception 'Need at least 3 reference points for AR calibration, got %', v_count;
-  end if;
-
-  -- Compute accuracy stats
-  select 
-    avg((rp->>'rtk_accuracy_m')::double precision),
-    max((rp->>'rtk_accuracy_m')::double precision)
-  into v_avg_acc, v_worst_acc
-  from jsonb_array_elements(p_reference_points) rp
-  where rp ? 'rtk_accuracy_m';
-
-  if v_avg_acc is null or v_avg_acc > 0.05 then
-    raise exception 'Average RTK accuracy %sm exceeds 5cm threshold for AR calibration', round(coalesce(v_avg_acc, 999)::numeric, 4);
-  end if;
-
-  -- Tenant scope
-  select tenant_id into v_tenant from technicians where id=p_technician_id;
-  v_tenant := coalesce(v_tenant, '00000000-0000-0000-0000-000000000001'::uuid);
-
-  insert into ar_calibration_anchors (
-    job_site_id, job_id, technician_id, technician_email,
-    reference_point_count, reference_points, transform_matrix,
-    rtk_accuracy_avg_m, rtk_accuracy_worst_m,
-    device_id, ios_version, arkit_version,
-    expires_at, tenant_id
-  ) values (
-    p_job_site_id, p_job_id, p_technician_id, p_technician_email,
-    v_count, p_reference_points, p_transform_matrix,
-    v_avg_acc, v_worst_acc,
-    p_device_id, p_ios_version, p_arkit_version,
-    now() + (p_expires_in_hours || ' hours')::interval, v_tenant
-  ) returning id into v_id;
-
-  insert into system_events (platform, event_type, severity, message, details)
-  values ('fieldpack-pro', 'ar_calibration_saved', 'info',
-    format('AR calibration %s by %s (avg %scm)', v_id, p_technician_email, round((v_avg_acc * 100)::numeric, 1)),
-    jsonb_build_object('calibration_id', v_id, 'avg_accuracy_m', v_avg_acc, 'worst_accuracy_m', v_worst_acc, 'tenant_id', v_tenant));
-
-  return v_id;
-end;
-$function$
-;
-
-CREATE OR REPLACE FUNCTION public.tenant_descendants(p_tenant_id uuid)
- RETURNS TABLE(tenant_id uuid, depth integer)
- LANGUAGE sql
- STABLE SECURITY DEFINER
- SET search_path TO 'public', 'pg_catalog'
-AS $function$
-  with recursive tree as (
-    select id as tenant_id, 0 as depth from tenants where id = p_tenant_id
-    union all
-    select t.id, tree.depth + 1
-    from tenants t
-    inner join tree on t.parent_tenant_id = tree.tenant_id
-    where tree.depth < 10  -- safety: max 10 levels deep
-  )
-  select tenant_id, depth from tree;
-$function$
-;
-
-CREATE OR REPLACE FUNCTION public.tenant_ancestors(p_tenant_id uuid)
- RETURNS TABLE(tenant_id uuid, depth integer)
- LANGUAGE sql
- STABLE SECURITY DEFINER
- SET search_path TO 'public', 'pg_catalog'
-AS $function$
-  with recursive tree as (
-    select id as tenant_id, parent_tenant_id, 0 as depth 
-    from tenants where id = p_tenant_id
-    union all
-    select t.id, t.parent_tenant_id, tree.depth + 1
-    from tenants t
-    inner join tree on tree.parent_tenant_id = t.id
-    where tree.depth < 10
-  )
-  select tenant_id, depth from tree where depth > 0;
-$function$
-;
-
-CREATE OR REPLACE FUNCTION public.user_tenant_id(p_user_email text DEFAULT NULL::text)
- RETURNS uuid
- LANGUAGE sql
- STABLE SECURITY DEFINER
- SET search_path TO 'public', 'pg_catalog'
-AS $function$
-  select coalesce(
-    -- 1. From explicit JWT claim
-    nullif(auth.jwt()->>'tenant_id', '')::uuid,
-    -- 2. From profiles table
-    (select tenant_id from profiles 
-     where email = coalesce(p_user_email, auth.jwt()->>'email')
-     limit 1),
-    -- 3. Default to Tellinex Jamaica for legacy users
-    '00000000-0000-0000-0000-000000000001'::uuid
-  );
-$function$
-;
-
-CREATE OR REPLACE FUNCTION public.tenants_peered_for_scope(p_tenant_a uuid, p_tenant_b uuid, p_scope text DEFAULT NULL::text)
- RETURNS boolean
- LANGUAGE sql
- STABLE SECURITY DEFINER
- SET search_path TO 'public', 'pg_catalog'
-AS $function$
-  select exists(
-    select 1 from tenant_peering_agreements
-    where active = true
-      and revoked_at is null
-      and (expires_at is null or expires_at > now())
-      and (
-        (tenant_a_id = p_tenant_a and tenant_b_id = p_tenant_b)
-        or
-        (tenant_a_id = p_tenant_b and tenant_b_id = p_tenant_a)
-      )
-      and (
-        p_scope is null
-        or p_scope = any(shared_scopes)
-        or 'all' = any(shared_scopes)
-      )
-  );
-$function$
-;
-
-CREATE OR REPLACE FUNCTION public.user_can_access_tenant_row(p_row_tenant_id uuid, p_scope text DEFAULT NULL::text)
- RETURNS boolean
- LANGUAGE plpgsql
- STABLE SECURITY DEFINER
- SET search_path TO 'public', 'pg_catalog'
-AS $function$
-declare
-  v_user_tenant_id uuid;
-  v_user_email text;
-begin
-  -- 0. NULL tenant_id rows are accessible to all (legacy/global data)
-  if p_row_tenant_id is null then
-    return true;
-  end if;
-
-  -- 1. Get current user's email + tenant
-  v_user_email := auth.jwt()->>'email';
-  
-  -- 2. Tellinex staff (@tellinex.com) — see EVERYTHING regardless of tenant
-  -- This implements the "Group HQ sees all" Q3 decision
-  -- Even before formal Group HQ tenant assignment, staff have global visibility
-  if v_user_email is not null and v_user_email like '%@tellinex.com' then
-    return true;
-  end if;
-
-  -- 3. Resolve user's home tenant
-  v_user_tenant_id := user_tenant_id();
-  
-  -- If we can't determine the user's tenant, deny by default
-  if v_user_tenant_id is null then
-    return false;
-  end if;
-
-  -- 4. Same tenant — direct ownership
-  if v_user_tenant_id = p_row_tenant_id then
-    return true;
-  end if;
-
-  -- 5. Hierarchy check: is the row's tenant a descendant of the user's tenant?
-  -- HQ users see all their franchisee data; franchisee users only see their own
-  if exists(
-    select 1 from tenant_descendants(v_user_tenant_id) td
-    where td.tenant_id = p_row_tenant_id
-  ) then
-    return true;
-  end if;
-
-  -- 6. Peering check: do the two tenants have an active peering agreement covering this scope?
-  if tenants_peered_for_scope(v_user_tenant_id, p_row_tenant_id, p_scope) then
-    return true;
-  end if;
-
-  -- 7. Otherwise: denied
-  return false;
-end;
-$function$
-;
-
-CREATE OR REPLACE FUNCTION public.explain_tenant_access(p_row_tenant_id uuid, p_scope text DEFAULT NULL::text, p_user_email text DEFAULT NULL::text)
- RETURNS TABLE(decision text, reason text, user_tenant_id uuid, user_email text)
- LANGUAGE plpgsql
- STABLE SECURITY DEFINER
- SET search_path TO 'public', 'pg_catalog'
-AS $function$
-declare
-  v_user_email text;
-  v_user_tenant_id uuid;
-begin
-  v_user_email := coalesce(p_user_email, auth.jwt()->>'email');
-  
-  if p_row_tenant_id is null then
-    return query select 'GRANTED'::text, 'NULL tenant_id (legacy/global row)'::text, null::uuid, v_user_email;
-    return;
-  end if;
-  
-  if v_user_email like '%@tellinex.com' then
-    return query select 'GRANTED'::text, 'Tellinex staff (@tellinex.com) — global visibility'::text, null::uuid, v_user_email;
-    return;
-  end if;
-  
-  v_user_tenant_id := (select tenant_id from profiles where email=v_user_email limit 1);
-  
-  if v_user_tenant_id is null then
-    return query select 'DENIED'::text, 'User has no resolvable tenant'::text, null::uuid, v_user_email;
-    return;
-  end if;
-  
-  if v_user_tenant_id = p_row_tenant_id then
-    return query select 'GRANTED'::text, 'Same tenant'::text, v_user_tenant_id, v_user_email;
-    return;
-  end if;
-  
-  if exists(select 1 from tenant_descendants(v_user_tenant_id) td where td.tenant_id = p_row_tenant_id) then
-    return query select 'GRANTED'::text, 'Row tenant is descendant of user tenant (hierarchical)'::text, v_user_tenant_id, v_user_email;
-    return;
-  end if;
-  
-  if tenants_peered_for_scope(v_user_tenant_id, p_row_tenant_id, p_scope) then
-    return query select 'GRANTED'::text, format('Active peering agreement covering scope %s', coalesce(p_scope,'<any>'))::text, v_user_tenant_id, v_user_email;
-    return;
-  end if;
-  
-  return query select 'DENIED'::text, 'No tenancy, hierarchy, or peering match'::text, v_user_tenant_id, v_user_email;
-end;
-$function$
-;
-
-CREATE OR REPLACE FUNCTION public.create_tenant(p_name text, p_slug text, p_country text, p_region text DEFAULT NULL::text, p_parent_tenant_id uuid DEFAULT '00000000-0000-0000-0000-00000000aaaa'::uuid, p_tier text DEFAULT 'operator'::text, p_plan text DEFAULT 'enterprise'::text, p_max_users integer DEFAULT 50, p_max_assets integer DEFAULT 50000, p_metadata jsonb DEFAULT '{}'::jsonb)
- RETURNS uuid
- LANGUAGE plpgsql
- SECURITY DEFINER
- SET search_path TO 'public', 'pg_catalog'
-AS $function$
-declare
-  v_id uuid;
-  v_actor text;
-begin
-  v_actor := auth.jwt()->>'email';
-  
-  -- Q2 enforcement: only Tellinex staff can create tenants
-  if not is_tellinex_staff() then
-    raise exception 'Only Tellinex HQ staff can create tenants. Caller: %', coalesce(v_actor, '<anonymous>');
-  end if;
-  
-  -- Validate inputs
-  if length(p_slug) < 3 or p_slug !~ '^[a-z0-9-]+$' then
-    raise exception 'Slug must be 3+ chars, lowercase alphanumeric + hyphens only. Got: %', p_slug;
-  end if;
-  
-  if not (p_tier = any(array['platform','operator','franchise','child'])) then
-    raise exception 'Invalid tier: %. Valid: platform, operator, franchise, child', p_tier;
-  end if;
-  
-  -- Verify parent exists
-  if p_parent_tenant_id is not null then
-    if not exists(select 1 from tenants where id = p_parent_tenant_id and status='active') then
-      raise exception 'Parent tenant % not found or inactive', p_parent_tenant_id;
-    end if;
-  end if;
-  
-  -- Insert
-  insert into tenants (
-    name, slug, country, region, status, plan, tier,
-    parent_tenant_id, max_users, max_assets, metadata
-  ) values (
-    p_name, p_slug, p_country, p_region, 'active', p_plan, p_tier,
-    p_parent_tenant_id, p_max_users, p_max_assets, p_metadata
-  ) returning id into v_id;
-  
-  -- Audit trail
-  insert into system_events (platform, event_type, severity, message, details)
-  values ('tcc', 'tenant_created', 'info',
-    format('Tenant %s (%s) created by %s under parent %s', p_name, v_id, v_actor, p_parent_tenant_id),
-    jsonb_build_object('tenant_id', v_id, 'name', p_name, 'slug', p_slug, 'tier', p_tier, 'parent', p_parent_tenant_id, 'actor', v_actor));
-  
-  return v_id;
-end;
-$function$
-;
-
-CREATE OR REPLACE FUNCTION public.deactivate_tenant(p_tenant_id uuid, p_reason text DEFAULT NULL::text)
- RETURNS void
- LANGUAGE plpgsql
- SECURITY DEFINER
- SET search_path TO 'public', 'pg_catalog'
-AS $function$
-declare
-  v_actor text;
-  v_tenant_name text;
-begin
-  v_actor := auth.jwt()->>'email';
-  
-  if not is_tellinex_staff() then
-    raise exception 'Only Tellinex HQ staff can deactivate tenants';
-  end if;
-  
-  if p_tenant_id = '00000000-0000-0000-0000-000000000001'::uuid then
-    raise exception 'Cannot deactivate Tellinex Jamaica (root operator)';
-  end if;
-  if p_tenant_id = '00000000-0000-0000-0000-00000000aaaa'::uuid then
-    raise exception 'Cannot deactivate Tellinex Group HQ';
-  end if;
-  
-  select name into v_tenant_name from tenants where id = p_tenant_id;
-  if not found then
-    raise exception 'Tenant % not found', p_tenant_id;
-  end if;
-  
-  update tenants set status='suspended', updated_at=now()
-  where id = p_tenant_id;
-  
-  insert into system_events (platform, event_type, severity, message, details)
-  values ('tcc', 'tenant_deactivated', 'warn',
-    format('Tenant %s (%s) deactivated by %s. Reason: %s', v_tenant_name, p_tenant_id, v_actor, coalesce(p_reason,'<none>')),
-    jsonb_build_object('tenant_id', p_tenant_id, 'reason', p_reason, 'actor', v_actor));
-end;
-$function$
-;
-
-CREATE OR REPLACE FUNCTION public.authorise_peering(p_tenant_a_id uuid, p_tenant_b_id uuid, p_shared_scopes text[], p_authorisation_reason text DEFAULT NULL::text, p_expires_at timestamp with time zone DEFAULT NULL::timestamp with time zone)
- RETURNS uuid
- LANGUAGE plpgsql
- SECURITY DEFINER
- SET search_path TO 'public', 'pg_catalog'
-AS $function$
-declare
-  v_id uuid;
-  v_actor text;
-begin
-  v_actor := auth.jwt()->>'email';
-  
-  -- Q3 enforcement: only HQ staff can authorise peering
-  if not is_tellinex_staff() then
-    raise exception 'Only Tellinex HQ staff can authorise tenant peering';
-  end if;
-  
-  if p_tenant_a_id = p_tenant_b_id then
-    raise exception 'Cannot peer a tenant with itself';
-  end if;
-  
-  if array_length(p_shared_scopes, 1) is null or array_length(p_shared_scopes, 1) = 0 then
-    raise exception 'Must specify at least one shared scope';
-  end if;
-  
-  -- Validate both tenants exist and are active
-  if not exists(select 1 from tenants where id = p_tenant_a_id and status='active') then
-    raise exception 'Tenant A (%) not found or inactive', p_tenant_a_id;
-  end if;
-  if not exists(select 1 from tenants where id = p_tenant_b_id and status='active') then
-    raise exception 'Tenant B (%) not found or inactive', p_tenant_b_id;
-  end if;
-  
-  insert into tenant_peering_agreements (
-    tenant_a_id, tenant_b_id, shared_scopes,
-    authorised_by_email, authorisation_reason, expires_at
-  ) values (
-    p_tenant_a_id, p_tenant_b_id, p_shared_scopes,
-    v_actor, p_authorisation_reason, p_expires_at
-  ) returning id into v_id;
-  
-  insert into system_events (platform, event_type, severity, message, details)
-  values ('tcc', 'peering_authorised', 'info',
-    format('Peering between %s and %s authorised by %s for scopes: %s', 
-           p_tenant_a_id, p_tenant_b_id, v_actor, array_to_string(p_shared_scopes, ', ')),
-    jsonb_build_object('peering_id', v_id, 'tenant_a', p_tenant_a_id, 'tenant_b', p_tenant_b_id, 'scopes', p_shared_scopes, 'actor', v_actor));
-  
-  return v_id;
-end;
-$function$
-;
-
-CREATE OR REPLACE FUNCTION public.revoke_peering(p_peering_id uuid, p_reason text DEFAULT NULL::text)
- RETURNS void
- LANGUAGE plpgsql
- SECURITY DEFINER
- SET search_path TO 'public', 'pg_catalog'
-AS $function$
-declare
-  v_actor text;
-begin
-  v_actor := auth.jwt()->>'email';
-  
-  if not is_tellinex_staff() then
-    raise exception 'Only Tellinex HQ staff can revoke peering';
-  end if;
-  
-  update tenant_peering_agreements 
-  set active = false,
-      revoked_at = now(),
-      revoked_by_email = v_actor,
-      revocation_reason = p_reason
-  where id = p_peering_id and active = true;
-  
-  if not found then
-    raise exception 'Peering agreement % not found or already revoked', p_peering_id;
-  end if;
-  
-  insert into system_events (platform, event_type, severity, message, details)
-  values ('tcc', 'peering_revoked', 'warn',
-    format('Peering %s revoked by %s. Reason: %s', p_peering_id, v_actor, coalesce(p_reason,'<none>')),
-    jsonb_build_object('peering_id', p_peering_id, 'reason', p_reason, 'actor', v_actor));
-end;
-$function$
-;
-
-CREATE OR REPLACE FUNCTION public.cpm_enforce_single_default()
- RETURNS trigger
- LANGUAGE plpgsql
- SECURITY DEFINER
- SET search_path TO 'public', 'pg_catalog'
-AS $function$
-BEGIN
-  -- When a row is set as default, demote any other default for the same user
-  IF NEW.is_default = true AND NEW.deleted_at IS NULL THEN
-    UPDATE public.customer_payment_methods
-       SET is_default = false, updated_at = now()
-     WHERE user_id = NEW.user_id 
-       AND id != NEW.id 
-       AND is_default = true
-       AND deleted_at IS NULL;
-  END IF;
-  RETURN NEW;
-END;
-$function$
-;
-
-CREATE OR REPLACE FUNCTION public.cpm_set_updated_at()
- RETURNS trigger
- LANGUAGE plpgsql
- SECURITY DEFINER
- SET search_path TO 'public', 'pg_catalog'
-AS $function$
-BEGIN
-  NEW.updated_at = now();
-  RETURN NEW;
-END;
-$function$
-;
-
-CREATE OR REPLACE FUNCTION public.incidents_set_updated_at()
- RETURNS trigger
- LANGUAGE plpgsql
- SECURITY DEFINER
- SET search_path TO 'public', 'pg_catalog'
-AS $function$
-BEGIN
-  NEW.updated_at = now();
-  RETURN NEW;
-END;
-$function$
-;
-
--- =====
 -- Views
--- =====
 CREATE OR REPLACE VIEW public.leaderboard_rankings AS
  SELECT ts.technician_email,
     ts.technician_name,
@@ -17761,9 +17752,7 @@ CREATE OR REPLACE VIEW public.v_web_vitals_daily AS
   WHERE measured_at >= (now() - '90 days'::interval)
   GROUP BY (date_trunc('day'::text, measured_at)), source_product, page_path, metric_name;
 
--- ========
--- Triggers
--- ========
+-- Triggers (skip those on extension tables)
 DROP TRIGGER IF EXISTS trg_alarms_health_rescore ON public.alarms;
 CREATE TRIGGER trg_alarms_health_rescore AFTER INSERT OR UPDATE OF severity, cleared_at, reassertion_count ON public.alarms FOR EACH ROW EXECUTE FUNCTION trg_alarm_change_queue_rescore();
 DROP TRIGGER IF EXISTS trg_audit_alarms ON public.alarms;
@@ -17937,15 +17926,11 @@ CREATE TRIGGER trg_wo_predictive_escalated_webhook AFTER UPDATE OF priority ON p
 DROP TRIGGER IF EXISTS trg_wo_window_close ON public.work_orders;
 CREATE TRIGGER trg_wo_window_close AFTER UPDATE OF status ON public.work_orders FOR EACH ROW EXECUTE FUNCTION trg_wo_cancel_window_on_close();
 
--- ==============
 -- Event triggers
--- ==============
 DROP EVENT TRIGGER IF EXISTS ensure_rls;
 CREATE EVENT TRIGGER ensure_rls ON ddl_command_end EXECUTE FUNCTION public.rls_auto_enable();
 
--- ========
 -- Policies
--- ========
 DROP POLICY IF EXISTS access_audit_log_staff_all ON public.access_audit_log;
 CREATE POLICY access_audit_log_staff_all ON public.access_audit_log AS PERMISSIVE FOR ALL TO authenticated
   USING (is_tellinex_staff())
@@ -19673,4 +19658,5 @@ CREATE POLICY work_orders_tenant_scoped ON public.work_orders AS PERMISSIVE FOR 
   USING (user_can_access_tenant_row(tenant_id))
   WITH CHECK (user_can_access_tenant_row(tenant_id));
 
+RESET check_function_bodies;
 -- End of baseline

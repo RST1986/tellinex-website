@@ -1,4 +1,4 @@
--- Tellinex baseline extractor
+-- Tellinex baseline extractor (v2 — handles four ordering subtleties)
 --
 -- Produces the contents of 20260403000000_baseline_prod_schema_dump_6may2026.sql
 -- by scanning pg_catalog. Run this against any Postgres 17 Supabase project to
@@ -15,6 +15,31 @@
 -- Or just call _tx_dump_public_schema() directly from any tool that can
 -- execute SQL with superuser privileges (Supabase MCP `execute_sql`, etc.)
 -- and INSERT the result into supabase_migrations.schema_migrations.
+--
+-- ORDERING NOTES (lessons from real replay):
+--   1. SET check_function_bodies = false at the top — lets SQL-language
+--      functions reference tables that don't exist yet (they're validated
+--      at runtime).
+--   2. Functions emitted in TWO passes around the table block:
+--      - Early: functions whose signatures DON'T use user-table row types.
+--        Required because tables can have GENERATED ALWAYS AS (some_fn(...))
+--        STORED columns that need the function to exist before CREATE TABLE.
+--      - Deferred (after tables): functions whose signatures DO reference
+--        a user-table row type (e.g. `RETURNS audit_log` or
+--        `arg fp_jobs`). These need the table type to exist first.
+--   3. Sequences: include both standalone and SERIAL-backing (deptype='a');
+--      only IDENTITY-backing (deptype='i') is excluded — those are recreated
+--      automatically by the column-level GENERATED IDENTITY clause.
+--      ALTER SEQUENCE … OWNED BY … is emitted after tables to restore the
+--      SERIAL ownership relationship.
+--   4. Extension-owned tables (e.g. postgis `spatial_ref_sys`,
+--      `geography_columns`, `geometry_columns`) are correctly excluded from
+--      the tables loop, but their constraints, indexes, and triggers are
+--      NOT marked as extension-owned — only the table is. So those loops
+--      must additionally exclude rows whose underlying relation oid is
+--      extension-owned, otherwise the migration tries to ALTER objects that
+--      the migration runner doesn't own and gets
+--      "must be owner of table spatial_ref_sys".
 
 -- ---------------------------------------------------------------------------
 -- Per-table CREATE TABLE builder
@@ -72,30 +97,36 @@ DECLARE
   ddl TEXT := '';
   rec RECORD;
   ext_oids OID[];
+  table_type_oids OID[];
 BEGIN
   ddl := E'-- Tellinex prod public-schema baseline (auto-generated via pg_catalog introspection)\n';
   ddl := ddl || E'-- Generated: ' || now()::text || E'\n';
   ddl := ddl || E'-- Server: PostgreSQL 17.6 / project egztpclpcnizcdtfugsv\n';
-  ddl := ddl || E'-- Method: pg_catalog scan (pg_dump 17 unavailable: client is v16, no DB credentials)\n\n';
+  ddl := ddl || E'-- Filters: extension-owned tables AND any constraint/index/trigger on extension-owned tables are excluded (e.g. postgis spatial_ref_sys)\n\n';
+
+  ddl := ddl || E'SET check_function_bodies = false;\n\n';
 
   SELECT COALESCE(array_agg(objid), ARRAY[]::oid[]) INTO ext_oids
   FROM pg_depend WHERE deptype='e';
 
+  SELECT COALESCE(array_agg(c.reltype), ARRAY[]::oid[]) INTO table_type_oids
+  FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
+  WHERE c.relkind IN ('r','v') AND n.nspname='public';
+
   -- Extensions
-  ddl := ddl || E'-- =========\n-- Extensions\n-- =========\n';
+  ddl := ddl || E'-- Extensions\n';
   FOR rec IN
-    SELECT extname, n.nspname
-    FROM pg_extension e JOIN pg_namespace n ON n.oid=e.extnamespace
-    WHERE extname <> 'plpgsql'
-    ORDER BY extname
+    SELECT extname, n.nspname FROM pg_extension e
+    JOIN pg_namespace n ON n.oid=e.extnamespace
+    WHERE extname<>'plpgsql' ORDER BY extname
   LOOP
     ddl := ddl || format(E'CREATE EXTENSION IF NOT EXISTS %I WITH SCHEMA %I;\n',
                          rec.extname, rec.nspname);
   END LOOP;
   ddl := ddl || E'\n';
 
-  -- Non-default schemas
-  ddl := ddl || E'-- =======\n-- Schemas\n-- =======\n';
+  -- Schemas
+  ddl := ddl || E'-- Schemas\n';
   FOR rec IN
     SELECT nspname FROM pg_namespace
     WHERE nspname NOT IN ('public','auth','storage','pg_catalog','information_schema',
@@ -110,8 +141,8 @@ BEGIN
   END LOOP;
   ddl := ddl || E'\n';
 
-  -- Standalone sequences (excluding identity-backing)
-  ddl := ddl || E'-- =========\n-- Sequences\n-- =========\n';
+  -- Sequences (standalone + SERIAL-backing; identity sequences excluded)
+  ddl := ddl || E'-- Sequences (incl SERIAL-backing)\n';
   FOR rec IN
     SELECT n.nspname, c.relname,
            s.seqstart, s.seqincrement, s.seqmin, s.seqmax, s.seqcache, s.seqcycle
@@ -121,7 +152,7 @@ BEGIN
     WHERE c.relkind='S' AND n.nspname='public'
       AND NOT (c.oid = ANY(ext_oids))
       AND NOT EXISTS (SELECT 1 FROM pg_depend d
-                      WHERE d.objid=c.oid AND d.deptype IN ('a','i'))
+                      WHERE d.objid=c.oid AND d.deptype = 'i')
     ORDER BY n.nspname, c.relname
   LOOP
     ddl := ddl || format(
@@ -132,8 +163,24 @@ BEGIN
   END LOOP;
   ddl := ddl || E'\n';
 
+  -- Functions (early): no user-table row types in signature
+  ddl := ddl || E'-- Functions (early)\n';
+  FOR rec IN
+    SELECT pg_get_functiondef(p.oid) AS def
+    FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace
+    WHERE n.nspname='public' AND NOT (p.oid = ANY(ext_oids))
+      AND p.proname NOT IN ('_tx_table_ddl','_tx_dump_public_schema')
+      AND NOT (p.prorettype = ANY(table_type_oids))
+      AND NOT EXISTS (SELECT 1 FROM unnest(p.proargtypes) t WHERE t = ANY(table_type_oids))
+      AND NOT EXISTS (SELECT 1 FROM unnest(COALESCE(p.proallargtypes, ARRAY[]::oid[])) t
+                      WHERE t = ANY(table_type_oids))
+    ORDER BY p.oid
+  LOOP
+    ddl := ddl || rec.def || E';\n\n';
+  END LOOP;
+
   -- Tables (with RLS toggles)
-  ddl := ddl || E'-- ======\n-- Tables\n-- ======\n';
+  ddl := ddl || E'-- Tables\n';
   FOR rec IN
     SELECT c.oid, n.nspname, c.relname, c.relrowsecurity, c.relforcerowsecurity
     FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
@@ -152,8 +199,27 @@ BEGIN
   END LOOP;
   ddl := ddl || E'\n';
 
-  -- Constraints (PK, UNIQUE, CHECK, FK) — wrapped for idempotency
-  ddl := ddl || E'-- ===========\n-- Constraints\n-- ===========\n';
+  -- SERIAL ownership restoration
+  ddl := ddl || E'-- SERIAL OWNED BY\n';
+  FOR rec IN
+    SELECT c.relname AS seqname, n.nspname AS seqschema,
+           refc.relname AS tblname, refn.nspname AS tblschema, a.attname AS colname
+    FROM pg_class c
+    JOIN pg_namespace n ON n.oid=c.relnamespace
+    JOIN pg_depend d ON d.objid=c.oid AND d.classid='pg_class'::regclass AND d.deptype='a'
+    JOIN pg_class refc ON refc.oid=d.refobjid
+    JOIN pg_namespace refn ON refn.oid=refc.relnamespace
+    JOIN pg_attribute a ON a.attrelid=d.refobjid AND a.attnum=d.refobjsubid
+    WHERE c.relkind='S' AND n.nspname='public'
+      AND NOT (c.oid = ANY(ext_oids)) AND NOT (refc.oid = ANY(ext_oids))
+  LOOP
+    ddl := ddl || format(E'ALTER SEQUENCE %I.%I OWNED BY %I.%I.%I;\n',
+      rec.seqschema, rec.seqname, rec.tblschema, rec.tblname, rec.colname);
+  END LOOP;
+  ddl := ddl || E'\n';
+
+  -- Constraints — wrapped for idempotency, skip those on extension tables
+  ddl := ddl || E'-- Constraints\n';
   FOR rec IN
     SELECT con.conname, n.nspname, c.relname,
            pg_get_constraintdef(con.oid) AS def, con.contype
@@ -162,6 +228,7 @@ BEGIN
     JOIN pg_namespace n ON n.oid=c.relnamespace
     WHERE n.nspname='public' AND con.contype IN ('p','u','c','f')
       AND NOT (con.oid = ANY(ext_oids))
+      AND NOT (con.conrelid = ANY(ext_oids))
     ORDER BY CASE con.contype WHEN 'p' THEN 1 WHEN 'u' THEN 2 WHEN 'c' THEN 3 WHEN 'f' THEN 4 END,
              c.relname, con.conname
   LOOP
@@ -171,15 +238,17 @@ BEGIN
   END LOOP;
   ddl := ddl || E'\n';
 
-  -- Indexes (excluding ones backing constraints)
-  ddl := ddl || E'-- =======\n-- Indexes\n-- =======\n';
+  -- Indexes — skip those on extension tables
+  ddl := ddl || E'-- Indexes\n';
   FOR rec IN
     SELECT i.indexrelid, c.relname, n.nspname,
            pg_get_indexdef(i.indexrelid) AS def, i.indisunique
     FROM pg_index i
     JOIN pg_class c ON c.oid=i.indexrelid
     JOIN pg_namespace n ON n.oid=c.relnamespace
-    WHERE n.nspname='public' AND NOT (c.oid = ANY(ext_oids))
+    WHERE n.nspname='public'
+      AND NOT (c.oid = ANY(ext_oids))
+      AND NOT (i.indrelid = ANY(ext_oids))
       AND NOT EXISTS (SELECT 1 FROM pg_constraint con
                       WHERE con.conindid=i.indexrelid)
     ORDER BY c.relname
@@ -194,20 +263,26 @@ BEGIN
   END LOOP;
   ddl := ddl || E'\n';
 
-  -- Functions (skip our own helpers)
-  ddl := ddl || E'-- =========\n-- Functions\n-- =========\n';
+  -- Functions (deferred): signatures use user-table row types
+  ddl := ddl || E'-- Functions (deferred)\n';
   FOR rec IN
     SELECT pg_get_functiondef(p.oid) AS def
     FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace
     WHERE n.nspname='public' AND NOT (p.oid = ANY(ext_oids))
       AND p.proname NOT IN ('_tx_table_ddl','_tx_dump_public_schema')
+      AND (
+        p.prorettype = ANY(table_type_oids)
+        OR EXISTS (SELECT 1 FROM unnest(p.proargtypes) t WHERE t = ANY(table_type_oids))
+        OR EXISTS (SELECT 1 FROM unnest(COALESCE(p.proallargtypes, ARRAY[]::oid[])) t
+                   WHERE t = ANY(table_type_oids))
+      )
     ORDER BY p.oid
   LOOP
     ddl := ddl || rec.def || E';\n\n';
   END LOOP;
 
   -- Views (creation order)
-  ddl := ddl || E'-- =====\n-- Views\n-- =====\n';
+  ddl := ddl || E'-- Views\n';
   FOR rec IN
     SELECT n.nspname, c.relname, pg_get_viewdef(c.oid, true) AS def
     FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
@@ -219,14 +294,16 @@ BEGIN
   END LOOP;
   ddl := ddl || E'\n';
 
-  -- Triggers
-  ddl := ddl || E'-- ========\n-- Triggers\n-- ========\n';
+  -- Triggers — skip those on extension tables
+  ddl := ddl || E'-- Triggers\n';
   FOR rec IN
     SELECT t.tgname, n.nspname, c.relname, pg_get_triggerdef(t.oid) AS def
     FROM pg_trigger t
     JOIN pg_class c ON c.oid=t.tgrelid
     JOIN pg_namespace n ON n.oid=c.relnamespace
-    WHERE n.nspname='public' AND NOT t.tgisinternal AND NOT (t.oid = ANY(ext_oids))
+    WHERE n.nspname='public' AND NOT t.tgisinternal
+      AND NOT (t.oid = ANY(ext_oids))
+      AND NOT (t.tgrelid = ANY(ext_oids))
     ORDER BY c.relname, t.tgname
   LOOP
     ddl := ddl || format(E'DROP TRIGGER IF EXISTS %I ON %I.%I;\n',
@@ -236,7 +313,7 @@ BEGIN
   ddl := ddl || E'\n';
 
   -- Event triggers (those whose function lives in public)
-  ddl := ddl || E'-- ==============\n-- Event triggers\n-- ==============\n';
+  ddl := ddl || E'-- Event triggers\n';
   FOR rec IN
     SELECT e.evtname, e.evtevent,
            quote_ident(np.nspname) || '.' || quote_ident(p.proname) AS funcname
@@ -253,7 +330,7 @@ BEGIN
   ddl := ddl || E'\n';
 
   -- Policies
-  ddl := ddl || E'-- ========\n-- Policies\n-- ========\n';
+  ddl := ddl || E'-- Policies\n';
   FOR rec IN
     SELECT schemaname, tablename, policyname, permissive, roles, cmd, qual, with_check
     FROM pg_policies WHERE schemaname='public'
@@ -272,6 +349,7 @@ BEGIN
   END LOOP;
   ddl := ddl || E'\n';
 
+  ddl := ddl || E'RESET check_function_bodies;\n';
   ddl := ddl || E'-- End of baseline\n';
   RETURN ddl;
 END

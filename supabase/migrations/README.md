@@ -44,6 +44,48 @@ PL/pgSQL function (`public._tx_dump_public_schema`) that scans `pg_catalog`
 and emits idempotent DDL via the built-in `pg_get_*def(...)` functions. The
 helper functions were dropped after use.
 
+### Replay verification
+
+A fresh Supabase development branch (`staging-baseline-test`) was created
+and rebased through the full migration history. Result: the baseline ran
+cleanly, populating the public schema (386 tables, 936 functions, 86
+triggers, 482 policies, all expected key tables — `alarms`, `audit_log`,
+`activity_log`, etc.). The branch reports `preview_project_status:
+ACTIVE_HEALTHY`. Subsequent migrations in the existing 336-row chain replay
+on top with one known drift point (see "Known follow-on drift" below).
+
+### Ordering subtleties handled by the extractor
+
+Four sequencing pitfalls surfaced during replay and are now handled:
+
+1. **`SET check_function_bodies = false`** at the top — lets SQL-language
+   functions reference tables that don't exist yet (validated at runtime).
+2. **Two-pass functions** around the table block:
+   - Early pass: functions whose signatures don't use user-table row types.
+     Required because tables can have `GENERATED ALWAYS AS (some_fn(...))
+     STORED` columns (e.g. `safe_make_point` in `alarms.geog`).
+   - Deferred pass (after tables): functions whose signatures DO use a
+     user-table row type (e.g. `RETURNS audit_log`, `arg fp_jobs`). These
+     need the table type to exist first.
+3. **Sequences include SERIAL-backing** (`pg_depend.deptype='a'`); only
+   IDENTITY-backing (`'i'`) is excluded, since the column-level GENERATED
+   IDENTITY clause recreates those automatically. `ALTER SEQUENCE … OWNED
+   BY …` runs after tables to restore SERIAL ownership.
+4. **Constraints / indexes / triggers on extension-owned tables** (postgis
+   `spatial_ref_sys`, `geography_columns`, `geometry_columns`) are
+   filtered. The TABLE itself is flagged extension-owned, but its
+   CONSTRAINTS and INDEXES aren't — so naive filters slip them through and
+   the migration fails with `must be owner of table spatial_ref_sys`.
+
+### Known follow-on drift (not a baseline issue)
+
+Migration `20260405133253 create_forecast_functions` does
+`CREATE OR REPLACE FUNCTION get_average_velocity(...)` with a `RETURNS
+TABLE(...)` shape that differs from the current prod definition. PostgreSQL
+disallows `OR REPLACE` to change return type — needs a `DROP FUNCTION
+IF EXISTS` first. This is unrelated to the baseline; fixing it is the
+next patch.
+
 ### Idempotency
 
 Every emitted statement is safe to run against a database that already has

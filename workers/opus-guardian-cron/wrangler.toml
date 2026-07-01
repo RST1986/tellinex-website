@@ -1,0 +1,11 @@
+# Cloudflare Worker — Opus Guardian autonomous monitor.
+# Cloudflare Pages Functions cannot run on a schedule, so the cron half of the old
+# Netlify scheduled function lives here as a standalone Worker with a Cron Trigger.
+# Deploy separately:  cd workers/opus-guardian-cron && npx wrangler deploy
+# Set secrets:        npx wrangler secret put ANTHROPIC_API_KEY   (etc.)
+name = "opus-guardian-cron"
+main = "index.js"
+compatibility_date = "2024-11-01"
+
+[triggers]
+crons = ["*/5 * * * *"]

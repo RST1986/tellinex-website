@@ -1,12 +1,25 @@
-// Opus Guardian — Auto-diagnose AND auto-fix via Claude Opus 4
-// Netlify function: /.netlify/functions/opus-diagnose
-// Capabilities: diagnose, redeploy Netlify, fix Supabase, alert WhatsApp
-
+// Cloudflare Pages Function — served at /opus-diagnose
+// Ported from netlify/functions/opus-diagnose.mjs.
+// Env vars (Pages project settings): SUPABASE_ANON_KEY, ANTHROPIC_API_KEY, WHATSAPP_TOKEN
+//   and (legacy, see TODO) OPUS_NETLIFY_TOKEN, NETLIFY_SITE_ID_*
+//
+// TODO (Cloudflare migration): the auto-heal actions below still call the Netlify
+// Build API to redeploy Netlify sites. After the move to Cloudflare Pages these are
+// obsolete — replace triggerNetlifyRedeploy() with a Cloudflare Pages deploy-hook
+// POST (https://api.cloudflare.com/client/v4/pages/webhooks/deploy_hooks/<hook>)
+// and update the health-check URLs to the Pages domain. Left as-is for now because
+// the CF deploy-hook URLs / project IDs are not available in-repo.
 const SUPABASE_URL = 'https://egztpclpcnizcdtfugsv.supabase.co';
-const env = (k) => process.env[k] || (typeof Netlify !== 'undefined' ? Netlify.env.get(k) : null);
-const SUPA_KEY = env('SUPABASE_ANON_KEY');
+
+// Request-scoped env, populated at the top of onRequest(). This endpoint is a
+// low-frequency internal ops tool, so a module-scoped handle is acceptable here.
+let ENV = {};
+const env = (k) => ENV[k];
+const supaKey = () => ENV.SUPABASE_ANON_KEY;
 
 async function logOpusEvent(severity, message, metadata) {
+  const SUPA_KEY = supaKey();
+  if (!SUPA_KEY) return;
   try {
     await fetch(SUPABASE_URL + '/rest/v1/opus_events', {
       method: 'POST',
@@ -41,6 +54,7 @@ async function sendWhatsAppAlert(message) {
 }
 
 async function checkAndFixSupabaseTable(table) {
+  const SUPA_KEY = supaKey();
   try {
     const r = await fetch(SUPABASE_URL + '/rest/v1/' + table + '?select=*&limit=1', {
       headers: { 'apikey': SUPA_KEY, 'Authorization': 'Bearer ' + SUPA_KEY }
@@ -58,6 +72,7 @@ async function checkEndpointHealth(url) {
 }
 
 // ─── AUTO-HEAL LOGIC ───────────────────────────────────────
+// TODO (Cloudflare migration): URLs + triggerNetlifyRedeploy targets are Netlify-specific.
 const HEAL_MAP = {
   'chatbot': async () => {
     const ok = await checkEndpointHealth('https://tellinex-preview.netlify.app/.netlify/functions/ai-chat');
@@ -91,18 +106,20 @@ const HEAL_MAP = {
 };
 
 // ─── MAIN HANDLER ──────────────────────────────────────────
-export default async (req) => {
+export async function onRequest(context) {
+  ENV = context.env || {};
+  const request = context.request;
   const headers = {
     'Access-Control-Allow-Origin': '*',
     'Access-Control-Allow-Methods': 'POST, OPTIONS',
     'Access-Control-Allow-Headers': 'Content-Type',
     'Content-Type': 'application/json'
   };
-  if (req.method === 'OPTIONS') return new Response('', { status: 204, headers });
-  if (req.method !== 'POST') return new Response(JSON.stringify({error:'POST only'}), { status: 405, headers });
+  if (request.method === 'OPTIONS') return new Response('', { status: 204, headers });
+  if (request.method !== 'POST') return new Response(JSON.stringify({error:'POST only'}), { status: 405, headers });
 
   try {
-    const body = await req.json();
+    const body = await request.json();
     const { failing = [], healthy = [], autoHeal = true } = body;
     if (!failing.length) return new Response(JSON.stringify({diagnosis:'All systems healthy.',fixes:[],source:'guardian'}), { headers });
 
@@ -165,7 +182,7 @@ Be concise. 5 lines max per service.`;
         }
       } catch(e) { diagnosis = 'Opus 4 API error: ' + e.message; }
     } else if (!API_KEY) {
-      diagnosis = 'ANTHROPIC_API_KEY not set — add to Netlify env vars.';
+      diagnosis = 'ANTHROPIC_API_KEY not set — add to Pages env vars.';
     } else {
       diagnosis = 'All failing services auto-fixed successfully.';
       source = 'auto_healed';
@@ -197,4 +214,4 @@ Be concise. 5 lines max per service.`;
     await logOpusEvent('error', 'opus-diagnose error: ' + (err.message||''), {});
     return new Response(JSON.stringify({ diagnosis: 'Function error: ' + (err.message||''), fixes: [], source: 'error' }), { status: 500, headers });
   }
-};
+}

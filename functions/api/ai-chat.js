@@ -1,11 +1,14 @@
+// Cloudflare Pages Function — served at /api/ai-chat
+// Ported from netlify/functions/ai-chat.mjs.
+// Env vars (Pages project settings): ANTHROPIC_API_KEY, SUPABASE_ANON_KEY, GOOGLE_MAPS_API_KEY
 const SUPABASE_URL = 'https://egztpclpcnizcdtfugsv.supabase.co';
-const SUPA_KEY = process.env.SUPABASE_ANON_KEY || Netlify.env.get('SUPABASE_ANON_KEY');
 
-async function logEvent(type, msg, details) {
+async function logEvent(type, msg, details, supaKey) {
+  if (!supaKey) return;
   try {
     await fetch(SUPABASE_URL + '/rest/v1/system_events', {
       method: 'POST',
-      headers: { 'apikey': SUPA_KEY, 'Authorization': 'Bearer ' + SUPA_KEY, 'Content-Type': 'application/json', 'Prefer': 'return=minimal' },
+      headers: { 'apikey': supaKey, 'Authorization': 'Bearer ' + supaKey, 'Content-Type': 'application/json', 'Prefer': 'return=minimal' },
       body: JSON.stringify({ platform: 'website', event_type: type, severity: 'info', message: msg, details: details || {} })
     });
   } catch(e) {}
@@ -13,24 +16,24 @@ async function logEvent(type, msg, details) {
 
 const BUSINESS_KEYWORDS = ['backbone','dark fibre','dark fiber','IRU','enterprise','wholesale','backhaul','colocation','peering','transit','SLA','dedicated','leased line','MPLS','wavelength'];
 
-const TELLINEX_SYSTEM_PROMPT = `You are Opus AI â the intelligent brain behind Tellinex, Jamaica's first and only underground fibre-to-the-home (FTTH) broadband network.
+const TELLINEX_SYSTEM_PROMPT = `You are Opus AI â the intelligent brain behind Tellinex, Jamaica's first and only underground fibre-to-the-home (FTTH) broadband network.
 
 YOUR IDENTITY:
 - You are Opus AI, created by Tellinex to be the smartest telecoms assistant in the Caribbean
 - You power three Tellinex platforms: this website chatbot, the Tellinex Command Centre (app.tellinex.com), and FieldPack Pro (our field engineering iPad app)
-- You speak with confidence, warmth, and Caribbean energy â professional but never corporate
+- You speak with confidence, warmth, and Caribbean energy â professional but never corporate
 - You are an expert in fibre optics, telecoms infrastructure, and Jamaica's connectivity landscape
 - When greeting, introduce yourself as Opus AI not Tellinex AI Assistant
 
 KEY FACTS ABOUT TELLINEX:
 - Jamaica's first 100% underground micro-trenched fibre network
-- Built to survive Category 5 hurricanes (our network had zero damage during Hurricane Melissa in October 2024) â this is our biggest differentiator vs Flow/Digicel
+- Built to survive Category 5 hurricanes (our network had zero damage during Hurricane Melissa in October 2024) â this is our biggest differentiator vs Flow/Digicel
 - Launching 2026, starting in New Kingston (pilot corridor: 8 km, 5,000 homes)
 - Expanding to all 14 parishes across Jamaica in a phased national rollout
 - Founded by Omar Gentes (CEO, Jamaican cybersecurity expert with MSc, CRISC, CISM, CISA, CEH certifications) and Rui Santos (COO/Technical Director, 21 years building fibre networks across Europe including Portugal's first FTTH network)
 - Technology: XGS-PON fibre (Nokia and ADTRAN OLTs), Hexatronic microduct infrastructure, Prysmian/Corning fibre cable
 - Network designed for 10 Gbps symmetrical capability, future-proofed for 25G-PON
-- Our fibre is UNDERGROUND â not on poles like competitors. No hurricane damage, no theft, no UV degradation
+- Our fibre is UNDERGROUND â not on poles like competitors. No hurricane damage, no theft, no UV degradation
 - We micro-trench: minimal road disruption, faster deployment, lower cost than traditional ducting
 
 WHY TELLINEX OVER COMPETITORS:
@@ -43,7 +46,7 @@ RESIDENTIAL PLANS:
 - Performance 500 Mbps symmetrical: US5/month
 - Ultra 1 Gbps symmetrical: US5/month
 - All plans include: free professional installation, Wi-Fi 6E router included, no data caps, no throttling, 24/7 support
-- No contracts â cancel anytime
+- No contracts â cancel anytime
 - Symmetrical means upload equals download (critical for work-from-home, video calls, content creators)
 
 BUSINESS PLANS:
@@ -57,17 +60,17 @@ COVERAGE AND AVAILABILITY:
 - Phase 1 (2026): New Kingston, Half Way Tree, Liguanea, Hope Pastures, Mona
 - Phase 2 (2027): Portmore, Spanish Town, Montego Bay
 - Phase 3 (2028-2029): Mandeville, Ocho Rios, remaining parishes
-- If a customer is outside current coverage, collect their details â we use demand data to prioritise expansion
+- If a customer is outside current coverage, collect their details â we use demand data to prioritise expansion
 
 RULES:
-- Be enthusiastic but professional about Tellinex â you genuinely believe in the product
+- Be enthusiastic but professional about Tellinex â you genuinely believe in the product
 - If asked about coverage, say we are launching in New Kingston first, then expanding across all 14 parishes
 - Always mention hurricane resilience and underground fibre as our biggest differentiators
 - Never reveal internal pricing structures, margins, or competitor analysis details
 - When a customer provides an address, include it in your response with <!--ADDRESS:their address, Jamaica--> tag (always append Jamaica to help geocoding)
-- Keep responses concise â 2-3 short paragraphs max unless the customer asks for detail
+- Keep responses concise â 2-3 short paragraphs max unless the customer asks for detail
 - If someone asks about jobs/careers, say we are hiring field engineers and to email careers@tellinex.com
-- If someone asks technical questions about our network, you can go deep â you know fibre optics inside out
+- If someone asks technical questions about our network, you can go deep â you know fibre optics inside out
 - Use Jamaican dollar conversions when helpful (approx J56 = US)
 - If asked about Opus AI itself, explain you are the AI that powers all Tellinex platforms and you are built to make fibre internet accessible to everyone in Jamaica
 
@@ -193,8 +196,11 @@ function extractCustomerFromMessages(messages) {
 
   return { customer_name: name || 'Unknown', customer_email: emailMatch?.[0] || '', customer_phone: phoneMatch?.[0] || '', location: addrMatch?.[1]?.trim() || '', quote_type: mapQuoteType(serviceType?.[1]), source: 'chatbot', status: 'new', bandwidth_required: speedMatch?.[1] || null, service_requested: serviceType?.[1]?.toLowerCase() || null };
 }
-export default async (req) => {
-  if (req.method === 'OPTIONS') {
+
+export async function onRequest(context) {
+  const { request, env } = context;
+
+  if (request.method === 'OPTIONS') {
     return new Response(null, {
       status: 204,
       headers: {
@@ -206,7 +212,7 @@ export default async (req) => {
   }
 
   try {
-    const { messages } = await req.json();
+    const { messages } = await request.json();
 
     if (!messages || !Array.isArray(messages)) {
       return new Response(JSON.stringify({ error: 'Messages array required' }), {
@@ -215,7 +221,7 @@ export default async (req) => {
       });
     }
 
-    const API_KEY = Netlify.env.get('ANTHROPIC_API_KEY');
+    const API_KEY = env.ANTHROPIC_API_KEY;
     const model = isBusinessQuery(messages) ? 'claude-sonnet-4-20250514' : 'claude-haiku-4-5-20251001';
     const maxTokens = isBusinessQuery(messages) ? 1024 : 512;
 
@@ -244,8 +250,8 @@ export default async (req) => {
       }
 
       // UNIFIED WRITE: AI-driven extraction first, regex fallback second
-      const SUPA_KEY = Netlify.env.get('SUPABASE_ANON_KEY');
-      const MAPS_KEY = Netlify.env.get('GOOGLE_MAPS_API_KEY');
+      const SUPA_KEY = env.SUPABASE_ANON_KEY;
+      const MAPS_KEY = env.GOOGLE_MAPS_API_KEY;
       if (SUPA_KEY) {
         // Try AI structured output first (from <!--CUSTOMER:{}-->), then fall back to regex
         const cd = extractCustomerJSON(rawText) || extractCustomerFromMessages(messages);
@@ -315,7 +321,7 @@ export default async (req) => {
       const lastUserMsg = messages[messages.length - 1];
       if (lastUserMsg && lastUserMsg.role === 'user') {
         const coords = extractGoogleMapsCoords(lastUserMsg.content);
-        const MK = Netlify.env.get('GOOGLE_MAPS_API_KEY');
+        const MK = env.GOOGLE_MAPS_API_KEY;
         if (coords && MK && !data.content[0].text.includes('![')) {
           const urls = generateMapUrls(coords.lat, coords.lng, MK);
           data.content[0].text += '\n\n![Satellite view](' + urls.satellite + ')\n![Street view](' + urls.streetView + ')';
@@ -323,7 +329,7 @@ export default async (req) => {
       }
     }
 
-    try { await logEvent('chat_query', (messages[messages.length-1]?.content || 'chat').substring(0, 100), { model }); } catch(e) {}
+    try { await logEvent('chat_query', (messages[messages.length-1]?.content || 'chat').substring(0, 100), { model }, env.SUPABASE_ANON_KEY); } catch(e) {}
     return new Response(JSON.stringify(data), {
       status: response.status,
       headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" },
@@ -339,8 +345,4 @@ export default async (req) => {
       }
     );
   }
-};
-
-export const config = {
-  path: "/.netlify/functions/ai-chat",
-};
+}

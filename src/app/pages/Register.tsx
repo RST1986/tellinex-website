@@ -1,10 +1,8 @@
-import { useEffect, useRef, useState, type CSSProperties, type FormEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type CSSProperties, type FormEvent } from "react";
 import { gsap } from "gsap";
 import { AlertCircle, CheckCircle, Mail, MapPin, MessageSquare, Phone, Signal, User } from "lucide-react";
-
-const SB_URL = "https://egztpclpcnizcdtfugsv.supabase.co/rest/v1";
-const SB_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImVnenRwY2xwY25pemNkdGZ1Z3N2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDMwODYwNTYsImV4cCI6MjA1ODY2MjA1Nn0.rY5yZ1zPNEW4bD2tU0HhYb5qJ_LCNeEJOqy9F7HnGXk";
-const API_HEADERS = { apikey: SB_KEY, Authorization: `Bearer ${SB_KEY}` };
+import TurnstileWidget, { type TurnstileWidgetHandle } from "../components/TurnstileWidget";
+import { submitPublicForm } from "../lib/publicForms";
 
 const PARISHES = [
   "Kingston", "St. Andrew", "St. Thomas", "Portland", "St. Mary",
@@ -30,8 +28,6 @@ type RegistrationForm = {
   priorities: string[];
   comments: string;
 };
-
-type ApiError = { code?: string; message?: string; hint?: string };
 
 const INITIAL_FORM: RegistrationForm = {
   fullName: "",
@@ -69,20 +65,14 @@ function validateForm(form: RegistrationForm): string | null {
   return null;
 }
 
-async function readApiError(response: Response): Promise<ApiError> {
-  try {
-    return (await response.json()) as ApiError;
-  } catch {
-    return {};
-  }
-}
-
 export default function Register() {
   const [form, setForm] = useState<RegistrationForm>(INITIAL_FORM);
   const [submitted, setSubmitted] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
+  const [turnstileToken, setTurnstileToken] = useState<string | null>(null);
   const formRef = useRef<HTMLDivElement>(null);
+  const turnstileRef = useRef<TurnstileWidgetHandle>(null);
 
   useEffect(() => {
     const ctx = gsap.context(() => {
@@ -105,6 +95,15 @@ export default function Register() {
     }));
   };
 
+  const handleTurnstileToken = useCallback((token: string | null) => {
+    setTurnstileToken(token);
+    if (token) setSubmitError(null);
+  }, []);
+
+  const handleTurnstileUnavailable = useCallback(() => {
+    setSubmitError("The security check could not load. Please refresh the page and try again.");
+  }, []);
+
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (submitting) return;
@@ -115,37 +114,27 @@ export default function Register() {
       return;
     }
 
+    if (!turnstileToken) {
+      setSubmitError("Complete the security check before submitting.");
+      return;
+    }
+
     setSubmitting(true);
     setSubmitError(null);
 
     try {
-      const response = await fetch(`${SB_URL}/registrations`, {
-        method: "POST",
-        headers: { ...API_HEADERS, "Content-Type": "application/json", Prefer: "return=minimal" },
-        body: JSON.stringify({
-          full_name: form.fullName.trim(),
-          email: form.email.trim().toLowerCase(),
-          phone: form.phone.trim() || null,
-          parish: form.parish.trim(),
-          community: form.community.trim() || null,
-          type: form.type,
-          provider: form.provider.trim() || null,
-          monthly_spend: form.monthlySpend.trim() || null,
-          priorities: form.priorities,
-          comments: form.comments.trim() || null,
-        }),
+      await submitPublicForm("registration", turnstileToken, {
+        full_name: form.fullName.trim(),
+        email: form.email.trim().toLowerCase(),
+        phone: form.phone.trim() || null,
+        parish: form.parish.trim(),
+        community: form.community.trim() || null,
+        type: form.type,
+        provider: form.provider.trim() || null,
+        monthly_spend: form.monthlySpend.trim() || null,
+        priorities: form.priorities,
+        comments: form.comments.trim() || null,
       });
-
-      if (!response.ok) {
-        const apiError = await readApiError(response);
-        if (response.status === 429 || apiError.code === "rate_limited") {
-          const retryAfter = response.headers.get("Retry-After");
-          throw new Error(retryAfter
-            ? `Too many submissions. Please try again in ${retryAfter} seconds.`
-            : "Too many submissions. Please try again later.");
-        }
-        throw new Error(apiError.message || "Registration could not be submitted. Please try again.");
-      }
 
       if (formRef.current) {
         await gsap.to(formRef.current, { opacity: 0, y: -20, duration: 0.35 });
@@ -155,6 +144,7 @@ export default function Register() {
     } catch (error) {
       console.error("Unable to submit registration", error);
       setSubmitError(error instanceof Error ? error.message : "Registration could not be submitted. Please try again.");
+      turnstileRef.current?.reset();
     } finally {
       setSubmitting(false);
     }
@@ -287,6 +277,13 @@ export default function Register() {
               <textarea value={form.comments} onChange={(e) => updateField("comments", e.target.value)} onFocus={focus} onBlur={blur} rows={3} maxLength={4000} placeholder="Tell us what you need from your internet..." style={{ ...inputStyle, resize: "vertical" }} />
             </div>
 
+            <TurnstileWidget
+              ref={turnstileRef}
+              action="public_registration"
+              onTokenChange={handleTurnstileToken}
+              onUnavailable={handleTurnstileUnavailable}
+            />
+
             {submitError && (
               <div role="alert" style={{ display: "flex", alignItems: "flex-start", gap: "8px", marginBottom: "16px", padding: "12px", borderRadius: "6px", background: "rgba(239,68,68,0.08)", border: "1px solid rgba(239,68,68,0.25)", color: "#fca5a5", fontFamily: '"Nunito", sans-serif', fontSize: "0.82rem" }}>
                 <AlertCircle size={16} style={{ flexShrink: 0, marginTop: "1px" }} />
@@ -294,7 +291,7 @@ export default function Register() {
               </div>
             )}
 
-            <button disabled={submitting} type="submit" style={{ width: "100%", padding: "14px", background: submitting ? "rgba(163,230,53,0.55)" : "#A3E635", color: "#040d14", fontFamily: '"Poppins", sans-serif', fontWeight: 700, fontSize: "0.9rem", letterSpacing: "0.1em", textTransform: "uppercase", borderRadius: "6px", border: "none", cursor: submitting ? "wait" : "pointer" }}>
+            <button disabled={submitting || !turnstileToken} type="submit" style={{ width: "100%", padding: "14px", background: submitting || !turnstileToken ? "rgba(163,230,53,0.55)" : "#A3E635", color: "#040d14", fontFamily: '"Poppins", sans-serif', fontWeight: 700, fontSize: "0.9rem", letterSpacing: "0.1em", textTransform: "uppercase", borderRadius: "6px", border: "none", cursor: submitting ? "wait" : !turnstileToken ? "not-allowed" : "pointer" }}>
               {submitting ? "SUBMITTING..." : "REGISTER MY INTEREST"}
             </button>
             <p className="text-center mt-3" style={{ fontFamily: '"Nunito", sans-serif', fontSize: "0.7rem", color: "rgba(255,255,255,0.25)" }}>

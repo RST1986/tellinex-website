@@ -1,6 +1,8 @@
-import { useEffect, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import { gsap } from "gsap";
 import { Star, Send, MessageCircle, CheckCircle } from "lucide-react";
+import TurnstileWidget, { type TurnstileWidgetHandle } from "../components/TurnstileWidget";
+import { submitPublicForm } from "../lib/publicForms";
 
 const SB_URL = "https://egztpclpcnizcdtfugsv.supabase.co/rest/v1";
 const SB_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImVnenRwY2xwY25pemNkdGZ1Z3N2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDMwODYwNTYsImV4cCI6MjA1ODY2MjA1Nn0.rY5yZ1zPNEW4bD2tU0HhYb5qJ_LCNeEJOqy9F7HnGXk";
@@ -29,7 +31,9 @@ export default function Reviews() {
   const [loadError, setLoadError] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState("");
+  const [turnstileToken, setTurnstileToken] = useState<string | null>(null);
   const [form, setForm] = useState({ name: "", email: "", rating: 5, title: "", text: "", type: "residential" });
+  const turnstileRef = useRef<TurnstileWidgetHandle>(null);
 
   useEffect(() => {
     void loadReviews();
@@ -66,6 +70,15 @@ export default function Reviews() {
     }
   }
 
+  const handleTurnstileToken = useCallback((token: string | null) => {
+    setTurnstileToken(token);
+    if (token) setSubmitError("");
+  }, []);
+
+  const handleTurnstileUnavailable = useCallback(() => {
+    setSubmitError("The security check could not load. Please refresh the page and try again.");
+  }, []);
+
   async function submit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
 
@@ -91,48 +104,29 @@ export default function Reviews() {
       return;
     }
 
+    if (!turnstileToken) {
+      setSubmitError("Complete the security check before submitting.");
+      return;
+    }
+
     setIsSubmitting(true);
     setSubmitError("");
 
     try {
-      const r = await fetch(`${SB_URL}/customer_reviews`, {
-        method: "POST",
-        headers: { ...H, "Content-Type": "application/json", Prefer: "return=minimal" },
-        body: JSON.stringify({
-          reviewer_name: reviewerName,
-          reviewer_email: reviewerEmail || null,
-          rating: form.rating,
-          title: reviewTitle || null,
-          review_text: reviewText,
-          reviewer_type: form.type,
-        }),
+      await submitPublicForm("customer_review", turnstileToken, {
+        reviewer_name: reviewerName,
+        reviewer_email: reviewerEmail || null,
+        rating: form.rating,
+        title: reviewTitle || null,
+        review_text: reviewText,
+        reviewer_type: form.type,
       });
-
-      if (!r.ok) {
-        let errorCode = "";
-        try {
-          const payload = (await r.json()) as { code?: string };
-          errorCode = payload.code ?? "";
-        } catch {
-          // The response may not contain JSON; the HTTP status still controls the result.
-        }
-
-        if (r.status === 429 || errorCode === "rate_limited") {
-          const retryAfter = Number.parseInt(r.headers.get("Retry-After") ?? "", 10);
-          throw new Error(
-            Number.isFinite(retryAfter) && retryAfter > 0
-              ? `Too many submissions. Please try again in ${retryAfter} seconds.`
-              : "Too many submissions. Please try again later.",
-          );
-        }
-
-        throw new Error("We could not submit your review. Please check the details and try again.");
-      }
 
       setSubmitted(true);
       setShowForm(false);
     } catch (error) {
       setSubmitError(error instanceof Error ? error.message : "We could not submit your review. Please try again.");
+      turnstileRef.current?.reset();
     } finally {
       setIsSubmitting(false);
     }
@@ -195,13 +189,19 @@ export default function Reviews() {
                 <option value="residential">Residential</option><option value="business">Business</option><option value="hotel">Hotel</option><option value="mdu">Apartment</option>
               </select>
             </div>
+            <TurnstileWidget
+              ref={turnstileRef}
+              action="customer_review"
+              onTokenChange={handleTurnstileToken}
+              onUnavailable={handleTurnstileUnavailable}
+            />
             {submitError && (
               <p role="alert" aria-live="polite" style={{ fontFamily: '"Nunito", sans-serif', fontSize: "0.82rem", color: "#ff8a8a", margin: 0 }}>
                 {submitError}
               </p>
             )}
             <div style={{ display: "flex", gap: "8px" }}>
-              <button type="submit" disabled={isSubmitting} style={{ padding: "12px 32px", borderRadius: "6px", border: "none", background: "#00C7B1", color: "#0a0a14", fontFamily: '"Poppins", sans-serif', fontWeight: 600, fontSize: "0.85rem", cursor: isSubmitting ? "not-allowed" : "pointer", opacity: isSubmitting ? 0.65 : 1 }}>{isSubmitting ? "Submitting…" : "Submit Review"}</button>
+              <button type="submit" disabled={isSubmitting || !turnstileToken} style={{ padding: "12px 32px", borderRadius: "6px", border: "none", background: "#00C7B1", color: "#0a0a14", fontFamily: '"Poppins", sans-serif', fontWeight: 600, fontSize: "0.85rem", cursor: isSubmitting || !turnstileToken ? "not-allowed" : "pointer", opacity: isSubmitting || !turnstileToken ? 0.65 : 1 }}>{isSubmitting ? "Submitting…" : "Submit Review"}</button>
               <button type="button" disabled={isSubmitting} onClick={() => { setSubmitError(""); setShowForm(false); }} style={{ padding: "12px 24px", borderRadius: "6px", border: "1px solid rgba(255,255,255,0.1)", background: "transparent", color: "rgba(255,255,255,0.5)", fontFamily: '"Nunito", sans-serif', fontSize: "0.85rem", cursor: isSubmitting ? "not-allowed" : "pointer" }}>Cancel</button>
             </div>
           </form>

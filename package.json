@@ -4,7 +4,8 @@
   "version": "1.0.0",
   "type": "module",
   "scripts": {
-    "build": "vite build",
+    "build": "node scripts/check-public-form-gateway-contract.mjs && vite build",
+    "check:public-form-gateway": "node scripts/check-public-form-gateway-contract.mjs",
     "dev": "vite",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit"

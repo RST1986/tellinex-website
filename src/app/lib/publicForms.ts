@@ -1,8 +1,42 @@
 export const TURNSTILE_SITE_KEY =
   import.meta.env.VITE_TURNSTILE_SITE_KEY || "0x4AAAAAAD_5xvo4krYggNKf";
 
-const PUBLIC_FORM_ENDPOINT =
+const DEFAULT_PUBLIC_FORM_ENDPOINT =
   "https://egztpclpcnizcdtfugsv.supabase.co/functions/v1/submit-public-form";
+const PUBLIC_FORM_PATH = "/functions/v1/submit-public-form";
+const SUPABASE_FUNCTION_HOST = /^[a-z0-9-]+\.supabase\.co$/i;
+
+function resolvePublicFormEndpoint(configuredEndpoint: string | undefined): string {
+  const candidate = configuredEndpoint?.trim() || DEFAULT_PUBLIC_FORM_ENDPOINT;
+
+  let endpoint: URL;
+  try {
+    endpoint = new URL(candidate);
+  } catch {
+    throw new Error("VITE_PUBLIC_FORM_ENDPOINT must be a valid HTTPS URL.");
+  }
+
+  if (
+    endpoint.protocol !== "https:" ||
+    endpoint.username !== "" ||
+    endpoint.password !== "" ||
+    endpoint.port !== "" ||
+    endpoint.search !== "" ||
+    endpoint.hash !== "" ||
+    !SUPABASE_FUNCTION_HOST.test(endpoint.hostname) ||
+    endpoint.pathname !== PUBLIC_FORM_PATH
+  ) {
+    throw new Error(
+      "VITE_PUBLIC_FORM_ENDPOINT must be an HTTPS Supabase submit-public-form endpoint without credentials, port, query, or fragment.",
+    );
+  }
+
+  return endpoint.toString();
+}
+
+export const PUBLIC_FORM_ENDPOINT = resolvePublicFormEndpoint(
+  import.meta.env.VITE_PUBLIC_FORM_ENDPOINT,
+);
 
 export type PublicFormType =
   | "access_request"

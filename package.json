@@ -7,6 +7,9 @@
     "build": "node scripts/check-public-form-gateway-contract.mjs && node scripts/check-chatbot-public-form-boundary.mjs && vite build",
     "check:public-form-gateway": "node scripts/check-public-form-gateway-contract.mjs",
     "check:chatbot-public-form-boundary": "node scripts/check-chatbot-public-form-boundary.mjs",
+    "check:commercial-facts": "node scripts/check-commercial-facts.mjs",
+    "check:public-control-plane": "node scripts/check-public-control-plane-boundary.mjs",
+    "release:check": "node scripts/release-check.mjs",
     "dev": "vite",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit"

@@ -191,7 +191,7 @@ export default function Layout() {
             <div>
               <img src="/Logo.svg" alt="Tellinex" style={{ height: "2.2rem", marginBottom: "12px", filter: "drop-shadow(0 0 8px rgba(0,199,177,0.3))" }} />
               <p style={{ fontFamily: '"Nunito", sans-serif', fontSize: "0.8rem", color: "rgba(255,255,255,0.4)", lineHeight: 1.6 }}>
-                Hurricane-resilient fibre broadband for Jamaica. Underground. Unstoppable. Unlimited.
+                Building resilient digital infrastructure in Jamaica. Network design principle: underground-first fibre. Not a live national service.
               </p>
             </div>
 
@@ -250,9 +250,13 @@ export default function Layout() {
               gap: "8px",
             }}
           >
-            <p style={{ fontFamily: '"Nunito", sans-serif', fontSize: "0.65rem", color: "rgba(255,255,255,0.2)", letterSpacing: "0.2em", textTransform: "uppercase" }}>
-              © 2026 Tellinex Limited · Next-Gen Telecommunications
+            <p style={{ fontFamily: '"Nunito", sans-serif', fontSize: "0.65rem", color: "rgba(255,255,255,0.2)", letterSpacing: "0.12em", textTransform: "uppercase" }}>
+              © 2026 Tellinex Limited · BUILDING_NETWORK
             </p>
+            <div style={{ display: "flex", gap: "16px" }}>
+              <Link to="/privacy" style={{ fontFamily: '"Nunito", sans-serif', fontSize: "0.75rem", color: "rgba(255,255,255,0.45)", textDecoration: "none" }}>Privacy (draft)</Link>
+              <Link to="/terms" style={{ fontFamily: '"Nunito", sans-serif', fontSize: "0.75rem", color: "rgba(255,255,255,0.45)", textDecoration: "none" }}>Terms (draft)</Link>
+            </div>
             <div
               style={{
                 height: "3px",

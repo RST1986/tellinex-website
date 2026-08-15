@@ -18,7 +18,7 @@ export default function Contact() {
         </h1>
         <div style={{ height: "3px", width: "5rem", background: "linear-gradient(90deg, #00C7B1, #A3E635)", borderRadius: "2px", margin: "0 auto 16px" }} />
         <p style={{ fontFamily: '"Nunito", sans-serif', fontSize: "1.05rem", color: "rgba(255,255,255,0.5)", maxWidth: "560px", margin: "0 auto" }}>
-          Email Tellinex directly. The on-site message form is not yet available — we will not show a fake success state.
+          Email Tellinex in Kingston. An on-site message form is not yet available — we will not show a fake success state.
         </p>
       </div>
 
@@ -36,7 +36,7 @@ export default function Contact() {
           CONTACT_FORM=NOT_YET_AVAILABLE
         </p>
         <p style={{ fontFamily: '"Nunito", sans-serif', fontSize: "0.92rem", color: "rgba(255,255,255,0.65)", lineHeight: 1.6 }}>
-          No public contact-form contract is approved on this branch. Use email. Do not invent a remote schema. A separate public-form gateway change may compose later.
+          Please email the addresses below. We will open an on-site message form only when that path is ready.
         </p>
       </div>
 

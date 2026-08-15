@@ -3,7 +3,14 @@ import { gsap } from "gsap";
 import { Shield, Award, Users, Cpu, Cable } from "lucide-react";
 import LegalNoticeLinks from "../components/LegalNoticeLinks";
 import { useRevealSafe } from "../lib/useRevealSafe";
-import { BIOGRAPHIES, NATIONAL_EXPANSION, NETWORK_DESIGN_PRINCIPLE, POSITIONING } from "../content/commercialFacts";
+import {
+  BIOGRAPHIES,
+  CARIBBEAN_FUTURE_POSITIONING,
+  JAMAICA_POSITIONING,
+  NATIONAL_EXPANSION,
+  NETWORK_DESIGN_PRINCIPLE,
+  POSITIONING,
+} from "../content/commercialFacts";
 
 const TEAM = [
   {
@@ -12,8 +19,8 @@ const TEAM = [
     role: "Chief Executive Officer and Co-Founder",
     color: "#00C7B1",
     classification: BIOGRAPHIES.omarGentles.class,
-    bio: "Jamaican co-founder leading commercial strategy, regulatory engagement, and cybersecurity architecture. Professional certifications listed by the founders are not independently evidenced in this repository.",
-    highlights: ["Founder-provided biography", "Independent evidence pending"],
+    bio: BIOGRAPHIES.omarGentles.publicBio,
+    highlights: ["Jamaica", "Commercial strategy"],
   },
   {
     initials: "RS",
@@ -21,23 +28,23 @@ const TEAM = [
     role: "Technical Director and Co-Founder",
     color: "#A3E635",
     classification: BIOGRAPHIES.ruiSantos.class,
-    bio: "Portuguese telecommunications engineer and co-founder responsible for network design and build. Historical European FTTH experience is founder-provided and not independently evidenced here.",
-    highlights: ["Founder-provided biography", "Independent evidence pending"],
+    bio: BIOGRAPHIES.ruiSantos.publicBio,
+    highlights: ["Network design", "Infrastructure build"],
   },
 ];
 
 const MILESTONES = [
-  { year: "Design", text: "Underground-first fibre is a network design principle, not a completed national asset.", class: "PLANNED" },
-  { year: "Now", text: "Tellinex is building the network. Public interest registration is open. This is not a live national service.", class: "CURRENT_VERIFIED" },
-  { year: "Next", text: "Pilot corridor intent: New Kingston. Dates are not a public launch commitment.", class: "PLANNED" },
-  { year: "Later", text: NATIONAL_EXPANSION.value, class: "PLANNED" },
+  { year: "Now", text: "Tellinex is building the Jamaica network. Interest registration is open. This is not a live national service.", class: "NOW" },
+  { year: "Building", text: "Underground-first fibre is the design principle for the network being constructed.", class: "BUILDING" },
+  { year: "Planned", text: "Pilot corridor intent: New Kingston. A public launch date is not yet approved.", class: "PLANNED" },
+  { year: "Later", text: `${NATIONAL_EXPANSION.value} ${CARIBBEAN_FUTURE_POSITIONING.value}`, class: "VISION" },
 ];
 
 const VALUES = [
   { icon: Shield, title: "Resilience first", desc: NETWORK_DESIGN_PRINCIPLE.value, color: "#00C7B1" },
-  { icon: Cpu, title: "Operations discipline", desc: "Public website is not the control plane. Operational authority stays in private Tellinex systems.", color: "#A3E635" },
-  { icon: Cable, title: "Underground-first design", desc: "Design intent is buried plant. That is not a storm-absolute guarantee and not a claim that the national network is already built.", color: "#00C7B1" },
-  { icon: Users, title: "Jamaica-first", desc: "Tellinex is a Jamaican company building infrastructure for Jamaican homes, businesses, and institutions.", color: "#A3E635" },
+  { icon: Cpu, title: "Institutional discipline", desc: "What we publish is what we can stand behind. Public information is kept separate from network operations.", color: "#A3E635" },
+  { icon: Cable, title: "Underground-first design", desc: NETWORK_DESIGN_PRINCIPLE.value, color: "#00C7B1" },
+  { icon: Users, title: "Jamaica first", desc: JAMAICA_POSITIONING.value, color: "#A3E635" },
 ];
 
 export default function About() {
@@ -77,7 +84,7 @@ export default function About() {
         <Award size={32} style={{ color: "#A3E635", margin: "0 auto 14px" }} />
         <h2 style={{ fontFamily: '"Poppins", sans-serif', fontWeight: 600, fontSize: "1.3rem", color: "#fff", marginBottom: "12px" }}>Mission</h2>
         <p style={{ fontFamily: '"Nunito", sans-serif', fontSize: "1rem", color: "rgba(255,255,255,0.55)", maxWidth: "640px", margin: "0 auto", lineHeight: 1.7 }}>
-          Build resilient digital infrastructure in Jamaica. We do not publish fundraising totals, licence numbers, or primacy claims on this site until they are independently evidenced.
+          Build resilient digital infrastructure for Jamaica — homes, businesses, institutions, and the operators that connect them.
         </p>
       </div>
 
@@ -90,6 +97,7 @@ export default function About() {
             <div
               key={member.name}
               className="reveal-safe relative"
+              data-bio-class={member.classification}
               style={{
                 background: "rgba(0,199,177,0.03)",
                 border: `1px solid ${member.color}20`,
@@ -143,9 +151,6 @@ export default function About() {
                   </span>
                 ))}
               </div>
-              <p style={{ fontFamily: "monospace", fontSize: "0.6rem", color: "rgba(255,255,255,0.3)", marginTop: "12px" }}>
-                {member.classification}
-              </p>
             </div>
           ))}
         </div>
@@ -177,7 +182,7 @@ export default function About() {
 
       <div>
         <h2 className="reveal-safe text-center" style={{ fontFamily: '"Poppins", sans-serif', fontWeight: 600, fontSize: "1.4rem", color: "#fff", marginBottom: "24px" }}>
-          Governed milestones
+          Where we are
         </h2>
         <div className="max-w-2xl mx-auto">
           {MILESTONES.map((milestone) => (

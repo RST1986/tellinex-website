@@ -139,8 +139,8 @@ export default function Reviews() {
           Early feedback
         </h1>
         <div style={{ height: "3px", width: "5rem", background: "linear-gradient(90deg, #00C7B1, #A3E635)", borderRadius: "2px", margin: "0 auto 16px" }} />
-        <p style={{ fontFamily: "monospace", fontSize: "0.7rem", letterSpacing: "0.16em", color: "#A3E635" }}>
-          REVIEWS_MODE={REVIEWS_MODE}
+        <p style={{ fontFamily: "monospace", fontSize: "0.7rem", letterSpacing: "0.16em", color: "#A3E635" }} data-reviews-mode={REVIEWS_MODE}>
+          Early feedback · pre-launch
         </p>
         <p style={{ fontFamily: '"Nunito", sans-serif', fontSize: "0.95rem", color: "rgba(255,255,255,0.5)", maxWidth: "560px", margin: "12px auto 0" }}>
           Tellinex is pre-launch. Published comments are moderated early feedback, not established mass-market sentiment. We do not fabricate reviews.

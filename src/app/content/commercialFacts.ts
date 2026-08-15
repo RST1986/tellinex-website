@@ -10,8 +10,10 @@
 
 export const FACT_CLASSES = [
   "CURRENT_VERIFIED",
+  "IN_DEVELOPMENT",
   "PLANNED",
   "TARGET",
+  "VISION",
   "DRAFT",
   "UNVERIFIED",
   "UNVERIFIED_NOT_PUBLIC",
@@ -26,7 +28,11 @@ export type CommercialFact<T> = {
   note: string;
 };
 
+export const SERVICE_STATUSES = ["LIVE", "IN_DEVELOPMENT", "PLANNED", "TARGET", "VISION"] as const;
+export type ServiceStatus = (typeof SERVICE_STATUSES)[number];
+
 export const LAUNCH_STATE = "BUILDING_NETWORK" as const;
+export const LAUNCH_STATE_PUBLIC_LABEL = "Building the network" as const;
 export const COMMERCIAL_LIVE = false;
 export const PUBLIC_LAUNCH_DATE: string | null = null;
 export const FIRST_CLAIM_REQUIRES_INDEPENDENT_EVIDENCE = true;
@@ -54,7 +60,7 @@ export const COMPANY = {
 
 export const POSITIONING: CommercialFact<string> = {
   value:
-    "Tellinex is building resilient digital infrastructure in Jamaica — a future fibre operator, enterprise connectivity, wholesale transport, and digital-infrastructure platform. Not merely a generic ISP.",
+    "Tellinex is building resilient digital infrastructure in Jamaica — underground fibre, enterprise connectivity, wholesale transport, and a long-term digital-infrastructure platform.",
   class: "CURRENT_VERIFIED",
   public: true,
   note: "Strategic positioning. Does not assert live retail service or national coverage.",
@@ -67,6 +73,22 @@ export const PUBLIC_HEADLINE: CommercialFact<string> = {
   note: "Homepage headline. Does not assert live retail service or national coverage.",
 };
 
+export const JAMAICA_POSITIONING: CommercialFact<string> = {
+  value:
+    "Jamaica is Tellinex's home market. Resilient digital infrastructure is being designed here first — underground fibre, enterprise connectivity, and wholesale transport for Jamaican homes, businesses, and institutions.",
+  class: "CURRENT_VERIFIED",
+  public: true,
+  note: "Primary-market positioning. Not a live coverage map and not a claim of parish-by-parish service.",
+};
+
+export const CARIBBEAN_FUTURE_POSITIONING: CommercialFact<string> = {
+  value:
+    "Wider Caribbean and CARICOM reach is a future expansion ambition after Jamaica — not a current operating footprint.",
+  class: "VISION",
+  public: true,
+  note: "Future regional ambition. Must not be read as live multi-country operations.",
+};
+
 export const NETWORK_DESIGN_PRINCIPLE: CommercialFact<string> = {
   value:
     "Network design principle: underground, micro-trenched fibre intended to reduce storm exposure compared with aerial plant.",
@@ -76,7 +98,8 @@ export const NETWORK_DESIGN_PRINCIPLE: CommercialFact<string> = {
 };
 
 export const CURRENT_COVERAGE: CommercialFact<string> = {
-  value: "Coverage is not a live national service. Public interest registration is open while the network is being built.",
+  value:
+    "Tellinex is not a live national broadband service. Public interest registration is open while the Jamaica network is being built.",
   class: "CURRENT_VERIFIED",
   public: true,
   note: "No parish-level live coverage map is approved for public assertion.",
@@ -136,7 +159,7 @@ export const FIRST_IN_JAMAICA_CLAIM_ALLOWED = false;
 
 export const RESILIENCE_PUBLIC_WORDING: CommercialFact<string> = {
   value:
-    "We are designing underground fibre so Jamaica can have more resilient connectivity. This is a design principle, not a hurricane-proof or Category 5 guarantee.",
+    "Designed for Caribbean resilience. Underground fibre architecture intended to reduce exposure to common aerial-network hazards — a design principle, not immunity from storms, flooding, power failure, or other outages.",
   class: "PLANNED",
   public: true,
   note: "Defensible resilience positioning. No storm-absolute language.",
@@ -173,20 +196,87 @@ export const SLA_ENTERPRISE_TARGET: CommercialFact<string> = {
 export const PRICING_PUBLIC_WORDING = "PRICING_TO_BE_CONFIRMED" as const;
 export const PRICING_CTA_REGISTER = "REGISTER_FOR_LAUNCH_UPDATES" as const;
 export const PRICING_CTA_ENTERPRISE = "CONTACT_ENTERPRISE_TEAM" as const;
+export const CTA_NAV_LABEL = "Register interest" as const;
+export const CTA_HERO_LABEL = "Register your interest" as const;
 
 export const REGISTRATION_IS_INTEREST_ONLY = true;
 export const SUCCESS_LANGUAGE = "REQUEST_RECEIVED" as const;
+
+export const PUBLIC_SERVICE_CATALOGUE = [
+  {
+    service: "Interest registration",
+    status: "LIVE" as const,
+    publicCopy: "Open now. Interest only — not a service contract and not an order.",
+  },
+  {
+    service: "Public information website",
+    status: "LIVE" as const,
+    publicCopy: "This website describes what Tellinex is building in Jamaica.",
+  },
+  {
+    service: "Email enquiries",
+    status: "LIVE" as const,
+    publicCopy: "Email Tellinex at the published addresses.",
+  },
+  {
+    service: "AI assistant",
+    status: "LIVE" as const,
+    publicCopy: "Available as an assistant, not as commercial authority.",
+  },
+  {
+    service: "On-site contact form",
+    status: "PLANNED" as const,
+    publicCopy: "Not yet available. Please email.",
+  },
+  {
+    service: "Residential fibre",
+    status: "PLANNED" as const,
+    publicCopy: "Planned home connectivity.",
+  },
+  {
+    service: "Business fibre",
+    status: "PLANNED" as const,
+    publicCopy: "Planned business connectivity.",
+  },
+  {
+    service: "Enterprise solutions",
+    status: "PLANNED" as const,
+    publicCopy: "Bespoke connectivity — by enquiry. Not a published live entitlement.",
+  },
+  {
+    service: "Wholesale and backhaul",
+    status: "PLANNED" as const,
+    publicCopy: "Carrier-grade access — planned. Not a live wholesale offer.",
+  },
+  {
+    service: "Early feedback",
+    status: "IN_DEVELOPMENT" as const,
+    publicCopy: "Pre-launch moderated feedback, not mass-market reviews.",
+  },
+] as const;
+
+const SERVICES_THAT_MUST_NOT_BE_LIVE = new Set<string>([
+  "On-site contact form",
+  "Residential fibre",
+  "Business fibre",
+  "Enterprise solutions",
+  "Wholesale and backhaul",
+]);
 
 export const BIOGRAPHIES = {
   omarGentles: {
     class: "FOUNDER_PROVIDED_UNVERIFIED" as const,
     public: true,
     note: "Biography supplied by founders. Certifications and titles are not independently evidenced in this repository. Do not invent corrections.",
+    publicBio:
+      "Jamaican co-founder leading commercial strategy, regulatory engagement, and cybersecurity architecture.",
   },
   ruiSantos: {
     class: "FOUNDER_PROVIDED_UNVERIFIED" as const,
     public: true,
     note: "Biography supplied by founders. Historical FTTH claims are not independently evidenced here. Do not invent corrections.",
+    publicBio:
+      "Portuguese telecommunications engineer and co-founder responsible for network design and build.",
   },
 } as const;
 
@@ -195,11 +285,11 @@ export const FUNDRAISING_CLAIMS_PUBLIC = false;
 export const SEO = {
   title: "Tellinex — Building resilient digital infrastructure in Jamaica",
   description:
-    "Tellinex is building underground fibre and digital infrastructure in Jamaica. Network build in progress. Register interest for launch updates. Pricing and coverage will be confirmed before service activation.",
+    "Tellinex is building underground fibre and digital infrastructure in Jamaica, our home market. Designed for Caribbean resilience. Register interest while the network is being built. Pricing and coverage will be confirmed before service activation.",
   canonical: "https://tellinex.com/",
   ogTitle: "Tellinex — Resilient digital infrastructure for Jamaica",
   ogDescription:
-    "Future fibre operator, enterprise connectivity, and wholesale transport platform. Building the network. Not a live national service.",
+    "Underground fibre, enterprise connectivity, and wholesale transport — being built in Jamaica. Not a live national service. Wider Caribbean reach is future expansion.",
 } as const;
 
 export function isPublicFact(fact: CommercialFact<unknown>): boolean {
@@ -207,8 +297,10 @@ export function isPublicFact(fact: CommercialFact<unknown>): boolean {
   const factClass = fact.class;
   switch (factClass) {
     case "CURRENT_VERIFIED":
+    case "IN_DEVELOPMENT":
     case "PLANNED":
     case "TARGET":
+    case "VISION":
       return true;
     case "DRAFT":
     case "UNVERIFIED":
@@ -228,6 +320,8 @@ export function publicNumericClaims(): CommercialFact<string>[] {
 export const GOVERNED_STRING_FACTS = {
   POSITIONING,
   PUBLIC_HEADLINE,
+  JAMAICA_POSITIONING,
+  CARIBBEAN_FUTURE_POSITIONING,
   NETWORK_DESIGN_PRINCIPLE,
   CURRENT_COVERAGE,
   NATIONAL_EXPANSION,
@@ -252,20 +346,28 @@ export function looksLikeCurrentNationwideCoverage(value: string): boolean {
     /homes passed/i.test(value) ||
     /live gigabit/i.test(value) ||
     /now covers/i.test(value) ||
+    /island-wide/i.test(value) ||
+    /fully deployed/i.test(value) ||
+    /\bavailable now\b/i.test(value) ||
+    /\blive now\b/i.test(value) ||
     /nationwide (live|service|coverage)/i.test(value)
   );
 }
 
 export function looksLikeStormAbsoluteAffirmation(value: string): boolean {
   const normalized = value.replace(/\s+/g, " ");
-  if (/not a hurricane-proof or Category 5 guarantee/i.test(normalized)) {
+  if (/not a hurricane-proof or Category 5 guarantee/i.test(normalized) || /not immunity from/i.test(normalized)) {
     return /unstoppable|zero storm risk|hurricane-proof internet/i.test(normalized);
   }
   return (
     /hurricane-proof/i.test(normalized) ||
     /category 5/i.test(normalized) ||
     /zero storm risk/i.test(normalized) ||
-    /\bunstoppable\b/i.test(normalized)
+    /\bunstoppable\b/i.test(normalized) ||
+    /every storm/i.test(normalized) ||
+    /cannot fail/i.test(normalized) ||
+    /can't be blown down/i.test(normalized) ||
+    /immune to (hurricanes|storms|flooding)/i.test(normalized)
   );
 }
 
@@ -284,6 +386,10 @@ export function looksLikePublicPrice(value: string): boolean {
     /founding member rate/i.test(value) ||
     /From US\$/i.test(value)
   );
+}
+
+export function looksLikeInstantServiceOrder(value: string): boolean {
+  return /get connected/i.test(value) || /order now/i.test(value) || /buy now/i.test(value);
 }
 
 export function assertCommercialRegistryInvariants(): void {
@@ -316,6 +422,9 @@ export function assertCommercialRegistryInvariants(): void {
   }
   if (PRICING_GOVERNANCE !== "DRAFT_PRICE_NOT_CONTRACTUAL") {
     throw new Error("PRICING_GOVERNANCE_MUST_REMAIN_DRAFT");
+  }
+  if (looksLikeInstantServiceOrder(CTA_NAV_LABEL) || looksLikeInstantServiceOrder(CTA_HERO_LABEL)) {
+    throw new Error("CTA_MUST_NOT_IMPLY_INSTANT_SERVICE_ORDERING");
   }
   if (
     PUBLIC_AUTO_HEAL_ENDPOINTS !== 0 ||
@@ -355,6 +464,18 @@ export function assertCommercialRegistryInvariants(): void {
   if (NETWORK_DESIGN_PRINCIPLE.class !== "PLANNED") {
     throw new Error("NETWORK_DESIGN_PRINCIPLE_MUST_REMAIN_PLANNED");
   }
+  if (CARIBBEAN_FUTURE_POSITIONING.class !== "VISION") {
+    throw new Error("CARIBBEAN_FUTURE_POSITIONING_MUST_REMAIN_VISION");
+  }
+  if (JAMAICA_POSITIONING.class !== "CURRENT_VERIFIED") {
+    throw new Error("JAMAICA_POSITIONING_MUST_REMAIN_CURRENT_VERIFIED");
+  }
+
+  for (const entry of PUBLIC_SERVICE_CATALOGUE) {
+    if (SERVICES_THAT_MUST_NOT_BE_LIVE.has(entry.service) && entry.status === "LIVE") {
+      throw new Error(`${entry.service.replace(/\s+/g, "_").toUpperCase()}_CANNOT_BE_MARKED_LIVE`);
+    }
+  }
 
   for (const [name, fact] of Object.entries(GOVERNED_STRING_FACTS)) {
     if (
@@ -363,7 +484,7 @@ export function assertCommercialRegistryInvariants(): void {
     ) {
       throw new Error(`${name}_DRAFT_OR_UNVERIFIED_CANNOT_BE_PUBLIC_AUTHORITATIVE`);
     }
-    if (fact.public && fact.class === "CURRENT_VERIFIED") {
+    if (fact.public && (fact.class === "CURRENT_VERIFIED" || fact.class === "IN_DEVELOPMENT")) {
       if (looksLikeCurrentNationwideCoverage(fact.value)) {
         throw new Error(`${name}_CURRENT_VERIFIED_CANNOT_ASSERT_NATIONWIDE_COVERAGE`);
       }

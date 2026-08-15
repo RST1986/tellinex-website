@@ -6,8 +6,11 @@ import NetworkBuildStatus from "../components/NetworkBuildStatus";
 import LegalNoticeLinks from "../components/LegalNoticeLinks";
 import { useRevealSafe } from "../lib/useRevealSafe";
 import {
+  CTA_HERO_LABEL,
   CURRENT_COVERAGE,
+  JAMAICA_POSITIONING,
   LAUNCH_STATE,
+  LAUNCH_STATE_PUBLIC_LABEL,
   NATIONAL_EXPANSION,
   NETWORK_DESIGN_PRINCIPLE,
   POSITIONING,
@@ -18,8 +21,8 @@ import {
 } from "../content/commercialFacts";
 
 const STATS = [
-  { value: "Design intent", label: SYMMETRICAL_SPEED_INTENT.value, icon: Zap, classification: "PLANNED" },
-  { value: UPTIME_TARGET.value, label: "Uptime target — not a commitment", icon: Server, classification: "TARGET" },
+  { value: "Building", label: SYMMETRICAL_SPEED_INTENT.value, icon: Zap, classification: "PLANNED" },
+  { value: "Target", label: `${UPTIME_TARGET.value} engineering uptime target — not a contractual commitment`, icon: Server, classification: "TARGET" },
   { value: "Planned", label: NATIONAL_EXPANSION.value, icon: Globe, classification: "PLANNED" },
 ];
 
@@ -38,14 +41,14 @@ const VALUE_PROPS = [
   },
   {
     icon: Globe,
-    title: "National programme — planned",
-    desc: `${CURRENT_COVERAGE.value} ${NATIONAL_EXPANSION.value}`,
+    title: "Jamaica first — then further",
+    desc: `${JAMAICA_POSITIONING.value} ${CURRENT_COVERAGE.value} ${NATIONAL_EXPANSION.value}`,
     color: "#00C7B1",
   },
   {
     icon: Wifi,
     title: "Digital infrastructure platform",
-    desc: "Future fibre, enterprise connectivity, and wholesale transport on one underground-first design principle. Plans are not live services.",
+    desc: "Fibre access, enterprise connectivity, and wholesale transport on one underground-first design principle. Products become live only when they are ready.",
     color: "#A3E635",
   },
 ];
@@ -73,7 +76,7 @@ export default function Home() {
     <div ref={heroRef}>
       <section className="min-h-screen flex items-center justify-center px-4 sm:px-6">
         <div className="text-center w-full max-w-3xl mx-auto py-12">
-          <div className="hero-badge reveal-safe flex items-center justify-center gap-2 mb-6">
+          <div className="hero-badge reveal-safe flex items-center justify-center gap-2 mb-6" data-launch-state={LAUNCH_STATE}>
             <Signal className="w-4 h-4 text-[#A3E635]" />
             <span
               style={{
@@ -88,7 +91,7 @@ export default function Home() {
                 background: "rgba(163,230,53,0.06)",
               }}
             >
-              {LAUNCH_STATE} — JAMAICA DIGITAL INFRASTRUCTURE
+              {LAUNCH_STATE_PUBLIC_LABEL} · JAMAICA
             </span>
             <Signal className="w-4 h-4 text-[#A3E635]" />
           </div>
@@ -161,7 +164,7 @@ export default function Home() {
                 boxShadow: "0 0 20px rgba(163,230,53,0.4)",
               }}
             >
-              Register your interest <ArrowRight size={18} />
+              {CTA_HERO_LABEL} <ArrowRight size={18} />
             </Link>
             <p style={{ fontFamily: '"Nunito", sans-serif', fontSize: "0.75rem", color: "rgba(255,255,255,0.35)", marginTop: "12px" }}>
               Interest registration only. Not a service contract. Launch date is not yet approved.

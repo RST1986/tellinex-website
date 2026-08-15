@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import TurnstileWidget, { type TurnstileWidgetHandle } from "./TurnstileWidget";
-import { POSITIONING, RESILIENCE_PUBLIC_WORDING } from "../content/commercialFacts";
+import { JAMAICA_POSITIONING, POSITIONING, RESILIENCE_PUBLIC_WORDING } from "../content/commercialFacts";
 
 const QUICK_REPLIES = [
   "What is Tellinex building?",
@@ -13,7 +13,7 @@ interface Message {
   content: string;
 }
 
-const WELCOME = `${POSITIONING.value} ${RESILIENCE_PUBLIC_WORDING.value} I am an assistant, not an authority on coverage, pricing, dates, or operations.`;
+const WELCOME = `${POSITIONING.value} ${JAMAICA_POSITIONING.value} ${RESILIENCE_PUBLIC_WORDING.value} I am an assistant, not an authority on coverage, pricing, dates, or operations.`;
 
 export default function AIChatWidget() {
   const [isOpen, setIsOpen] = useState(false);

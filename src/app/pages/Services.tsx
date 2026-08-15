@@ -9,19 +9,26 @@ import {
   PRICING_CTA_ENTERPRISE,
   PRICING_CTA_REGISTER,
   PRICING_PUBLIC_WORDING,
+  PUBLIC_SERVICE_CATALOGUE,
 } from "../content/commercialFacts";
+
+const residential = PUBLIC_SERVICE_CATALOGUE.find((entry) => entry.service === "Residential fibre");
+const business = PUBLIC_SERVICE_CATALOGUE.find((entry) => entry.service === "Business fibre");
+const enterprise = PUBLIC_SERVICE_CATALOGUE.find((entry) => entry.service === "Enterprise solutions");
+const wholesale = PUBLIC_SERVICE_CATALOGUE.find((entry) => entry.service === "Wholesale and backhaul");
 
 const TIERS = [
   {
     icon: Home,
-    name: "Residential fibre",
-    tagline: "Planned home connectivity",
+    name: residential?.service ?? "Residential fibre",
+    tagline: residential?.publicCopy ?? "Planned home connectivity",
+    status: residential?.status ?? "PLANNED",
     color: "#00C7B1",
     features: [
       "Gigabit-class symmetrical intent",
       "Underground-first design principle",
       "Installation and equipment details to be confirmed",
-      "No live retail service yet",
+      "Interest registration — not an order",
     ],
     price: PRICING_PUBLIC_WORDING,
     cta: PRICING_CTA_REGISTER,
@@ -29,14 +36,15 @@ const TIERS = [
   },
   {
     icon: Building,
-    name: "Business fibre",
-    tagline: "Planned business connectivity",
+    name: business?.service ?? "Business fibre",
+    tagline: business?.publicCopy ?? "Planned business connectivity",
+    status: business?.status ?? "PLANNED",
     color: "#A3E635",
     features: [
       "Dedicated business connectivity — planned",
       "SLA figures are not approved product commitments",
       "Fault-response targets to be confirmed",
-      "No live business service yet",
+      "Interest registration — not an order",
     ],
     price: PRICING_PUBLIC_WORDING,
     cta: PRICING_CTA_REGISTER,
@@ -44,8 +52,9 @@ const TIERS = [
   },
   {
     icon: Building2,
-    name: "Enterprise solutions",
-    tagline: "Bespoke connectivity — by enquiry",
+    name: enterprise?.service ?? "Enterprise solutions",
+    tagline: enterprise?.publicCopy ?? "Bespoke connectivity — by enquiry",
+    status: enterprise?.status ?? "PLANNED",
     color: "#00C7B1",
     features: [
       "Dedicated circuits and dark fibre — planned products",
@@ -59,8 +68,9 @@ const TIERS = [
   },
   {
     icon: Globe,
-    name: "Wholesale and backhaul",
-    tagline: "Carrier-grade access — planned",
+    name: wholesale?.service ?? "Wholesale and backhaul",
+    tagline: wholesale?.publicCopy ?? "Carrier-grade access — planned",
+    status: wholesale?.status ?? "PLANNED",
     color: "#A3E635",
     features: [
       "Wholesale transport and tower fibre — planned",
@@ -117,6 +127,7 @@ export default function Services() {
               <div>
                 <h2 style={{ fontFamily: '"Poppins", sans-serif', fontWeight: 600, fontSize: "1.2rem", color: "#fff" }}>{tier.name}</h2>
                 <p style={{ fontFamily: '"Nunito", sans-serif', fontSize: "0.78rem", color: tier.color }}>{tier.tagline}</p>
+                <p style={{ fontFamily: "monospace", fontSize: "0.6rem", color: "rgba(163,230,53,0.7)", marginTop: "4px", letterSpacing: "0.12em" }}>{tier.status}</p>
               </div>
             </div>
 

@@ -4,7 +4,7 @@ import { Menu, X } from "lucide-react";
 import { gsap } from "gsap";
 import SpaceBackground from "./SpaceBackground";
 import AIChatWidget from "./AIChatWidget";
-import { COMPANY, LAUNCH_STATE } from "../content/commercialFacts";
+import { COMPANY, CTA_NAV_LABEL, LAUNCH_STATE } from "../content/commercialFacts";
 
 const NAV = [
   { to: "/", label: "Home" },
@@ -109,7 +109,7 @@ export default function Layout() {
               gsap.to(e.currentTarget, { scale: 1, boxShadow: "0 0 14px rgba(163,230,53,0.3)", duration: 0.2 });
             }}
           >
-            Get Connected
+            {CTA_NAV_LABEL}
           </Link>
 
           {/* Mobile hamburger */}
@@ -166,7 +166,7 @@ export default function Layout() {
                 textDecoration: "none",
               }}
             >
-              GET CONNECTED
+              {CTA_NAV_LABEL}
             </Link>
           </div>
         )}
@@ -192,7 +192,7 @@ export default function Layout() {
             <div>
               <img src="/Logo.svg" alt="Tellinex" style={{ height: "2.2rem", marginBottom: "12px", filter: "drop-shadow(0 0 8px rgba(0,199,177,0.3))" }} />
               <p style={{ fontFamily: '"Nunito", sans-serif', fontSize: "0.8rem", color: "rgba(255,255,255,0.4)", lineHeight: 1.6 }}>
-                Building resilient digital infrastructure in Jamaica. Network design principle: underground-first fibre. Not a live national service.
+                Building resilient digital infrastructure in Jamaica. Underground-first fibre by design. Not a live national service.
               </p>
             </div>
 
@@ -214,7 +214,7 @@ export default function Layout() {
 
             {/* Services */}
             <div>
-              <h4 style={{ fontFamily: '"Poppins", sans-serif', fontWeight: 600, fontSize: "0.8rem", color: "#00C7B1", letterSpacing: "0.12em", textTransform: "uppercase", marginBottom: "12px" }}>Services</h4>
+              <h4 style={{ fontFamily: '"Poppins", sans-serif', fontWeight: 600, fontSize: "0.8rem", color: "#00C7B1", letterSpacing: "0.12em", textTransform: "uppercase", marginBottom: "12px" }}>Planned services</h4>
               {["Residential Fibre", "Business Fibre", "Enterprise Solutions", "Wholesale & Backhaul"].map((s) => (
                 <Link
                   key={s}

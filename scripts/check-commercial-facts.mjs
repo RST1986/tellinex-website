@@ -67,6 +67,16 @@ if (facts.DRAFT_RESIDENTIAL_PRICE.public !== false || facts.DRAFT_RESIDENTIAL_PR
   fail("DRAFT_RESIDENTIAL_PRICE became public-authoritative");
 }
 if (facts.NATIONAL_EXPANSION.class !== "PLANNED") fail("planned coverage class drifted from PLANNED");
+if (facts.CARIBBEAN_FUTURE_POSITIONING.class !== "VISION") fail("CARIBBEAN_FUTURE_POSITIONING drifted from VISION");
+if (facts.JAMAICA_POSITIONING.class !== "CURRENT_VERIFIED") fail("JAMAICA_POSITIONING drifted from CURRENT_VERIFIED");
+if (facts.looksLikeInstantServiceOrder(facts.CTA_NAV_LABEL) || facts.looksLikeInstantServiceOrder(facts.CTA_HERO_LABEL)) {
+  fail("CTA implies instant service ordering");
+}
+for (const entry of facts.PUBLIC_SERVICE_CATALOGUE) {
+  if (["Residential fibre", "Business fibre", "Enterprise solutions", "Wholesale and backhaul", "On-site contact form"].includes(entry.service) && entry.status === "LIVE") {
+    fail(`${entry.service} marked LIVE`);
+  }
+}
 if (facts.NETWORK_DESIGN_PRINCIPLE.class !== "PLANNED") fail("design intent class drifted from PLANNED");
 if (facts.PUBLIC_AUTO_HEAL_ENDPOINTS !== 0 || facts.PUBLIC_REDEPLOY_ENDPOINTS !== 0 || facts.PUBLIC_TCC_CONTROL_ENDPOINTS !== 0) {
   fail("public control-plane authority is non-zero");
@@ -93,6 +103,12 @@ const FACT_CONSUMERS = {
   RESILIENCE_PUBLIC_WORDING: ["src/app/pages/Home.tsx", "src/app/components/AIChatWidget.tsx"],
   SYMMETRICAL_SPEED_INTENT: ["src/app/pages/Home.tsx"],
   UPTIME_TARGET: ["src/app/pages/Home.tsx"],
+  JAMAICA_POSITIONING: ["src/app/pages/Home.tsx", "src/app/pages/About.tsx", "src/app/components/AIChatWidget.tsx"],
+  CARIBBEAN_FUTURE_POSITIONING: ["src/app/pages/About.tsx"],
+  CTA_NAV_LABEL: ["src/app/components/Layout.tsx"],
+  CTA_HERO_LABEL: ["src/app/pages/Home.tsx"],
+  LAUNCH_STATE_PUBLIC_LABEL: ["src/app/pages/Home.tsx", "src/app/components/NetworkBuildStatus.tsx"],
+  PUBLIC_SERVICE_CATALOGUE: ["src/app/pages/Services.tsx"],
   PRICING_PUBLIC_WORDING: ["src/app/pages/Services.tsx"],
   LAUNCH_STATE: ["src/app/pages/Home.tsx", "src/app/components/NetworkBuildStatus.tsx", "src/app/components/Layout.tsx"],
   PUBLIC_LAUNCH_DATE: ["src/app/components/NetworkBuildStatus.tsx"],
@@ -130,6 +146,8 @@ if (!services.includes("PRICING_PUBLIC_WORDING") || services.includes("US$")) fa
 if (!network.includes("CURRENT_COVERAGE.value")) fail("NetworkBuildStatus bypasses CURRENT_COVERAGE");
 if (!layout.includes("{LAUNCH_STATE}")) fail("Layout launch-state copy bypasses registry");
 if (layout.includes("Unstoppable") || layout.includes("Unlimited")) fail("Layout contains PR16 storm-absolute wording class");
+if (/Get Connected/i.test(layout)) fail("Layout CTA implies instant service ordering");
+if (!layout.includes("CTA_NAV_LABEL")) fail("Layout CTA bypasses CTA_NAV_LABEL");
 if (!widget.includes("POSITIONING.value") || !widget.includes("RESILIENCE_PUBLIC_WORDING.value")) {
   fail("AI widget welcome text bypasses registry");
 }
@@ -177,6 +195,13 @@ const forbiddenPublic = [
   { re: /From US\$/, why: "unapproved public price" },
   { re: /new Date\("2026-12-31/, why: "fabricated countdown" },
   { re: /Launching April 2026/, why: "unapproved launch date" },
+  { re: /Coming 2026/i, why: "unapproved coming-2026 claim" },
+  { re: /founding member rates/i, why: "founding-member rate lock" },
+  { re: /Get Connected/i, why: "instant-order CTA" },
+  { re: /Wi-Fi 6E router included/i, why: "unqualified live entitlement" },
+  { re: /24\/7 Jamaican-based support/i, why: "unqualified live entitlement" },
+  { re: /priority fault response \(4hr\)/i, why: "unqualified live entitlement" },
+  { re: /nationwide scale/i, why: "nationwide-scale credential" },
 ];
 
 for (const file of publicFiles) {

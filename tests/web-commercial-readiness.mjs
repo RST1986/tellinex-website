@@ -154,9 +154,12 @@ pass("WEB16", "reduced motion and reveal-safe production CSS remain");
 if (!networkHtml.includes("No public completion percentage") || networkHtml.includes("% complete")) {
   fail("WEB17", "fabricated build percentage");
 }
-if (!networkHtml.includes(facts.CURRENT_COVERAGE.value) || !networkHtml.includes("(null)")) {
-  fail("WEB17", "NetworkBuildStatus dropped governed coverage/date");
+if (!networkHtml.includes(facts.CURRENT_COVERAGE.value)) {
+  fail("WEB17", "NetworkBuildStatus dropped governed coverage");
 }
+if (facts.PUBLIC_LAUNCH_DATE !== null) fail("WEB17", "PUBLIC_LAUNCH_DATE was fabricated");
+if (!/has not been approved/i.test(networkHtml)) fail("WEB17", "NetworkBuildStatus dropped unapproved launch-date wording");
+if (/\(null\)/.test(networkHtml)) fail("WEB17", "NetworkBuildStatus leaked internal null token");
 pass("WEB17", "rendered network build status is architecture-only");
 
 if (dirty.reviewText.includes("<") || read("src/app/pages/Reviews.tsx").includes("eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9")) {

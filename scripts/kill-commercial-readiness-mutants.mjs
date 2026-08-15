@@ -50,7 +50,7 @@ const mutants = [
     expected: "CURRENT_COVERAGE nationwide assertion must fail semantic registry control",
     apply: () => mutate(
       "src/app/content/commercialFacts.ts",
-      "Coverage is not a live national service. Public interest registration is open while the network is being built.",
+      "Tellinex is not a live national broadband service. Public interest registration is open while the Jamaica network is being built.",
       "Tellinex now covers all 14 parishes with 425K homes passed and live gigabit service.",
     ),
   },
@@ -137,7 +137,43 @@ const mutants = [
       "  if (!apiKey || !turnstileSecret) {\n    return json(origin, 200, { code: 'ok', message: 'service is live today' });\n  }",
     ),
   },
+  {
+    id: "P1B1",
+    expected: "Get Connected CTA must fail instant-order control",
+    apply: () => mutate(
+      "src/app/components/Layout.tsx",
+      "{CTA_NAV_LABEL}",
+      "Get Connected",
+    ),
+  },
+  {
+    id: "P1B2",
+    expected: "planned residential fibre marked LIVE must fail",
+    apply: () => mutate(
+      "src/app/content/commercialFacts.ts",
+      "service: \"Residential fibre\",\n    status: \"PLANNED\" as const,",
+      "service: \"Residential fibre\",\n    status: \"LIVE\" as const,",
+    ),
+  },
+  {
+    id: "P1B3",
+    expected: "fabricated 2026-12-31 countdown must fail",
+    apply: () => mutate(
+      "src/app/pages/Home.tsx",
+      "export default function Home() {",
+      "const LAUNCH_DATE = new Date(\"2026-12-31T00:00:00\");\nexport default function Home() {",
+    ),
+  },
 ];
+
+const watchFiles = [
+  "src/app/content/commercialFacts.ts",
+  "src/app/pages/Contact.tsx",
+  "functions/api/ai-chat.js",
+  "src/app/components/Layout.tsx",
+  "src/app/pages/Home.tsx",
+];
+const snapshots = Object.fromEntries(watchFiles.map((file) => [file, fs.readFileSync(file, "utf8")]));
 
 const killed = [];
 const receipts = [];
@@ -165,9 +201,8 @@ for (const mutant of mutants) {
   }
 }
 
-const dirty = spawnSync("git", ["status", "--porcelain"], { encoding: "utf8" });
-const mutated = dirty.stdout.split("\n").filter((line) => /commercialFacts|Contact\.tsx|ai-chat\.js/.test(line));
-if (mutated.length > 0) fail(`MUTANT_RESIDUE=YES ${mutated.join(" | ")}`);
+const residue = watchFiles.filter((file) => fs.readFileSync(file, "utf8") !== snapshots[file]);
+if (residue.length > 0) fail(`MUTANT_RESIDUE=YES ${residue.join(" | ")}`);
 
 console.log(`MUTANTS_KILLED=${killed.join(",")}`);
 for (const receipt of receipts) {

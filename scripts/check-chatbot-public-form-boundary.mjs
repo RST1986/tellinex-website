@@ -24,6 +24,11 @@ const required = [
   'validateMessages',
   'origin_not_allowed',
   'AbortSignal.timeout',
+  'TURNSTILE_SECRET_KEY',
+  'privacy_acknowledged',
+  'cost_circuit_open',
+  'rate_limited',
+  'client_authority_rejected',
 ];
 for (const token of required) {
   if (!source.includes(token)) fail(`missing boundary token: ${token}`);

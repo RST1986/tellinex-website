@@ -206,6 +206,43 @@
   font-weight: 700;
 }
 
+.reveal-safe {
+  opacity: 1;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+
+  .blink-cursor {
+    animation: none;
+  }
+
+  .reveal-safe,
+  .hero-badge,
+  .hero-logo,
+  .hero-bar,
+  .hero-heading,
+  .hero-sub,
+  .hero-cta,
+  .svc-title,
+  .svc-card,
+  .about-title,
+  .about-card,
+  .reg-title,
+  .reg-form {
+    opacity: 1 !important;
+    transform: none !important;
+    filter: none !important;
+  }
+}
+
 /* Corner bracket accents on countdown tiles */
 .cd-box .corner {
   position: absolute;

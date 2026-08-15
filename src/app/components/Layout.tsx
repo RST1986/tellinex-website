@@ -4,6 +4,7 @@ import { Menu, X } from "lucide-react";
 import { gsap } from "gsap";
 import SpaceBackground from "./SpaceBackground";
 import AIChatWidget from "./AIChatWidget";
+import { COMPANY, LAUNCH_STATE } from "../content/commercialFacts";
 
 const NAV = [
   { to: "/", label: "Home" },
@@ -231,8 +232,8 @@ export default function Layout() {
             <div>
               <h4 style={{ fontFamily: '"Poppins", sans-serif', fontWeight: 600, fontSize: "0.8rem", color: "#00C7B1", letterSpacing: "0.12em", textTransform: "uppercase", marginBottom: "12px" }}>Contact</h4>
               <p style={{ fontFamily: '"Nunito", sans-serif', fontSize: "0.8rem", color: "rgba(255,255,255,0.5)", lineHeight: 1.8 }}>
-                info@tellinex.com<br />
-                Kingston, Jamaica<br />
+                {COMPANY.publicEmail}<br />
+                {COMPANY.hqCity}<br />
                 tellinex.com
               </p>
             </div>
@@ -251,7 +252,7 @@ export default function Layout() {
             }}
           >
             <p style={{ fontFamily: '"Nunito", sans-serif', fontSize: "0.65rem", color: "rgba(255,255,255,0.2)", letterSpacing: "0.12em", textTransform: "uppercase" }}>
-              © 2026 Tellinex Limited · BUILDING_NETWORK
+              © 2026 {COMPANY.legalName} · {LAUNCH_STATE}
             </p>
             <div style={{ display: "flex", gap: "16px" }}>
               <Link to="/privacy" style={{ fontFamily: '"Nunito", sans-serif', fontSize: "0.75rem", color: "rgba(255,255,255,0.45)", textDecoration: "none" }}>Privacy (draft)</Link>

@@ -6,5 +6,18 @@
   Strict-Transport-Security: max-age=31536000; includeSubDomains
   Content-Security-Policy: default-src 'self'; script-src 'self' https://challenges.cloudflare.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self' https://egztpclpcnizcdtfugsv.supabase.co https://challenges.cloudflare.com; frame-src https://challenges.cloudflare.com; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'
 
+/privacy
+  X-Robots-Tag: noindex, nofollow
+
+/privacy/
+  X-Robots-Tag: noindex, nofollow
+
+/terms
+  X-Robots-Tag: noindex, nofollow
+
+/terms/
+  X-Robots-Tag: noindex, nofollow
+
 # CSP_UNSAFE_INLINE_STYLE_DEBT=YES — existing inline style attributes and Google Fonts require style-src 'unsafe-inline'.
 # No wildcard host is used. The browser talks only to this origin, Supabase, and Turnstile.
+# Draft legal routes stay navigable for pre-launch review but must not be indexed.

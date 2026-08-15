@@ -78,15 +78,15 @@ Removed from in-scope files:
 - `functions/opus-diagnose.js` `triggerNetlifyRedeploy`
 - `workers/opus-guardian-cron/index.js` `triggerRedeploy` / `OPUS_NETLIFY_TOKEN`
 
-`package.json` still lists `@netlify/functions`. That file is owned by PR #16.
-`DEFERRED_TO_COMPOSITION` — do not remove the unused dependency in this batch.
+`package.json` listed `@netlify/functions` at P0 time. R1-R1 removed that unused residual.
+`DEFERRED_TO_COMPOSITION` applied to P0; it is not a reason to keep a dead dependency after R1-R1.
 
 ## Enforcement
 
 - `node scripts/check-public-control-plane-boundary.mjs`
 - `node tests/sec-public-control-plane-boundary.mjs` (SEC1–SEC8)
 
-`package.json` is not modified (`PACKAGE_INTEGRATION_DEFERRED_TO_PR16_COMPOSITION=YES`).
+`package.json` is not modified in the P0 batch (`PACKAGE_INTEGRATION_DEFERRED_TO_PR16_COMPOSITION=YES` at that time). R1-R1 later removed unused `@netlify/functions`.
 
 ## Non-goals
 

@@ -2,6 +2,8 @@
 # Pages Functions (/api/*) are matched before this catch-all,
 # so this only affects non-function, non-asset routes.
 # opus-diagnose is not a public route. PUBLIC_AUTO_HEAL_ENDPOINTS=0
+# /privacy and /terms remain draft SPA routes. They are navigable for review,
+# noindex, and must not be treated as approved legal documents.
 /privacy   /index.html   200
 /terms     /index.html   200
 /*    /index.html   200

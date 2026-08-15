@@ -2,6 +2,7 @@
 // Public chat endpoint. It never writes directly to Supabase public-form tables.
 // AI != AUTHORITY. FAIL CLOSED when required bindings are absent.
 // This file does not create Cloudflare resources.
+import { decideGlobalBudget } from "../_lib/ai-global-budget.js";
 
 const ALLOWED_ORIGINS = new Set([
   'https://tellinex.com',
@@ -17,6 +18,9 @@ const RATE_LIMIT_PER_WINDOW = 8;
 const COST_WINDOW_MS = 60 * 60 * 1000;
 const COST_TOKEN_BUDGET = 40_000;
 
+// PER_ISOLATE_SUPPLEMENTAL_ONLY.
+// These Maps are process-memory in a single Cloudflare isolate. They are not a
+// global budget, not an authoritative budget, and not a company-wide breaker.
 const requestCounts = new Map();
 const tokenSpend = new Map();
 
@@ -241,6 +245,13 @@ export async function onRequest(context) {
     }
 
     const messages = validateMessages(body?.messages);
+    const globalBudget = await decideGlobalBudget(env, { tokens: MAX_TOKENS, key });
+    if (!globalBudget.allowed) {
+      return json(origin, globalBudget.status, {
+        code: globalBudget.code,
+        message: 'Chat is temporarily unavailable.',
+      });
+    }
     if (!takeCostBudget(key, MAX_TOKENS)) {
       return json(origin, 429, { code: 'cost_circuit_open', message: 'Chat is temporarily unavailable.' });
     }

@@ -46,21 +46,26 @@ All quantitative public claims must come from `src/app/content/commercialFacts.t
 
 ## Residuals
 
-- `@netlify/functions` remains in `package.json` because P0 deferred lockfile/package composition. Unused. Not a public runtime.
-- PR #16 still owns Availability/Status/CI caller-contract files. This branch adds privacy/terms routes and a disabled contact form; compose carefully.
+- `@netlify/functions` was unused residual (no import, no netlify.toml, no netlify/ directory). Removed in R1-R1.
+- PR #16 still owns Availability/Status/CI caller-contract files. This branch does not compose PR #16.
 - Anon key must be supplied via `VITE_SUPABASE_ANON_KEY` for public review reads. No service-role key in the browser.
 - CSP `style-src 'unsafe-inline'` debt is documented. Existing inline styles require it.
-- Legal pages are DRAFT. `LEGAL_REVIEW_REQUIRED=YES`. No invented company number, address, or licence.
+- Legal pages are DRAFT. `LEGAL_REVIEW_REQUIRED=YES`. `/privacy` and `/terms` are noindex and absent from sitemap. SPA pages are the only legal-content authority. No invented company number, address, or licence.
 - Biographies are `FOUNDER_PROVIDED_UNVERIFIED`. No invented corrections.
 - `COMMERCIAL_LIVE=NO`. Ready for Claude assurance, not production cutover.
+- Public AI chat fails closed unless `env.AI_GLOBAL_BUDGET` returns an explicit allow. Per-isolate Maps are supplemental only. No Cloudflare budget resource is provisioned by this gate.
+
+## R1-R1
+
+Semantic commercial-truth protection now loads production `commercialFacts.ts` exports. The registry is inside the protected surface. `npm run build` runs `release:check` before `vite build`. CI workflow: `.github/workflows/commercial-readiness-ci.yml`.
 
 ## Local proofs
 
 ```
 npm ci
 npm run typecheck
-npm run build
 npm run release:check
+npm run build
 ```
 
 `release:check` does not deploy.

@@ -4,7 +4,7 @@
   "version": "1.0.0",
   "type": "module",
   "scripts": {
-    "build": "node scripts/check-public-form-gateway-contract.mjs && node scripts/check-chatbot-public-form-boundary.mjs && vite build",
+    "build": "node scripts/release-check.mjs && vite build",
     "check:public-form-gateway": "node scripts/check-public-form-gateway-contract.mjs",
     "check:chatbot-public-form-boundary": "node scripts/check-chatbot-public-form-boundary.mjs",
     "check:commercial-facts": "node scripts/check-commercial-facts.mjs",
@@ -17,7 +17,6 @@
   "dependencies": {
     "@emotion/react": "11.14.0",
     "@emotion/styled": "11.14.1",
-    "@netlify/functions": "^2.8.0",
     "@radix-ui/react-navigation-menu": "1.2.5",
     "@radix-ui/react-select": "2.1.6",
     "@radix-ui/react-separator": "1.1.2",

@@ -1,0 +1,17 @@
+{
+  "description": "Future PR #16 semantic composition must reject this Layout wording class. R1-R1 does not compose PR #16.",
+  "pr16_head": "410580f3520b362b00de30533356c11f202ed553",
+  "forbidden_layout_wording": [
+    "Hurricane-resilient fibre broadband for Jamaica. Underground. Unstoppable. Unlimited."
+  ],
+  "forbidden_tokens": ["Unstoppable", "Unlimited"],
+  "preserve_from_pr16": [
+    "Availability caller",
+    "Status caller",
+    "Contact quote_request caller",
+    "navigation/routes",
+    "Turnstile semantics",
+    "loading/error/success behavior"
+  ],
+  "take_commercial_truth_from": "hardened R1-R1 lineage"
+}

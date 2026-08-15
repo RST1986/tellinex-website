@@ -1,7 +1,9 @@
 import { LEGAL_REVIEW_REQUIRED } from "../content/commercialFacts";
 import LegalNoticeLinks from "../components/LegalNoticeLinks";
+import { useDraftLegalRobots } from "../lib/useDraftLegalRobots";
 
 export default function Terms() {
+  useDraftLegalRobots();
   return (
     <div className="px-4 sm:px-6 py-20 max-w-3xl mx-auto">
       <h1 style={{ fontFamily: '"Poppins", sans-serif', fontWeight: 700, fontSize: "clamp(2rem, 5vw, 3rem)", color: "#fff", marginBottom: "12px" }}>

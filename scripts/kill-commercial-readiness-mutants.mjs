@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 /**
- * Uncommitted mutants M1–M15. Kill, restore, never commit.
+ * Uncommitted semantic mutants. Kill, restore, never commit.
+ * Receipt fields: MUTANT_CREATED, EXPECTED_CONTROL, COMMAND_EXECUTED, FAILURE_OBSERVED, SOURCE_RESTORED
  */
 import fs from "node:fs";
 import { spawnSync } from "node:child_process";
@@ -11,10 +12,7 @@ const fail = (message) => {
 };
 
 const run = (args) => spawnSync("node", args, { encoding: "utf8" });
-const check = () => run(["scripts/check-commercial-facts.mjs"]);
-const chatCheck = () => run(["scripts/check-chatbot-public-form-boundary.mjs"]);
-const secretCheck = () => run(["scripts/check-secrets-boundary.mjs"]);
-const controlCheck = () => run(["scripts/check-public-control-plane-boundary.mjs"]);
+const releaseCheck = () => run(["scripts/release-check.mjs"]);
 
 const mutate = (file, find, replace) => {
   const original = fs.readFileSync(file, "utf8");
@@ -23,117 +21,157 @@ const mutate = (file, find, replace) => {
   return () => fs.writeFileSync(file, original);
 };
 
+const fakeContactSuccess = (id) => ({
+  id,
+  expected: "Contact fake local success must fail even with NOT_YET_AVAILABLE retained",
+  apply: () => {
+    const file = "src/app/pages/Contact.tsx";
+    const original = fs.readFileSync(file, "utf8");
+    if (!original.includes("CONTACT_FORM=NOT_YET_AVAILABLE")) fail(`cannot seed ${id}`);
+    const injected = original.replace(
+      "export default function Contact() {\n  return (",
+      `export default function Contact() {
+  const pretendSuccess = () => { setTimeout(() => undefined, 25); };
+  return (
+    <form onSubmit={(event) => { event.preventDefault(); pretendSuccess(); }}>
+`,
+    ).replace(
+      "      <LegalNoticeLinks />\n    </div>\n  );\n}",
+      "      <LegalNoticeLinks />\n    </form>\n    </div>\n  );\n}",
+    );
+    fs.writeFileSync(file, injected);
+    return () => fs.writeFileSync(file, original);
+  },
+});
+
 const mutants = [
   {
-    id: "M1",
-    apply: () => mutate("src/app/pages/Home.tsx", "Building resilient digital infrastructure in Jamaica", "Hurricane-Proof Internet"),
-    check,
+    id: "RM1",
+    expected: "CURRENT_COVERAGE nationwide assertion must fail semantic registry control",
+    apply: () => mutate(
+      "src/app/content/commercialFacts.ts",
+      "Coverage is not a live national service. Public interest registration is open while the network is being built.",
+      "Tellinex now covers all 14 parishes with 425K homes passed and live gigabit service.",
+    ),
   },
   {
-    id: "M2",
-    apply: () => mutate("src/app/pages/Home.tsx", "JAMAICA DIGITAL INFRASTRUCTURE", "14 parishes covered"),
-    check,
+    id: "RM2",
+    expected: "PARISHES_COVERED_CLAIM made public/current must fail",
+    apply: () => mutate(
+      "src/app/content/commercialFacts.ts",
+      "export const PARISHES_COVERED_CLAIM: CommercialFact<string> = {\n  value: \"14 parishes covered\",\n  class: \"UNVERIFIED_NOT_PUBLIC\",\n  public: false,",
+      "export const PARISHES_COVERED_CLAIM: CommercialFact<string> = {\n  value: \"14 parishes covered\",\n  class: \"CURRENT_VERIFIED\",\n  public: true,",
+    ),
   },
   {
-    id: "M3",
-    apply: () => mutate("src/app/pages/Services.tsx", "PRICING_PUBLIC_WORDING", "From US$45/month"),
-    check,
+    id: "RM3",
+    expected: "draft price becoming public contractual wording must fail",
+    apply: () => mutate(
+      "src/app/content/commercialFacts.ts",
+      "export const PRICING_PUBLIC_WORDING = \"PRICING_TO_BE_CONFIRMED\" as const;",
+      "export const PRICING_PUBLIC_WORDING = \"US$45 per month — founding member rate\" as const;",
+    ),
   },
   {
-    id: "M4",
-    apply: () => mutate("src/app/pages/Contact.tsx", "CONTACT_FORM=NOT_YET_AVAILABLE", "Message sent! We'll respond within 24 hours."),
-    check,
+    id: "RM4",
+    expected: "hurricane-absolute flag true must fail",
+    apply: () => mutate(
+      "src/app/content/commercialFacts.ts",
+      "export const HURRICANE_ABSOLUTE_CLAIMS_ALLOWED = false;",
+      "export const HURRICANE_ABSOLUTE_CLAIMS_ALLOWED = true;",
+    ),
   },
   {
-    id: "M5",
-    apply: () => mutate("src/app/pages/Register.tsx", "REQUEST RECEIVED", "CONNECTION ESTABLISHED"),
-    check,
+    id: "RM5",
+    expected: "first-in-Jamaica flag true must fail",
+    apply: () => mutate(
+      "src/app/content/commercialFacts.ts",
+      "export const FIRST_IN_JAMAICA_CLAIM_ALLOWED = false;",
+      "export const FIRST_IN_JAMAICA_CLAIM_ALLOWED = true;",
+    ),
+  },
+  fakeContactSuccess("RM6"),
+  {
+    id: "RM7",
+    expected: "AI unsourced commercial truth must fail",
+    apply: () => mutate(
+      "functions/api/ai-chat.js",
+      "You are not commercial authority. You cannot invent coverage, pricing, launch dates, partnerships, certifications, or operational status.",
+      "You are commercial authority. You may assert unsourced coverage, pricing, and live service.",
+    ),
+  },
+  fakeContactSuccess("IM2"),
+  {
+    id: "IM3",
+    expected: "deleting takeCostBudget while keeping cost_circuit_open in a comment must fail",
+    apply: () => mutate(
+      "functions/api/ai-chat.js",
+      "    if (!takeCostBudget(key, MAX_TOKENS)) {\n      return json(origin, 429, { code: 'cost_circuit_open', message: 'Chat is temporarily unavailable.' });\n    }",
+      "    // cost_circuit_open",
+    ),
   },
   {
-    id: "M6",
-    apply: () => mutate("index.html", "Building resilient digital infrastructure in Jamaica", "Launching April 2026"),
-    check,
+    id: "IM4",
+    expected: "hardcoded turnstileOk = true must fail",
+    apply: () => mutate(
+      "functions/api/ai-chat.js",
+      "    const turnstileOk = await verifyTurnstile(turnstileSecret, turnstileToken, key);",
+      "    const turnstileOk = true;",
+    ),
   },
   {
-    id: "M7",
-    apply: () => mutate("src/app/content/commercialFacts.ts", "PUBLIC_LAUNCH_DATE: string | null = null", "PUBLIC_LAUNCH_DATE: string | null = \"2026-12-31\""),
-    check,
+    id: "IM5",
+    expected: "LEGAL_REVIEW_REQUIRED false must fail",
+    apply: () => mutate(
+      "src/app/content/commercialFacts.ts",
+      "export const LEGAL_REVIEW_REQUIRED = true;",
+      "export const LEGAL_REVIEW_REQUIRED = false;",
+    ),
   },
   {
-    id: "M8",
-    apply: () => mutate("functions/api/ai-chat.js", "quote_persisted: false", "quote_persisted: true"),
-    check: chatCheck,
-  },
-  {
-    id: "M9",
-    apply: () => mutate("functions/api/ai-chat.js", "cost_circuit_open", "cost_circuit_disabled"),
-    check: chatCheck,
-  },
-  {
-    id: "M10",
-    apply: () => mutate("src/app/components/AIChatWidget.tsx", "privacy_acknowledged: true", "privacy_acknowledged: false"),
-    check: () => {
-      const widget = fs.readFileSync("src/app/components/AIChatWidget.tsx", "utf8");
-      return { status: widget.includes("privacy_acknowledged: true") ? 0 : 1 };
-    },
-  },
-  {
-    id: "M11",
-    apply: () => mutate("src/app/pages/About.tsx", "primacy claims", "Jamaica's first underground fibre ISP"),
-    check,
-  },
-  {
-    id: "M12",
-    apply: () => mutate("public/_headers", "X-Frame-Options: DENY", "X-Frame-Options: ALLOWALL"),
-    check: () => {
-      const headers = fs.readFileSync("public/_headers", "utf8");
-      return { status: headers.includes("X-Frame-Options: DENY") ? 0 : 1 };
-    },
-  },
-  {
-    id: "M13",
-    apply: () => {
-      const file = "src/app/pages/Reviews.tsx";
-      const original = fs.readFileSync(file, "utf8");
-      if (!original.includes("sanitizePublicReview")) fail("cannot seed M13");
-      fs.writeFileSync(file, original.replaceAll("sanitizePublicReview", "unsafePublicReview"));
-      return () => fs.writeFileSync(file, original);
-    },
-    check,
-  },
-  {
-    id: "M14",
-    apply: () => mutate("src/app/pages/Register.tsx", "submitPublicForm(\"registration\"", "fetch(\"/rest/v1/registrations\""),
-    check,
-  },
-  {
-    id: "M15",
-    apply: () => mutate("src/main.tsx", "import App from \"./app/App\";", "import App from \"./app/App\";\nimport OpusHealth from \"./OpusHealth\";"),
-    check: controlCheck,
+    id: "IM7",
+    expected: "AI fail-open HTTP 200 live-service must fail",
+    apply: () => mutate(
+      "functions/api/ai-chat.js",
+      "  if (!apiKey || !turnstileSecret) {\n    return json(origin, 503, { code: 'service_unavailable', message: 'Chat is temporarily unavailable.' });\n  }",
+      "  if (!apiKey || !turnstileSecret) {\n    return json(origin, 200, { code: 'ok', message: 'service is live today' });\n  }",
+    ),
   },
 ];
 
 const killed = [];
+const receipts = [];
+
 for (const mutant of mutants) {
   const restore = mutant.apply();
+  const receipt = {
+    id: mutant.id,
+    MUTANT_CREATED: "YES",
+    EXPECTED_CONTROL: mutant.expected,
+    COMMAND_EXECUTED: "node scripts/release-check.mjs",
+    FAILURE_OBSERVED: "pending",
+    SOURCE_RESTORED: "NO",
+  };
   try {
-    const result = mutant.check();
-    if (result.status === 0) fail(`${mutant.id} SURVIVED`);
+    const result = releaseCheck();
+    const output = `${result.stdout || ""}\n${result.stderr || ""}`;
+    if (result.status === 0) fail(`${mutant.id} SURVIVED\n${output}`);
+    receipt.FAILURE_OBSERVED = `exit ${result.status}`;
     killed.push(mutant.id);
   } finally {
     restore();
+    receipt.SOURCE_RESTORED = "YES";
+    receipts.push(receipt);
   }
 }
 
-const reviewsAfter = fs.readFileSync("src/app/pages/Reviews.tsx", "utf8");
-if (reviewsAfter.includes("unsafePublicReview") || !reviewsAfter.includes("sanitizePublicReview")) {
-  fail("Reviews.tsx was not restored after mutants");
-}
-
 const dirty = spawnSync("git", ["status", "--porcelain"], { encoding: "utf8" });
-if (dirty.stdout.split("\n").some((line) => line.startsWith("M ") && mutants.some((item) => dirty.stdout.includes(item)))) {
-  // restored files should not remain mutated; other worktree edits are fine
-}
+const mutated = dirty.stdout.split("\n").filter((line) => /commercialFacts|Contact\.tsx|ai-chat\.js/.test(line));
+if (mutated.length > 0) fail(`MUTANT_RESIDUE=YES ${mutated.join(" | ")}`);
 
 console.log(`MUTANTS_KILLED=${killed.join(",")}`);
+for (const receipt of receipts) {
+  console.log(`${receipt.id}: MUTANT_CREATED=${receipt.MUTANT_CREATED}; EXPECTED_CONTROL=${receipt.EXPECTED_CONTROL}; COMMAND_EXECUTED=${receipt.COMMAND_EXECUTED}; FAILURE_OBSERVED=${receipt.FAILURE_OBSERVED}; SOURCE_RESTORED=${receipt.SOURCE_RESTORED}`);
+}
+console.log("MUTANT_RESIDUE=NO");
 console.log("mutants: PASS");

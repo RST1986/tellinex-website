@@ -11,6 +11,7 @@ import {
   NATIONAL_EXPANSION,
   NETWORK_DESIGN_PRINCIPLE,
   POSITIONING,
+  PUBLIC_HEADLINE,
   RESILIENCE_PUBLIC_WORDING,
   SYMMETRICAL_SPEED_INTENT,
   UPTIME_TARGET,
@@ -124,7 +125,7 @@ export default function Home() {
               marginBottom: "1rem",
             }}
           >
-            Building resilient digital infrastructure in Jamaica
+            {PUBLIC_HEADLINE.value}
           </h1>
           <p
             className="hero-sub reveal-safe text-gray-400"

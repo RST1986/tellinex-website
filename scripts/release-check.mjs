@@ -2,6 +2,8 @@
 /**
  * Local release gate. Does NOT deploy.
  * BUILDING_NETWORK, not COMMERCIAL_LIVE.
+ * npm script `build` runs this gate first, then the bundler.
+ * This file must not spawn the bundler or the npm build script.
  */
 import { spawnSync } from "node:child_process";
 
@@ -11,8 +13,12 @@ const steps = [
   ["chatbot-boundary", "node", ["scripts/check-chatbot-public-form-boundary.mjs"]],
   ["commercial-facts", "node", ["scripts/check-commercial-facts.mjs"]],
   ["secrets-boundary", "node", ["scripts/check-secrets-boundary.mjs"]],
+  ["build-release-gate", "node", ["scripts/check-build-enforces-release-gate.mjs"]],
+  ["pr16-composition-contract", "node", ["scripts/check-pr16-composition-contract.mjs"]],
   ["sec-control-plane", "node", ["tests/sec-public-control-plane-boundary.mjs"]],
   ["web-commercial", "node", ["tests/web-commercial-readiness.mjs"]],
+  ["ai-global-budget", "node", ["tests/ai-global-budget.mjs"]],
+  ["r1-r1-semantic", "node", ["tests/r1-r1-semantic-proofs.mjs"]],
 ];
 
 let failed = 0;

@@ -60,6 +60,13 @@ export const POSITIONING: CommercialFact<string> = {
   note: "Strategic positioning. Does not assert live retail service or national coverage.",
 };
 
+export const PUBLIC_HEADLINE: CommercialFact<string> = {
+  value: "Building resilient digital infrastructure in Jamaica",
+  class: "CURRENT_VERIFIED",
+  public: true,
+  note: "Homepage headline. Does not assert live retail service or national coverage.",
+};
+
 export const NETWORK_DESIGN_PRINCIPLE: CommercialFact<string> = {
   value:
     "Network design principle: underground, micro-trenched fibre intended to reduce storm exposure compared with aerial plant.",
@@ -196,9 +203,187 @@ export const SEO = {
 } as const;
 
 export function isPublicFact(fact: CommercialFact<unknown>): boolean {
-  return fact.public && fact.class !== "UNVERIFIED" && fact.class !== "UNVERIFIED_NOT_PUBLIC" && fact.class !== "DRAFT";
+  if (!fact.public) return false;
+  const factClass = fact.class;
+  switch (factClass) {
+    case "CURRENT_VERIFIED":
+    case "PLANNED":
+    case "TARGET":
+      return true;
+    case "DRAFT":
+    case "UNVERIFIED":
+    case "UNVERIFIED_NOT_PUBLIC":
+      return false;
+    default: {
+      const exhaustive: never = factClass;
+      throw new Error(`Unknown fact class: ${String(exhaustive)}`);
+    }
+  }
 }
 
 export function publicNumericClaims(): CommercialFact<string>[] {
   return [SYMMETRICAL_SPEED_INTENT, UPTIME_TARGET, CURRENT_COVERAGE, NATIONAL_EXPANSION].filter(isPublicFact);
 }
+
+export const GOVERNED_STRING_FACTS = {
+  POSITIONING,
+  PUBLIC_HEADLINE,
+  NETWORK_DESIGN_PRINCIPLE,
+  CURRENT_COVERAGE,
+  NATIONAL_EXPANSION,
+  PILOT_CORRIDOR,
+  HOMES_PASSED_425K,
+  HOMES_PASSED_180000,
+  PARISHES_COVERED_CLAIM,
+  SYMMETRICAL_SPEED_INTENT,
+  UPTIME_TARGET,
+  RESILIENCE_PUBLIC_WORDING,
+  DRAFT_RESIDENTIAL_PRICE,
+  DRAFT_BUSINESS_PRICE,
+  SLA_BUSINESS_DRAFT,
+  SLA_ENTERPRISE_TARGET,
+} as const;
+
+export function looksLikeCurrentNationwideCoverage(value: string): boolean {
+  return (
+    /covers all/i.test(value) ||
+    /14 parishes/i.test(value) ||
+    /425K/i.test(value) ||
+    /homes passed/i.test(value) ||
+    /live gigabit/i.test(value) ||
+    /now covers/i.test(value) ||
+    /nationwide (live|service|coverage)/i.test(value)
+  );
+}
+
+export function looksLikeStormAbsoluteAffirmation(value: string): boolean {
+  const normalized = value.replace(/\s+/g, " ");
+  if (/not a hurricane-proof or Category 5 guarantee/i.test(normalized)) {
+    return /unstoppable|zero storm risk|hurricane-proof internet/i.test(normalized);
+  }
+  return (
+    /hurricane-proof/i.test(normalized) ||
+    /category 5/i.test(normalized) ||
+    /zero storm risk/i.test(normalized) ||
+    /\bunstoppable\b/i.test(normalized)
+  );
+}
+
+export function looksLikePrimacyClaim(value: string): boolean {
+  return (
+    /first in Jamaica/i.test(value) ||
+    /Jamaica's first/i.test(value) ||
+    /only (underground )?fibre/i.test(value)
+  );
+}
+
+export function looksLikePublicPrice(value: string): boolean {
+  return (
+    /US\$\s*\d/i.test(value) ||
+    /per month/i.test(value) ||
+    /founding member rate/i.test(value) ||
+    /From US\$/i.test(value)
+  );
+}
+
+export function assertCommercialRegistryInvariants(): void {
+  if (LAUNCH_STATE !== "BUILDING_NETWORK") {
+    throw new Error("LAUNCH_STATE_MUST_BE_BUILDING_NETWORK");
+  }
+  if (COMMERCIAL_LIVE !== false) {
+    throw new Error("COMMERCIAL_LIVE_MUST_REMAIN_FALSE");
+  }
+  if (PUBLIC_LAUNCH_DATE !== null) {
+    throw new Error("PUBLIC_LAUNCH_DATE_MUST_NOT_BE_FABRICATED");
+  }
+  if (LEGAL_REVIEW_REQUIRED !== true) {
+    throw new Error("LEGAL_REVIEW_REQUIRED_MUST_REMAIN_TRUE");
+  }
+  if (HURRICANE_ABSOLUTE_CLAIMS_ALLOWED !== false) {
+    throw new Error("HURRICANE_ABSOLUTE_CLAIMS_MUST_REMAIN_DISALLOWED");
+  }
+  if (FIRST_IN_JAMAICA_CLAIM_ALLOWED !== false) {
+    throw new Error("FIRST_IN_JAMAICA_CLAIM_MUST_REMAIN_DISALLOWED");
+  }
+  if (FIRST_CLAIM_REQUIRES_INDEPENDENT_EVIDENCE !== true) {
+    throw new Error("FIRST_CLAIM_REQUIRES_INDEPENDENT_EVIDENCE_MUST_REMAIN_TRUE");
+  }
+  if (PRICING_PUBLIC_WORDING !== "PRICING_TO_BE_CONFIRMED") {
+    throw new Error("DRAFT_PRICE_MUST_NOT_BECOME_PUBLIC_WORDING");
+  }
+  if (looksLikePublicPrice(PRICING_PUBLIC_WORDING)) {
+    throw new Error("PRICING_PUBLIC_WORDING_MUST_NOT_BE_A_PRICE");
+  }
+  if (PRICING_GOVERNANCE !== "DRAFT_PRICE_NOT_CONTRACTUAL") {
+    throw new Error("PRICING_GOVERNANCE_MUST_REMAIN_DRAFT");
+  }
+  if (
+    PUBLIC_AUTO_HEAL_ENDPOINTS !== 0 ||
+    PUBLIC_REDEPLOY_ENDPOINTS !== 0 ||
+    PUBLIC_TCC_CONTROL_ENDPOINTS !== 0
+  ) {
+    throw new Error("PUBLIC_CONTROL_PLANE_AUTHORITY_MUST_REMAIN_ZERO");
+  }
+
+  if (CURRENT_COVERAGE.class !== "CURRENT_VERIFIED" || CURRENT_COVERAGE.public !== true) {
+    throw new Error("CURRENT_COVERAGE_MUST_REMAIN_GOVERNED_CURRENT_VERIFIED");
+  }
+  if (!/not a live national/i.test(CURRENT_COVERAGE.value)) {
+    throw new Error("CURRENT_COVERAGE_MUST_DENY_LIVE_NATIONAL_SERVICE");
+  }
+  if (looksLikeCurrentNationwideCoverage(CURRENT_COVERAGE.value)) {
+    throw new Error("CURRENT_COVERAGE_CANNOT_ASSERT_NATIONWIDE_LIVE_SERVICE");
+  }
+  if (PARISHES_COVERED_CLAIM.class !== "UNVERIFIED_NOT_PUBLIC" || PARISHES_COVERED_CLAIM.public !== false) {
+    throw new Error("PARISHES_COVERED_CLAIM_CANNOT_BE_PUBLIC_AUTHORITATIVE");
+  }
+  if (HOMES_PASSED_425K.class !== "UNVERIFIED_NOT_PUBLIC" || HOMES_PASSED_425K.public !== false) {
+    throw new Error("HOMES_PASSED_425K_CANNOT_BE_PUBLIC_AUTHORITATIVE");
+  }
+  if (HOMES_PASSED_180000.public !== false) {
+    throw new Error("HOMES_PASSED_180000_CANNOT_BE_PUBLIC_AUTHORITATIVE");
+  }
+  if (DRAFT_RESIDENTIAL_PRICE.class !== "DRAFT" || DRAFT_RESIDENTIAL_PRICE.public !== false) {
+    throw new Error("DRAFT_RESIDENTIAL_PRICE_CANNOT_BE_PUBLIC_AUTHORITATIVE");
+  }
+  if (DRAFT_BUSINESS_PRICE.class !== "DRAFT" || DRAFT_BUSINESS_PRICE.public !== false) {
+    throw new Error("DRAFT_BUSINESS_PRICE_CANNOT_BE_PUBLIC_AUTHORITATIVE");
+  }
+  if (NATIONAL_EXPANSION.class !== "PLANNED") {
+    throw new Error("NATIONAL_EXPANSION_MUST_REMAIN_PLANNED");
+  }
+  if (NETWORK_DESIGN_PRINCIPLE.class !== "PLANNED") {
+    throw new Error("NETWORK_DESIGN_PRINCIPLE_MUST_REMAIN_PLANNED");
+  }
+
+  for (const [name, fact] of Object.entries(GOVERNED_STRING_FACTS)) {
+    if (
+      (fact.class === "DRAFT" || fact.class === "UNVERIFIED" || fact.class === "UNVERIFIED_NOT_PUBLIC") &&
+      fact.public === true
+    ) {
+      throw new Error(`${name}_DRAFT_OR_UNVERIFIED_CANNOT_BE_PUBLIC_AUTHORITATIVE`);
+    }
+    if (fact.public && fact.class === "CURRENT_VERIFIED") {
+      if (looksLikeCurrentNationwideCoverage(fact.value)) {
+        throw new Error(`${name}_CURRENT_VERIFIED_CANNOT_ASSERT_NATIONWIDE_COVERAGE`);
+      }
+      if (looksLikeStormAbsoluteAffirmation(fact.value)) {
+        throw new Error(`${name}_CANNOT_AFFIRM_STORM_ABSOLUTE`);
+      }
+      if (looksLikePrimacyClaim(fact.value)) {
+        throw new Error(`${name}_CANNOT_AFFIRM_PRIMACY`);
+      }
+      if (looksLikePublicPrice(fact.value)) {
+        throw new Error(`${name}_CANNOT_PUBLISH_PRICE`);
+      }
+    }
+    if (fact.public && HURRICANE_ABSOLUTE_CLAIMS_ALLOWED === false && looksLikeStormAbsoluteAffirmation(fact.value)) {
+      throw new Error(`${name}_STORM_ABSOLUTE_NOT_ALLOWED`);
+    }
+    if (fact.public && FIRST_IN_JAMAICA_CLAIM_ALLOWED === false && looksLikePrimacyClaim(fact.value)) {
+      throw new Error(`${name}_PRIMACY_NOT_ALLOWED`);
+    }
+  }
+}
+
+assertCommercialRegistryInvariants();

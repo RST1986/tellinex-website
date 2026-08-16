@@ -29,6 +29,12 @@ requireTokens(publicForms, [
   "endpoint.hash !== \"\"",
   "SUPABASE_FUNCTION_HOST",
   "export const PUBLIC_FORM_ENDPOINT",
+  "WEBSITE_PAGES_PREVIEW_ROOT",
+  "tellinex-website.pages.dev",
+  "STAGING_FORM_HOST",
+  "uygisfwvpcnzuzmrzhqz.supabase.co",
+  "isWebsiteBranchPreviewHost",
+  "assertPreviewDoesNotUseProductionEndpoint",
 ], "publicForms.ts");
 
 requireTokens(reviews, [

@@ -3,8 +3,28 @@ export const TURNSTILE_SITE_KEY =
 
 const DEFAULT_PUBLIC_FORM_ENDPOINT =
   "https://egztpclpcnizcdtfugsv.supabase.co/functions/v1/submit-public-form";
+const PRODUCTION_FORM_HOST = "egztpclpcnizcdtfugsv.supabase.co";
+const STAGING_FORM_HOST = "uygisfwvpcnzuzmrzhqz.supabase.co";
+const WEBSITE_PAGES_PREVIEW_ROOT = "tellinex-website.pages.dev";
 const PUBLIC_FORM_PATH = "/functions/v1/submit-public-form";
 const SUPABASE_FUNCTION_HOST = /^[a-z0-9-]+\.supabase\.co$/i;
+
+function isWebsiteBranchPreviewHost(hostname: string): boolean {
+  return hostname.toLowerCase().endsWith(`.${WEBSITE_PAGES_PREVIEW_ROOT}`);
+}
+
+function assertPreviewDoesNotUseProductionEndpoint(endpoint: string): void {
+  if (typeof window === "undefined") return;
+  if (!isWebsiteBranchPreviewHost(window.location.hostname)) return;
+
+  const host = new URL(endpoint).hostname.toLowerCase();
+  if (host === PRODUCTION_FORM_HOST || host !== STAGING_FORM_HOST) {
+    throw new PublicFormError("Preview must use the staging form endpoint.", {
+      code: "preview_endpoint_mismatch",
+      status: 0,
+    });
+  }
+}
 
 function resolvePublicFormEndpoint(configuredEndpoint: string | undefined): string {
   const candidate = configuredEndpoint?.trim() || DEFAULT_PUBLIC_FORM_ENDPOINT;
@@ -73,6 +93,8 @@ export async function submitPublicForm(
   turnstileToken: string,
   payload: Record<string, unknown>,
 ): Promise<void> {
+  assertPreviewDoesNotUseProductionEndpoint(PUBLIC_FORM_ENDPOINT);
+
   const response = await fetch(PUBLIC_FORM_ENDPOINT, {
     method: "POST",
     headers: { "Content-Type": "application/json" },

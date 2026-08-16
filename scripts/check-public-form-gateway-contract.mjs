@@ -16,6 +16,7 @@ const reviews = read("src/app/pages/Reviews.tsx");
 const register = read("src/app/pages/Register.tsx");
 const packageJson = read("package.json");
 const envExample = read(".env.example");
+const headers = read("public/_headers");
 
 requireTokens(publicForms, [
   "VITE_PUBLIC_FORM_ENDPOINT",
@@ -53,6 +54,11 @@ requireTokens(envExample, [
   "VITE_PUBLIC_FORM_ENDPOINT=",
   "VITE_TURNSTILE_SITE_KEY=",
 ], ".env.example");
+requireTokens(headers, [
+  "connect-src",
+  "egztpclpcnizcdtfugsv.supabase.co",
+  "uygisfwvpcnzuzmrzhqz.supabase.co",
+], "_headers");
 
 for (const [label, text] of [["Reviews.tsx", reviews], ["Register.tsx", register]]) {
   if (/rest\/v1\/(customer_reviews|registrations)/.test(text)) {

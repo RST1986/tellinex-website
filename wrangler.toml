@@ -5,3 +5,15 @@
 name = "tellinex-website"
 compatibility_date = "2024-11-01"
 pages_build_output_dir = "dist"
+
+# SOURCE DECLARATION ONLY. This PR does not create or deploy remote Cloudflare resources.
+# AI_CHAT_DURABLE_RATE_LIMIT_REQUIRED=YES
+# The binding becomes a production control only after a later authorised Pages deploy.
+# Official API: Workers Rate Limiting (per Cloudflare location, not a process-local Map).
+[[ratelimits]]
+name = "AI_CHAT_RATE_LIMITER"
+namespace_id = "91001"
+
+  [ratelimits.simple]
+  limit = 8
+  period = 60

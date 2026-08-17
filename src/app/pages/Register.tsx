@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState, type CSSProperties, type Form
 import { gsap } from "gsap";
 import { AlertCircle, CheckCircle, Mail, MapPin, MessageSquare, Phone, Signal, User } from "lucide-react";
 import TurnstileWidget, { type TurnstileWidgetHandle } from "../components/TurnstileWidget";
+import LegalNoticeLinks from "../components/LegalNoticeLinks";
 import { submitPublicForm } from "../lib/publicForms";
 
 const PARISHES = [
@@ -186,7 +187,7 @@ export default function Register() {
         <div className="flex items-center justify-center gap-2 mb-4">
           <Signal className="w-4 h-4 text-[#A3E635]" />
           <span style={{ fontFamily: "monospace", fontSize: "0.65rem", letterSpacing: "0.25em", color: "#A3E635", textTransform: "uppercase", border: "1px solid rgba(163,230,53,0.4)", padding: "3px 12px", borderRadius: "2px", background: "rgba(163,230,53,0.06)" }}>
-            EARLY ACCESS — FOUNDING MEMBERS
+            INTEREST REGISTRATION — NOT A CONTRACT
           </span>
           <Signal className="w-4 h-4 text-[#A3E635]" />
         </div>
@@ -195,7 +196,7 @@ export default function Register() {
         </h1>
         <div style={{ height: "3px", width: "5rem", background: "linear-gradient(90deg, #00C7B1, #A3E635)", borderRadius: "2px", margin: "0 auto 16px" }} />
         <p style={{ fontFamily: '"Nunito", sans-serif', fontSize: "1rem", color: "rgba(255,255,255,0.5)", maxWidth: "480px", margin: "0 auto" }}>
-          Be among the first to connect when Tellinex launches in your parish. No obligation — just tell us where you are and what you need.
+          Register interest for launch updates. This is not a service contract and does not activate connectivity.
         </p>
       </div>
 
@@ -295,21 +296,22 @@ export default function Register() {
               {submitting ? "SUBMITTING..." : "REGISTER MY INTEREST"}
             </button>
             <p className="text-center mt-3" style={{ fontFamily: '"Nunito", sans-serif', fontSize: "0.7rem", color: "rgba(255,255,255,0.25)" }}>
-              No payment required. We'll notify you when Tellinex is available in your area.
+              Interest only. Request received is not service activated. No payment is taken here.
             </p>
           </form>
         </div>
       ) : (
         <div className="text-center" style={{ background: "rgba(0,199,177,0.08)", border: "1px solid rgba(0,199,177,0.5)", borderRadius: "10px", padding: "48px 32px" }}>
           <CheckCircle size={48} style={{ color: "#A3E635", margin: "0 auto 16px" }} />
-          <h3 style={{ fontFamily: '"Poppins", sans-serif', fontWeight: 700, color: "#fff", fontSize: "1.4rem", marginBottom: "8px" }}>CONNECTION ESTABLISHED</h3>
+          <h3 style={{ fontFamily: '"Poppins", sans-serif', fontWeight: 700, color: "#fff", fontSize: "1.4rem", marginBottom: "8px" }}>REQUEST RECEIVED</h3>
           <p style={{ fontFamily: '"Nunito", sans-serif', color: "rgba(255,255,255,0.5)", fontSize: "0.95rem", lineHeight: 1.6 }}>
-            You're on the list. We'll contact you as soon as Tellinex is available in your parish.
+            Your interest registration was received. This is not a service activation and not a contract.
             <br />
-            <span style={{ color: "#00C7B1", fontWeight: 600 }}>Welcome to the future of Jamaican connectivity.</span>
+            <span style={{ color: "#00C7B1", fontWeight: 600 }}>We will contact you if and when service is offered in your area.</span>
           </p>
         </div>
       )}
+      <LegalNoticeLinks />
     </div>
   );
 }

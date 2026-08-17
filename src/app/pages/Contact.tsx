@@ -1,16 +1,47 @@
-import { useEffect } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type CSSProperties,
+  type FormEvent,
+} from "react";
 import { gsap } from "gsap";
-import { Mail, MapPin, Globe, Clock, Send } from "lucide-react";
+import { CheckCircle, Clock, Globe, Mail, MapPin, Send } from "lucide-react";
+import TurnstileWidget, { type TurnstileWidgetHandle } from "../components/TurnstileWidget";
+import LegalNoticeLinks from "../components/LegalNoticeLinks";
+import { COMPANY } from "../content/commercialFacts";
+import { submitPublicForm } from "../lib/publicForms";
 
 const CONTACTS = [
-  { icon: Mail, label: "General enquiries", value: "info@tellinex.com", color: "#00C7B1" },
-  { icon: Mail, label: "Enterprise & wholesale", value: "sales@tellinex.com", color: "#A3E635" },
-  { icon: MapPin, label: "Location", value: "Kingston, Jamaica", color: "#00C7B1" },
-  { icon: Globe, label: "Website", value: "tellinex.com", color: "#A3E635" },
-  { icon: Clock, label: "Response time", value: "Within 24 hours", color: "#00C7B1" },
+  { icon: Mail, label: "General enquiries", value: COMPANY.publicEmail, href: `mailto:${COMPANY.publicEmail}`, color: "#00C7B1" },
+  { icon: Mail, label: "Enterprise and wholesale", value: COMPANY.enterpriseEmail, href: `mailto:${COMPANY.enterpriseEmail}`, color: "#A3E635" },
+  { icon: MapPin, label: "Location", value: COMPANY.hqCity, href: null, color: "#00C7B1" },
+  { icon: Globe, label: "Website", value: "tellinex.com", href: COMPANY.website, color: "#A3E635" },
+  { icon: Clock, label: "Response target", value: "We aim to review enquiries within one working day", href: null, color: "#00C7B1" },
 ];
 
+const EMAIL_PATTERN = /^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$/;
+const PHONE_PATTERN = /^\+?[0-9(). -]{7,25}$/;
+
+const INITIAL_FORM = {
+  name: "",
+  email: "",
+  phone: "",
+  company: "",
+  subject: "",
+  location: "",
+  message: "",
+};
+
 export default function Contact() {
+  const [form, setForm] = useState(INITIAL_FORM);
+  const [turnstileToken, setTurnstileToken] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+  const [submitted, setSubmitted] = useState(false);
+  const [submitError, setSubmitError] = useState("");
+  const turnstileRef = useRef<TurnstileWidgetHandle>(null);
+
   useEffect(() => {
     const ctx = gsap.context(() => {
       gsap.fromTo(".ct-title", { opacity: 0, y: 30 }, { opacity: 1, y: 0, duration: 0.7, ease: "power3.out" });
@@ -20,7 +51,83 @@ export default function Contact() {
     return () => ctx.revert();
   }, []);
 
-  const inputStyle: React.CSSProperties = {
+  const handleTurnstileToken = useCallback((token: string | null) => {
+    setTurnstileToken(token);
+    if (token) setSubmitError("");
+  }, []);
+
+  const handleTurnstileUnavailable = useCallback(() => {
+    setSubmitError("The security check could not load. Please refresh the page and try again.");
+  }, []);
+
+  async function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (submitting) return;
+
+    const name = form.name.trim();
+    const email = form.email.trim().toLowerCase();
+    const phone = form.phone.trim();
+    const company = form.company.trim();
+    const subject = form.subject.trim();
+    const location = form.location.trim();
+    const message = form.message.trim();
+
+    if (name.length < 2 || name.length > 120) {
+      setSubmitError("Enter a name between 2 and 120 characters.");
+      return;
+    }
+    if (!EMAIL_PATTERN.test(email) || email.length > 254) {
+      setSubmitError("Enter a valid email address.");
+      return;
+    }
+    if (phone && !PHONE_PATTERN.test(phone)) {
+      setSubmitError("Enter a valid phone number.");
+      return;
+    }
+    if (!subject || subject.length > 80) {
+      setSubmitError("Select the type of enquiry.");
+      return;
+    }
+    if (company.length > 200 || location.length > 500) {
+      setSubmitError("Company or location is too long.");
+      return;
+    }
+    if (message.length < 5 || message.length > 4000) {
+      setSubmitError("Enter a message between 5 and 4,000 characters.");
+      return;
+    }
+    if (!turnstileToken) {
+      setSubmitError("Complete the security check before submitting.");
+      return;
+    }
+
+    setSubmitting(true);
+    setSubmitError("");
+
+    try {
+      await submitPublicForm("quote_request", turnstileToken, {
+        quote_type: subject,
+        customer_name: name,
+        customer_email: email,
+        customer_phone: phone || null,
+        company_name: company || null,
+        location: location || null,
+        service_requested: subject,
+        additional_requirements: message,
+      });
+      setForm(INITIAL_FORM);
+      setSubmitted(true);
+      setTurnstileToken(null);
+      turnstileRef.current?.reset();
+    } catch (error) {
+      setSubmitError(error instanceof Error ? error.message : "Your enquiry could not be submitted. Please try again.");
+      turnstileRef.current?.reset();
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  const inputStyle: CSSProperties = {
     width: "100%",
     padding: "10px 14px",
     background: "rgba(0,199,177,0.05)",
@@ -33,7 +140,7 @@ export default function Contact() {
     transition: "border-color 0.2s, box-shadow 0.2s",
   };
 
-  const labelStyle: React.CSSProperties = {
+  const labelStyle: CSSProperties = {
     display: "block",
     fontFamily: '"Nunito", sans-serif',
     fontSize: "0.78rem",
@@ -42,163 +149,92 @@ export default function Contact() {
     letterSpacing: "0.03em",
   };
 
+  const update = (field: keyof typeof INITIAL_FORM, value: string) => {
+    setForm((current) => ({ ...current, [field]: value }));
+    if (submitted) setSubmitted(false);
+  };
+
   return (
     <div className="px-4 sm:px-6 py-20 max-w-5xl mx-auto">
-      {/* Header */}
       <div className="text-center mb-16 ct-title">
         <h1 style={{ fontFamily: '"Poppins", sans-serif', fontWeight: 700, fontSize: "clamp(2rem, 5vw, 3.2rem)", color: "#fff", marginBottom: "12px" }}>
-          Get in Touch
+          Contact
         </h1>
         <div style={{ height: "3px", width: "5rem", background: "linear-gradient(90deg, #00C7B1, #A3E635)", borderRadius: "2px", margin: "0 auto 16px", boxShadow: "0 0 12px rgba(0,199,177,0.5)" }} />
-        <p style={{ fontFamily: '"Nunito", sans-serif', fontSize: "1.05rem", color: "rgba(255,255,255,0.5)", maxWidth: "520px", margin: "0 auto" }}>
-          Whether you're a homeowner, business, enterprise, or potential partner — we'd love to hear from you.
+        <p style={{ fontFamily: '"Nunito", sans-serif', fontSize: "1.05rem", color: "rgba(255,255,255,0.5)", maxWidth: "560px", margin: "0 auto" }}>
+          Request information through the protected enquiry gateway. Success is shown only after the server confirms the request.
         </p>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-        {/* Left: Contact info cards */}
         <div>
           <h3 style={{ fontFamily: '"Poppins", sans-serif', fontWeight: 600, fontSize: "1.1rem", color: "#fff", marginBottom: "16px" }}>
             Contact Information
           </h3>
           <div className="flex flex-col gap-3">
-            {CONTACTS.map((c, i) => (
-              <div
-                key={i}
-                className="ct-card flex items-center gap-3 relative"
-                style={{
-                  background: "rgba(0,199,177,0.03)",
-                  border: `1px solid ${c.color}18`,
-                  borderRadius: "8px",
-                  padding: "16px 20px",
-                  backdropFilter: "blur(6px)",
-                  transition: "border-color 0.3s, box-shadow 0.3s",
-                }}
-                onMouseEnter={(e) => gsap.to(e.currentTarget, { boxShadow: `0 0 16px ${c.color}20`, borderColor: `${c.color}40`, duration: 0.3 })}
-                onMouseLeave={(e) => gsap.to(e.currentTarget, { boxShadow: "none", borderColor: `${c.color}18`, duration: 0.3 })}
-              >
-                <c.icon size={20} style={{ color: c.color, flexShrink: 0, filter: `drop-shadow(0 0 6px ${c.color}50)` }} />
+            {CONTACTS.map((contact) => (
+              <div key={contact.label} className="ct-card flex items-center gap-3" style={{ background: "rgba(0,199,177,0.03)", border: `1px solid ${contact.color}18`, borderRadius: "8px", padding: "16px 20px", backdropFilter: "blur(6px)" }}>
+                <contact.icon size={20} style={{ color: contact.color, flexShrink: 0 }} />
                 <div>
-                  <div style={{ fontFamily: '"Nunito", sans-serif', fontSize: "0.7rem", color: "rgba(255,255,255,0.35)", letterSpacing: "0.08em", textTransform: "uppercase" }}>{c.label}</div>
-                  <div style={{ fontFamily: '"Nunito", sans-serif', fontSize: "0.92rem", color: "#fff", fontWeight: 600 }}>{c.value}</div>
+                  <div style={{ fontFamily: '"Nunito", sans-serif', fontSize: "0.7rem", color: "rgba(255,255,255,0.35)", letterSpacing: "0.08em", textTransform: "uppercase" }}>{contact.label}</div>
+                  {contact.href ? (
+                    <a href={contact.href} style={{ fontFamily: '"Nunito", sans-serif', fontSize: "0.92rem", color: "#fff", fontWeight: 600, textDecoration: "none" }}>{contact.value}</a>
+                  ) : (
+                    <div style={{ fontFamily: '"Nunito", sans-serif', fontSize: "0.92rem", color: "#fff", fontWeight: 600 }}>{contact.value}</div>
+                  )}
                 </div>
               </div>
             ))}
           </div>
-
-          {/* Investor enquiries note */}
-          <div
-            className="ct-card mt-4 relative"
-            style={{
-              background: "rgba(163,230,53,0.04)",
-              border: "1px solid rgba(163,230,53,0.2)",
-              borderRadius: "8px",
-              padding: "20px",
-            }}
-          >
-            <span className="corner tl" /><span className="corner tr" /><span className="corner bl" /><span className="corner br" />
-            <h4 style={{ fontFamily: '"Poppins", sans-serif', fontWeight: 600, fontSize: "0.9rem", color: "#A3E635", marginBottom: "6px" }}>Investor Enquiries</h4>
-            <p style={{ fontFamily: '"Nunito", sans-serif', fontSize: "0.82rem", color: "rgba(255,255,255,0.45)", lineHeight: 1.5 }}>
-              Tellinex is raising a Series A to fund Jamaica's first underground fibre network. For the investor deck and financial model, contact <span style={{ color: "#A3E635", fontWeight: 600 }}>invest@tellinex.com</span>
-            </p>
-          </div>
         </div>
 
-        {/* Right: Contact form */}
-        <div
-          className="ct-form relative"
-          style={{
-            background: "rgba(0,199,177,0.03)",
-            border: "1px solid rgba(0,199,177,0.18)",
-            borderRadius: "10px",
-            padding: "32px",
-            backdropFilter: "blur(8px)",
-          }}
-        >
-          <span className="corner tl" /><span className="corner tr" /><span className="corner bl" /><span className="corner br" />
-
+        <div className="ct-form" style={{ background: "rgba(0,199,177,0.03)", border: "1px solid rgba(0,199,177,0.18)", borderRadius: "10px", padding: "32px", backdropFilter: "blur(8px)" }}>
           <h3 style={{ fontFamily: '"Poppins", sans-serif', fontWeight: 600, fontSize: "1.1rem", color: "#fff", marginBottom: "20px" }}>
-            Send us a message
+            Request Information
           </h3>
 
-          <form onSubmit={(e) => { e.preventDefault(); alert("Message sent! We'll respond within 24 hours."); }}>
-            <div className="mb-4">
-              <label style={labelStyle}>Name *</label>
-              <input type="text" required placeholder="Your name" style={inputStyle}
-                onFocus={(e) => { e.currentTarget.style.borderColor = "rgba(0,199,177,0.7)"; e.currentTarget.style.boxShadow = "0 0 12px rgba(0,199,177,0.15)"; }}
-                onBlur={(e) => { e.currentTarget.style.borderColor = "rgba(0,199,177,0.25)"; e.currentTarget.style.boxShadow = "none"; }}
-              />
+          {submitted && (
+            <div role="status" style={{ display: "flex", gap: "10px", alignItems: "flex-start", padding: "14px", marginBottom: "18px", borderRadius: "6px", background: "rgba(163,230,53,0.08)", border: "1px solid rgba(163,230,53,0.25)", color: "#d9ff9a" }}>
+              <CheckCircle size={20} />
+              <span>REQUEST RECEIVED. The gateway confirmed your enquiry. This is not a service activation and not a contract.</span>
+            </div>
+          )}
+
+          <form onSubmit={submit}>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-4">
+              <div><label style={labelStyle}>Name *</label><input value={form.name} onChange={(e) => update("name", e.target.value)} required maxLength={120} style={inputStyle} /></div>
+              <div><label style={labelStyle}>Email *</label><input value={form.email} onChange={(e) => update("email", e.target.value)} type="email" required maxLength={254} style={inputStyle} /></div>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-4">
+              <div><label style={labelStyle}>Phone</label><input value={form.phone} onChange={(e) => update("phone", e.target.value)} type="tel" maxLength={25} style={inputStyle} /></div>
+              <div><label style={labelStyle}>Company</label><input value={form.company} onChange={(e) => update("company", e.target.value)} maxLength={200} style={inputStyle} /></div>
             </div>
             <div className="mb-4">
-              <label style={labelStyle}>Email *</label>
-              <input type="email" required placeholder="your@email.com" style={inputStyle}
-                onFocus={(e) => { e.currentTarget.style.borderColor = "rgba(0,199,177,0.7)"; e.currentTarget.style.boxShadow = "0 0 12px rgba(0,199,177,0.15)"; }}
-                onBlur={(e) => { e.currentTarget.style.borderColor = "rgba(0,199,177,0.25)"; e.currentTarget.style.boxShadow = "none"; }}
-              />
-            </div>
-            <div className="mb-4">
-              <label style={labelStyle}>Subject</label>
-              <select
-                style={{
-                  ...inputStyle,
-                  appearance: "none" as const,
-                  backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%2300C7B1' d='M2 4l4 4 4-4'/%3E%3C/svg%3E")`,
-                  backgroundRepeat: "no-repeat",
-                  backgroundPosition: "right 12px center",
-                  paddingRight: "32px",
-                }}
-                defaultValue=""
-              >
-                <option value="" disabled>What's this about?</option>
+              <label style={labelStyle}>Enquiry type *</label>
+              <select value={form.subject} onChange={(e) => update("subject", e.target.value)} required style={{ ...inputStyle, appearance: "none" }}>
+                <option value="" disabled>Select an enquiry type</option>
                 <option value="residential">Residential service</option>
                 <option value="business">Business service</option>
-                <option value="enterprise">Enterprise / wholesale</option>
+                <option value="enterprise">Enterprise or wholesale</option>
+                <option value="government">Government services</option>
                 <option value="partnership">Partnership opportunity</option>
-                <option value="careers">Careers</option>
-                <option value="other">Other</option>
+                <option value="other">Other enquiry</option>
               </select>
             </div>
-            <div className="mb-6">
-              <label style={labelStyle}>Message *</label>
-              <textarea
-                required
-                rows={5}
-                placeholder="Tell us how we can help..."
-                style={{ ...inputStyle, resize: "vertical" as const }}
-                onFocus={(e) => { e.currentTarget.style.borderColor = "rgba(0,199,177,0.7)"; e.currentTarget.style.boxShadow = "0 0 12px rgba(0,199,177,0.15)"; }}
-                onBlur={(e) => { e.currentTarget.style.borderColor = "rgba(0,199,177,0.25)"; e.currentTarget.style.boxShadow = "none"; }}
-              />
-            </div>
-            <button
-              type="submit"
-              style={{
-                width: "100%",
-                padding: "14px",
-                background: "#A3E635",
-                color: "#040d14",
-                fontFamily: '"Poppins", sans-serif',
-                fontWeight: 700,
-                fontSize: "0.85rem",
-                letterSpacing: "0.1em",
-                textTransform: "uppercase",
-                borderRadius: "6px",
-                border: "none",
-                cursor: "pointer",
-                boxShadow: "0 0 16px rgba(163,230,53,0.35)",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                gap: "8px",
-                transition: "transform 0.15s, box-shadow 0.15s",
-              }}
-              onMouseEnter={(e) => gsap.to(e.currentTarget, { scale: 1.02, boxShadow: "0 0 28px rgba(163,230,53,0.5)", duration: 0.2 })}
-              onMouseLeave={(e) => gsap.to(e.currentTarget, { scale: 1, boxShadow: "0 0 16px rgba(163,230,53,0.35)", duration: 0.2 })}
-            >
-              <Send size={16} /> SEND MESSAGE
+            <div className="mb-4"><label style={labelStyle}>Service location</label><input value={form.location} onChange={(e) => update("location", e.target.value)} maxLength={500} placeholder="Community, parish or site address" style={inputStyle} /></div>
+            <div className="mb-5"><label style={labelStyle}>Requirements *</label><textarea value={form.message} onChange={(e) => update("message", e.target.value)} required minLength={5} maxLength={4000} rows={5} style={{ ...inputStyle, resize: "vertical" }} /></div>
+
+            <TurnstileWidget ref={turnstileRef} action="quote_request" onTokenChange={handleTurnstileToken} onUnavailable={handleTurnstileUnavailable} />
+
+            {submitError && <p role="alert" aria-live="polite" style={{ color: "#ff8a8a", fontFamily: '"Nunito", sans-serif', fontSize: "0.82rem", marginBottom: "14px" }}>{submitError}</p>}
+
+            <button type="submit" disabled={submitting || !turnstileToken} style={{ width: "100%", padding: "14px", background: "#A3E635", color: "#040d14", fontFamily: '"Poppins", sans-serif', fontWeight: 700, fontSize: "0.85rem", letterSpacing: "0.1em", textTransform: "uppercase", borderRadius: "6px", border: "none", cursor: submitting || !turnstileToken ? "not-allowed" : "pointer", opacity: submitting || !turnstileToken ? 0.65 : 1, display: "flex", alignItems: "center", justifyContent: "center", gap: "8px" }}>
+              <Send size={16} /> {submitting ? "SENDING…" : "SEND REQUEST"}
             </button>
           </form>
         </div>
       </div>
+      <LegalNoticeLinks />
     </div>
   );
 }

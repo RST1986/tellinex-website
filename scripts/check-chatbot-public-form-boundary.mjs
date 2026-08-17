@@ -31,9 +31,9 @@ const required = [
   'TURNSTILE_SECRET_KEY',
   'privacy_acknowledged',
   'client_authority_rejected',
-  'AI_CHAT_RATE_LIMITER',
-  'AI_CHAT_DURABLE_RATE_LIMIT_REQUIRED=YES',
-  'durable_rate_limit_required',
+  'EDGE_ABUSE_CONTROL_REQUIRED=YES',
+  'WAF_RATE_LIMIT_RUNTIME_PROVEN=NO',
+  'APPLICATION_RATE_LIMIT_BINDING_REQUIRED=NO',
   'tellinex_ai_chat',
   'turnstile_hostname_mismatch',
   'turnstile_action_mismatch',
@@ -41,6 +41,18 @@ const required = [
 ];
 for (const token of required) {
   if (!source.includes(token)) fail(`missing boundary token: ${token}`);
+}
+
+if (source.includes('durable_rate_limit_required') || /\.limit\s*\(\s*\{\s*key/.test(source)) {
+  fail('app must not require an unsupported Pages Rate Limiting binding');
+}
+
+const wrangler = fs.readFileSync('wrangler.toml', 'utf8');
+if (/^\s*\[\[ratelimits\]\]/m.test(wrangler) || /^\s*name\s*=\s*"AI_CHAT_RATE_LIMITER"/m.test(wrangler) || /^\s*namespace_id\s*=/m.test(wrangler)) {
+  fail('wrangler.toml must not declare unsupported Pages Rate Limiting bindings');
+}
+if (!wrangler.includes('EDGE_ABUSE_CONTROL_REQUIRED=YES') || !wrangler.includes('WAF_RATE_LIMIT_RUNTIME_PROVEN=NO')) {
+  fail('wrangler.toml must declare WAF as the unproven edge abuse layer');
 }
 
 if (!widget.includes('action="tellinex_ai_chat"')) fail('widget action must be tellinex_ai_chat');

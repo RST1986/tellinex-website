@@ -37,4 +37,6 @@ if (failed > 0) {
 console.log("release:check PASS");
 console.log("COMMERCIAL_LIVE=NO");
 console.log("DEPLOYED=NO");
-console.log("AI_CHAT_DURABLE_ABUSE_CONTROL=BLOCKED_INFRA_GATE");
+console.log("EDGE_ABUSE_CONTROL_REQUIRED=YES");
+console.log("WAF_RATE_LIMIT_RUNTIME_PROVEN=NO");
+console.log("COST_BUDGET_CONTROL_SOURCE_READY=NO");

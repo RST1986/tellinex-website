@@ -66,7 +66,7 @@ const mutants = [
   },
   {
     id: "M9",
-    apply: () => mutate("functions/api/ai-chat.js", "durable_rate_limit_required", "local_map_is_enough"),
+    apply: () => mutate("functions/api/ai-chat.js", "EDGE_ABUSE_CONTROL_REQUIRED=YES", "EDGE_ABUSE_CONTROL_REQUIRED=NO"),
     check: chatCheck,
   },
   {

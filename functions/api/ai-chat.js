@@ -1,13 +1,20 @@
 // Cloudflare Pages Function — served at /api/ai-chat
 // Public chat endpoint. It never writes directly to Supabase public-form tables.
-// AI != AUTHORITY. FAIL CLOSED when required bindings are absent.
-// This file does not create Cloudflare resources.
+// AI != AUTHORITY. FAIL CLOSED when required secrets are absent.
+// This file does not create Cloudflare resources. COMMERCIAL_LIVE=NO. DEPLOYED=NO.
 //
-// AI_CHAT_DURABLE_RATE_LIMIT_REQUIRED=YES
+// EDGE_ABUSE_CONTROL_REQUIRED=YES
+// WAF_RATE_LIMIT_RUNTIME_PROVEN=NO
+// APPLICATION_RATE_LIMIT_BINDING_REQUIRED=NO
 // AI_CHAT_LOCAL_MAP_IS_SECURITY_CONTROL=NO
-// Process-local Map() is not a production abuse control across isolates/PoPs.
-// The official control is the Workers Rate Limiting binding (per-location).
-// If the binding is not present at runtime, chat fails closed.
+// COST_BUDGET_CONTROL_SOURCE_READY=NO
+//
+// Official: Pages does not support Workers Rate Limiting bindings.
+// https://developers.cloudflare.com/workers/static-assets/migration-guides/migrate-from-pages/
+// Do not 503 because a Workers rate-limit binding is absent — that binding is
+// not a Pages control. Request abuse belongs at a later authorised WAF rate
+// limiting rule for POST /api/ai-chat. Process-local Map() is not a security control.
+// Cost budget is not this function (see AI Gateway spend limits / provider console).
 
 export const TURNSTILE_ACTION = 'tellinex_ai_chat';
 export const PRODUCTION_ORIGINS = Object.freeze([
@@ -112,32 +119,13 @@ function json(origin, env, status, body, extraHeaders = {}) {
 }
 
 function connectingIp(request) {
+  // Turnstile siteverify remoteip hint only. Not an abuse-limiter identity key.
+  // Cloudflare guarantees CF-Connecting-IP at the CF edge. Do not use
+  // spoofable proxy hop headers as identity. IP-only keying is not recommended
+  // (CGNAT / Jamaica mobile). Coarse IP counting belongs at WAF, not here.
   const cfIp = request.headers.get('cf-connecting-ip');
   if (typeof cfIp === 'string' && cfIp.trim()) return cfIp.trim();
   return null;
-}
-
-async function enforceDurableRateLimit(env, request) {
-  const limiter = env?.AI_CHAT_RATE_LIMITER;
-  if (!limiter || typeof limiter.limit !== 'function') {
-    return { ok: false, status: 503, code: 'durable_rate_limit_required', message: 'Chat is temporarily unavailable.' };
-  }
-
-  const ip = connectingIp(request);
-  let key;
-  if (ip) {
-    key = `ai-chat:${ip}`;
-  } else if (isLocalDev(env)) {
-    key = 'ai-chat:local-dev';
-  } else {
-    return { ok: false, status: 403, code: 'client_identity_unavailable', message: 'This request cannot be attributed at the trusted edge.' };
-  }
-
-  const result = await limiter.limit({ key });
-  if (!result || result.success !== true) {
-    return { ok: false, status: 429, code: 'rate_limited', message: 'Too many chat requests. Please try again later.' };
-  }
-  return { ok: true };
 }
 
 function validateMessages(value) {
@@ -274,12 +262,6 @@ export async function onRequest(context) {
   const declaredLength = Number.parseInt(request.headers.get('content-length') || '', 10);
   if (Number.isFinite(declaredLength) && declaredLength > MAX_BODY_BYTES) {
     return json(origin, env, 413, { code: 'payload_too_large', message: 'The request is too large.' });
-  }
-
-  const limited = await enforceDurableRateLimit(env, request);
-  if (!limited.ok) {
-    const extra = limited.status === 429 ? { 'Retry-After': '60' } : {};
-    return json(origin, env, limited.status, { code: limited.code, message: limited.message }, extra);
   }
 
   try {

@@ -54,8 +54,12 @@ const mutants = [
   },
   {
     id: "A7",
-    apply: () => mutate("functions/api/ai-chat.js", "if (!limiter || typeof limiter.limit !== 'function') {", "if (false && (!limiter || typeof limiter.limit !== 'function')) {"),
-    check: run,
+    apply: () => mutate(
+      "wrangler.toml",
+      'pages_build_output_dir = "dist"',
+      'pages_build_output_dir = "dist"\n\n[[ratelimits]]\nname = "AI_CHAT_RATE_LIMITER"\nnamespace_id = "91001"',
+    ),
+    check: sourceCheck,
   },
   {
     id: "A8",

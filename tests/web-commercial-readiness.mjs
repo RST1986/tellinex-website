@@ -16,6 +16,7 @@ const register = read("src/app/pages/Register.tsx");
 const reviews = read("src/app/pages/Reviews.tsx");
 const facts = read("src/app/content/commercialFacts.ts");
 const chat = read("functions/api/ai-chat.js");
+const wrangler = read("wrangler.toml");
 const widget = read("src/app/components/AIChatWidget.tsx");
 const app = read("src/app/App.tsx");
 const layout = read("src/app/components/Layout.tsx");
@@ -70,10 +71,13 @@ pass("WEB11", "footer privacy/terms links");
 if (!chat.includes("TURNSTILE_SECRET_KEY") || !chat.includes("turnstile_hostname_mismatch") || !chat.includes("turnstile_action_mismatch") || !widget.includes("privacy_acknowledged")) {
   fail("WEB12", "AI Turnstile/privacy controls missing");
 }
-if (!chat.includes("AI_CHAT_RATE_LIMITER") || /const requestCounts = new Map\(/.test(chat)) {
-  fail("WEB12", "durable limiter missing or process-local Map restored as control");
+if (!chat.includes("EDGE_ABUSE_CONTROL_REQUIRED=YES") || !chat.includes("WAF_RATE_LIMIT_RUNTIME_PROVEN=NO") || /const requestCounts = new Map\(/.test(chat)) {
+  fail("WEB12", "WAF edge-abuse flags missing or process-local Map restored as control");
 }
-pass("WEB12", "AI fail-closed, hostname+action Turnstile, official limiter required");
+if (chat.includes("durable_rate_limit_required") || /^\s*\[\[ratelimits\]\]/m.test(wrangler)) {
+  fail("WEB12", "unsupported Pages Rate Limiting binding still treated as a control");
+}
+pass("WEB12", "AI fail-closed Turnstile; WAF declared, not claimed proven");
 
 if (widget.includes("system:") || widget.includes("TELLINEX_SYSTEM_PROMPT")) fail("WEB13", "browser still sends AI system authority");
 pass("WEB13", "browser cannot set AI system prompt");

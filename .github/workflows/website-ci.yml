@@ -20,6 +20,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
@@ -38,3 +40,6 @@ jobs:
 
       - name: Release checks (no deploy)
         run: npm run release:check
+
+      - name: Pages Functions compile (no deploy)
+        run: npx --yes wrangler@4 pages functions build --outdir=.wrangler-pages-functions-check

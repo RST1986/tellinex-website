@@ -29,9 +29,6 @@ function env(overrides = {}) {
     ANTHROPIC_API_KEY: "test-placeholder-not-a-real-key",
     TURNSTILE_SECRET_KEY: "test-placeholder-not-a-real-secret",
     CF_PAGES: "1",
-    AI_CHAT_RATE_LIMITER: {
-      limit: async () => ({ success: true }),
-    },
     ...overrides,
   };
 }
@@ -267,29 +264,27 @@ if (fs.existsSync("functions/opus-diagnose.js") || fs.existsSync("src/OpusHealth
 }
 pass("P17", "no public control-plane endpoints reintroduced");
 
-await property("RL1", "missing durable limiter fails closed", async () => {
+await property("RL1", "missing Pages rate-limit binding does not 503", async () => {
   const response = await call({
     request: request({ body: validBody }),
     env: env({ AI_CHAT_RATE_LIMITER: undefined }),
   });
   const body = await readJson(response);
-  if (response.status !== 503 || body.code !== "durable_rate_limit_required") {
+  if (response.status !== 200 || body.code === "durable_rate_limit_required") {
     fail("RL1", `status=${response.status} code=${body.code}`);
   }
 });
 
-await property("RL2", "limiter.limit success=false returns 429", async () => {
-  const response = await call({
-    request: request({ body: validBody }),
-    env: env({
-      AI_CHAT_RATE_LIMITER: { limit: async () => ({ success: false }) },
-    }),
-  });
-  const body = await readJson(response);
-  if (response.status !== 429 || body.code !== "rate_limited") fail("RL2", `status=${response.status} code=${body.code}`);
-});
+const wrangler = fs.readFileSync("wrangler.toml", "utf8");
+if (/^\s*\[\[ratelimits\]\]/m.test(wrangler) || /^\s*name\s*=\s*"AI_CHAT_RATE_LIMITER"/m.test(wrangler) || /^\s*namespace_id\s*=/m.test(wrangler)) {
+  fail("RL2", "unsupported Pages Rate Limiting binding still declared as if production-valid");
+}
+if (!wrangler.includes("EDGE_ABUSE_CONTROL_REQUIRED=YES") || !wrangler.includes("WAF_RATE_LIMIT_RUNTIME_PROVEN=NO")) {
+  fail("RL2", "WAF edge-abuse flags missing from wrangler.toml");
+}
+pass("RL2", "wrangler.toml has no Pages Rate Limiting binding; WAF is the declared future layer");
 
-await property("RL3", "x-forwarded-for is not trusted identity on CF", async () => {
+await property("RL3", "x-forwarded-for is not trusted identity and does not gate chat", async () => {
   const response = await call({
     request: request({
       body: validBody,
@@ -299,7 +294,7 @@ await property("RL3", "x-forwarded-for is not trusted identity on CF", async () 
     env: env(),
   });
   const body = await readJson(response);
-  if (response.status !== 403 || body.code !== "client_identity_unavailable") {
+  if (response.status !== 200) {
     fail("RL3", `status=${response.status} code=${body.code}`);
   }
 });
@@ -308,14 +303,22 @@ const source = fs.readFileSync("functions/api/ai-chat.js", "utf8");
 if (/const requestCounts = new Map\(/.test(source) || /const tokenSpend = new Map\(/.test(source)) {
   fail("RL4", "process-local Map is still used as a security/cost control");
 }
-if (!source.includes("AI_CHAT_DURABLE_RATE_LIMIT_REQUIRED=YES")) {
-  fail("RL4", "durable rate-limit required flag missing");
+if (!source.includes("EDGE_ABUSE_CONTROL_REQUIRED=YES")) {
+  fail("RL4", "EDGE_ABUSE_CONTROL_REQUIRED flag missing");
 }
-if (!source.includes("AI_CHAT_RATE_LIMITER")) fail("RL4", "official limiter binding missing");
+if (!source.includes("WAF_RATE_LIMIT_RUNTIME_PROVEN=NO")) {
+  fail("RL4", "must not claim WAF runtime proof");
+}
+if (!source.includes("APPLICATION_RATE_LIMIT_BINDING_REQUIRED=NO")) {
+  fail("RL4", "must not require an unsupported Pages rate-limit binding");
+}
+if (source.includes("durable_rate_limit_required") || /\.limit\s*\(\s*\{\s*key/.test(source)) {
+  fail("RL4", "app still pretends a Pages Rate Limiting binding is the control");
+}
 if (source.includes("x-forwarded-for") || source.includes("x-forwarded-for".toUpperCase())) {
   fail("RL4", "x-forwarded-for used as identity");
 }
-pass("RL4", "Map is not a security control; official limiter declared fail-closed");
+pass("RL4", "Map is not a security control; WAF is declared, not tested, not claimed proven");
 
 if (TURNSTILE_ACTION !== "tellinex_ai_chat") fail("ACTION", "backend action drifted");
 pass("ACTION", `frontend and backend share ${TURNSTILE_ACTION}`);

@@ -4,9 +4,10 @@
   "version": "1.0.0",
   "type": "module",
   "scripts": {
-    "build": "node scripts/check-public-form-gateway-contract.mjs && node scripts/check-chatbot-public-form-boundary.mjs && vite build",
+    "build": "node scripts/check-public-form-gateway-contract.mjs && node scripts/check-chatbot-public-form-boundary.mjs && node scripts/check-security-headers.mjs && vite build",
     "check:public-form-gateway": "node scripts/check-public-form-gateway-contract.mjs",
     "check:chatbot-public-form-boundary": "node scripts/check-chatbot-public-form-boundary.mjs",
+    "check:security-headers": "node scripts/check-security-headers.mjs",
     "dev": "vite",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit"

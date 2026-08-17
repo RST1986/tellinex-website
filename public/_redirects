@@ -1,4 +1,7 @@
 # Cloudflare Pages SPA fallback — serve index.html for client-side routes.
-# Pages Functions (/api/*, /opus-diagnose) are matched before this catch-all,
+# Pages Functions (/api/*) are matched before this catch-all,
 # so this only affects non-function, non-asset routes.
+# opus-diagnose is not a public route. PUBLIC_AUTO_HEAL_ENDPOINTS=0
+/privacy   /index.html   200
+/terms     /index.html   200
 /*    /index.html   200

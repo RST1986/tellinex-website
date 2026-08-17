@@ -5,3 +5,20 @@
 name = "tellinex-website"
 compatibility_date = "2024-11-01"
 pages_build_output_dir = "dist"
+
+# Do not declare a Rate Limiting binding in this Pages project.
+# Official Pages vs Workers compatibility matrix (14 Aug 2026):
+# Rate Limiting bindings are supported on Workers and unavailable on Pages.
+# https://developers.cloudflare.com/workers/static-assets/migration-guides/migrate-from-pages/
+# Pages Functions bindings (subset only):
+# https://developers.cloudflare.com/pages/functions/bindings/
+# Listed: KV, Durable Objects, R2, D1, Vectorize, Workers AI, Service bindings,
+# Queues, Hyperdrive, Analytics Engine. Rate Limiting is not listed.
+#
+# REQUEST_ABUSE_CONTROL for POST /api/ai-chat belongs at a zone WAF rate
+# limiting rule. That rule is a later authorised dashboard/API change.
+# This file does not create remote Cloudflare resources.
+# EDGE_ABUSE_CONTROL_REQUIRED=YES
+# WAF_RATE_LIMIT_RUNTIME_PROVEN=NO
+# APPLICATION_RATE_LIMIT_BINDING_REQUIRED=NO
+# COST_BUDGET_CONTROL_SOURCE_READY=NO

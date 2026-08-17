@@ -4,8 +4,12 @@ import Home from "./pages/Home";
 import Services from "./pages/Services";
 import About from "./pages/About";
 import Register from "./pages/Register";
+import Availability from "./pages/Availability";
+import Status from "./pages/Status";
 import Contact from "./pages/Contact";
 import Reviews from "./pages/Reviews";
+import Privacy from "./pages/Privacy";
+import Terms from "./pages/Terms";
 
 export default function App() {
   return (
@@ -15,8 +19,12 @@ export default function App() {
         <Route path="services" element={<Services />} />
         <Route path="about" element={<About />} />
         <Route path="register" element={<Register />} />
+        <Route path="availability" element={<Availability />} />
+        <Route path="status" element={<Status />} />
         <Route path="contact" element={<Contact />} />
         <Route path="reviews" element={<Reviews />} />
+        <Route path="privacy" element={<Privacy />} />
+        <Route path="terms" element={<Terms />} />
       </Route>
     </Routes>
   );

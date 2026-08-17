@@ -1,0 +1,13 @@
+/*
+  X-Content-Type-Options: nosniff
+  X-Frame-Options: DENY
+  Referrer-Policy: strict-origin-when-cross-origin
+  Permissions-Policy: camera=(), microphone=(), geolocation=(), payment=()
+  Strict-Transport-Security: max-age=31536000; includeSubDomains
+  Content-Security-Policy: default-src 'self'; script-src 'self' 'unsafe-inline' https://challenges.cloudflare.com https://www.googletagmanager.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https://www.googletagmanager.com https://www.google-analytics.com; connect-src 'self' https://egztpclpcnizcdtfugsv.supabase.co https://uygisfwvpcnzuzmrzhqz.supabase.co https://challenges.cloudflare.com https://www.google-analytics.com https://region1.google-analytics.com https://www.googletagmanager.com; frame-src https://challenges.cloudflare.com; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'
+
+# Aikido 526665839: production tellinex.com had no CSP. Cloudflare Pages reads this file from dist/.
+# CSP_UNSAFE_INLINE_SCRIPT_DEBT=YES — live gtag snippet is an inline script; JSON-LD on main is also inline.
+# CSP_UNSAFE_INLINE_STYLE_DEBT=YES — existing inline style attributes and Google Fonts require style-src 'unsafe-inline'.
+# No wildcard host. GTM/GA hosts are explicit because production currently loads G-STKG92T15E.
+# HSTS closes the companion Aikido high finding (header missing on tellinex.com).

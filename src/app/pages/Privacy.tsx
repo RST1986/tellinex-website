@@ -17,7 +17,13 @@ export default function Privacy() {
         Public forms go through a Turnstile-protected gateway. The browser does not insert rows directly into Tellinex databases. Chat messages may be processed by an AI assistant after you acknowledge that disclosure. Quote extraction from chat is not persisted as a customer record by the public website.
       </p>
       <p style={{ fontFamily: '"Nunito", sans-serif', color: "rgba(255,255,255,0.55)", lineHeight: 1.7, marginBottom: "16px" }}>
-        We do not publish a company number, registered office, or licence number on this page because those details are not approved for this draft. Contact info@tellinex.com for privacy requests.
+        Processors used by this website: Cloudflare (hosting and the Turnstile security check), Supabase (storage of submitted form details, hosted in the United States), and Anthropic (processing of AI chat messages, hosted in the United States). Submitting a form or using the chat therefore transfers that information outside Jamaica. This website does not set analytics or advertising cookies in this build; if analytics are added, this notice must be updated first.
+      </p>
+      <p style={{ fontFamily: '"Nunito", sans-serif', color: "rgba(255,255,255,0.55)", lineHeight: 1.7, marginBottom: "16px" }}>
+        Under the Jamaican Data Protection Act, 2020 you may request access to, correction of, or deletion of the details you submitted. Retention periods are not yet approved for this draft; until then, requests are handled individually. Send privacy requests to info@tellinex.com.
+      </p>
+      <p style={{ fontFamily: '"Nunito", sans-serif', color: "rgba(255,255,255,0.55)", lineHeight: 1.7, marginBottom: "16px" }}>
+        We do not publish a company number, registered office, or licence number on this page because those details are not approved for this draft.
       </p>
       <p style={{ fontFamily: '"Nunito", sans-serif', color: "rgba(255,255,255,0.4)", fontSize: "0.85rem" }}>
         This draft is not legal advice and is not an approved privacy policy.

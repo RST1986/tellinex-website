@@ -205,23 +205,23 @@ export default function Register() {
           <form onSubmit={handleSubmit} style={{ background: "rgba(0,199,177,0.03)", border: "1px solid rgba(0,199,177,0.18)", borderRadius: "10px", padding: "32px", backdropFilter: "blur(8px)" }}>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-4">
               <div>
-                <label style={labelStyle}><User size={12} style={{ display: "inline", marginRight: "4px" }} />Full name *</label>
-                <input value={form.fullName} onChange={(e) => updateField("fullName", e.target.value)} onFocus={focus} onBlur={blur} type="text" required maxLength={120} placeholder="Your name" style={inputStyle} />
+                <label htmlFor="reg-full-name" style={labelStyle}><User size={12} style={{ display: "inline", marginRight: "4px" }} />Full name *</label>
+                <input id="reg-full-name" value={form.fullName} onChange={(e) => updateField("fullName", e.target.value)} onFocus={focus} onBlur={blur} type="text" required maxLength={120} placeholder="Your name" style={inputStyle} />
               </div>
               <div>
-                <label style={labelStyle}><Mail size={12} style={{ display: "inline", marginRight: "4px" }} />Email *</label>
-                <input value={form.email} onChange={(e) => updateField("email", e.target.value)} onFocus={focus} onBlur={blur} type="email" required maxLength={254} placeholder="your@email.com" style={inputStyle} />
+                <label htmlFor="reg-email" style={labelStyle}><Mail size={12} style={{ display: "inline", marginRight: "4px" }} />Email *</label>
+                <input id="reg-email" value={form.email} onChange={(e) => updateField("email", e.target.value)} onFocus={focus} onBlur={blur} type="email" required maxLength={254} placeholder="your@email.com" style={inputStyle} />
               </div>
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-4">
               <div>
-                <label style={labelStyle}><Phone size={12} style={{ display: "inline", marginRight: "4px" }} />Phone</label>
-                <input value={form.phone} onChange={(e) => updateField("phone", e.target.value)} onFocus={focus} onBlur={blur} type="tel" maxLength={25} placeholder="+1-876-..." style={inputStyle} />
+                <label htmlFor="reg-phone" style={labelStyle}><Phone size={12} style={{ display: "inline", marginRight: "4px" }} />Phone</label>
+                <input id="reg-phone" value={form.phone} onChange={(e) => updateField("phone", e.target.value)} onFocus={focus} onBlur={blur} type="tel" maxLength={25} placeholder="+1-876-..." style={inputStyle} />
               </div>
               <div>
-                <label style={labelStyle}><MapPin size={12} style={{ display: "inline", marginRight: "4px" }} />Parish *</label>
-                <select value={form.parish} onChange={(e) => updateField("parish", e.target.value)} required style={selectStyle}>
+                <label htmlFor="reg-parish" style={labelStyle}><MapPin size={12} style={{ display: "inline", marginRight: "4px" }} />Parish *</label>
+                <select id="reg-parish" value={form.parish} onChange={(e) => updateField("parish", e.target.value)} required style={selectStyle}>
                   <option value="" disabled>Select your parish</option>
                   {PARISHES.map((parish) => <option key={parish} value={parish}>{parish}</option>)}
                 </select>
@@ -230,12 +230,12 @@ export default function Register() {
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-4">
               <div>
-                <label style={labelStyle}>Community / Neighbourhood</label>
-                <input value={form.community} onChange={(e) => updateField("community", e.target.value)} onFocus={focus} onBlur={blur} maxLength={200} placeholder="e.g. New Kingston" style={inputStyle} />
+                <label htmlFor="reg-community" style={labelStyle}>Community / Neighbourhood</label>
+                <input id="reg-community" value={form.community} onChange={(e) => updateField("community", e.target.value)} onFocus={focus} onBlur={blur} maxLength={200} placeholder="e.g. New Kingston" style={inputStyle} />
               </div>
               <div>
-                <label style={labelStyle}>Type *</label>
-                <select value={form.type} onChange={(e) => updateField("type", e.target.value)} required style={selectStyle}>
+                <label htmlFor="reg-type" style={labelStyle}>Type *</label>
+                <select id="reg-type" value={form.type} onChange={(e) => updateField("type", e.target.value)} required style={selectStyle}>
                   <option value="" disabled>Residential or Business?</option>
                   <option value="residential">Residential</option>
                   <option value="business">Business</option>
@@ -246,15 +246,15 @@ export default function Register() {
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-4">
               <div>
-                <label style={labelStyle}>Current provider</label>
-                <select value={form.provider} onChange={(e) => updateField("provider", e.target.value)} style={selectStyle}>
+                <label htmlFor="reg-provider" style={labelStyle}>Current provider</label>
+                <select id="reg-provider" value={form.provider} onChange={(e) => updateField("provider", e.target.value)} style={selectStyle}>
                   <option value="">Who do you use now?</option>
                   {PROVIDERS.map((provider) => <option key={provider} value={provider}>{provider}</option>)}
                 </select>
               </div>
               <div>
-                <label style={labelStyle}>Monthly spend</label>
-                <select value={form.monthlySpend} onChange={(e) => updateField("monthlySpend", e.target.value)} style={selectStyle}>
+                <label htmlFor="reg-monthly-spend" style={labelStyle}>Monthly spend</label>
+                <select id="reg-monthly-spend" value={form.monthlySpend} onChange={(e) => updateField("monthlySpend", e.target.value)} style={selectStyle}>
                   <option value="">What do you pay now?</option>
                   {SPEND_RANGES.map((range) => <option key={range} value={range}>{range}</option>)}
                 </select>
@@ -274,8 +274,8 @@ export default function Register() {
             </div>
 
             <div className="mb-6">
-              <label style={labelStyle}><MessageSquare size={12} style={{ display: "inline", marginRight: "4px" }} />Anything else?</label>
-              <textarea value={form.comments} onChange={(e) => updateField("comments", e.target.value)} onFocus={focus} onBlur={blur} rows={3} maxLength={4000} placeholder="Tell us what you need from your internet..." style={{ ...inputStyle, resize: "vertical" }} />
+              <label htmlFor="reg-comments" style={labelStyle}><MessageSquare size={12} style={{ display: "inline", marginRight: "4px" }} />Anything else?</label>
+              <textarea id="reg-comments" value={form.comments} onChange={(e) => updateField("comments", e.target.value)} onFocus={focus} onBlur={blur} rows={3} maxLength={4000} placeholder="Tell us what you need from your internet..." style={{ ...inputStyle, resize: "vertical" }} />
             </div>
 
             <TurnstileWidget
@@ -301,7 +301,7 @@ export default function Register() {
           </form>
         </div>
       ) : (
-        <div className="text-center" style={{ background: "rgba(0,199,177,0.08)", border: "1px solid rgba(0,199,177,0.5)", borderRadius: "10px", padding: "48px 32px" }}>
+        <div role="status" className="text-center" style={{ background: "rgba(0,199,177,0.08)", border: "1px solid rgba(0,199,177,0.5)", borderRadius: "10px", padding: "48px 32px" }}>
           <CheckCircle size={48} style={{ color: "#A3E635", margin: "0 auto 16px" }} />
           <h3 style={{ fontFamily: '"Poppins", sans-serif', fontWeight: 700, color: "#fff", fontSize: "1.4rem", marginBottom: "8px" }}>REQUEST RECEIVED</h3>
           <p style={{ fontFamily: '"Nunito", sans-serif', color: "rgba(255,255,255,0.5)", fontSize: "0.95rem", lineHeight: 1.6 }}>

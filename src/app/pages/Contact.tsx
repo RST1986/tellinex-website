@@ -202,16 +202,16 @@ export default function Contact() {
 
           <form onSubmit={submit}>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-4">
-              <div><label style={labelStyle}>Name *</label><input value={form.name} onChange={(e) => update("name", e.target.value)} required maxLength={120} style={inputStyle} /></div>
-              <div><label style={labelStyle}>Email *</label><input value={form.email} onChange={(e) => update("email", e.target.value)} type="email" required maxLength={254} style={inputStyle} /></div>
+              <div><label htmlFor="contact-name" style={labelStyle}>Name *</label><input id="contact-name" value={form.name} onChange={(e) => update("name", e.target.value)} required maxLength={120} style={inputStyle} /></div>
+              <div><label htmlFor="contact-email" style={labelStyle}>Email *</label><input id="contact-email" value={form.email} onChange={(e) => update("email", e.target.value)} type="email" required maxLength={254} style={inputStyle} /></div>
             </div>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-4">
-              <div><label style={labelStyle}>Phone</label><input value={form.phone} onChange={(e) => update("phone", e.target.value)} type="tel" maxLength={25} style={inputStyle} /></div>
-              <div><label style={labelStyle}>Company</label><input value={form.company} onChange={(e) => update("company", e.target.value)} maxLength={200} style={inputStyle} /></div>
+              <div><label htmlFor="contact-phone" style={labelStyle}>Phone</label><input id="contact-phone" value={form.phone} onChange={(e) => update("phone", e.target.value)} type="tel" maxLength={25} style={inputStyle} /></div>
+              <div><label htmlFor="contact-company" style={labelStyle}>Company</label><input id="contact-company" value={form.company} onChange={(e) => update("company", e.target.value)} maxLength={200} style={inputStyle} /></div>
             </div>
             <div className="mb-4">
-              <label style={labelStyle}>Enquiry type *</label>
-              <select value={form.subject} onChange={(e) => update("subject", e.target.value)} required style={{ ...inputStyle, appearance: "none" }}>
+              <label htmlFor="contact-enquiry-type" style={labelStyle}>Enquiry type *</label>
+              <select id="contact-enquiry-type" value={form.subject} onChange={(e) => update("subject", e.target.value)} required style={{ ...inputStyle, appearance: "none" }}>
                 <option value="" disabled>Select an enquiry type</option>
                 <option value="residential">Residential service</option>
                 <option value="business">Business service</option>
@@ -221,8 +221,8 @@ export default function Contact() {
                 <option value="other">Other enquiry</option>
               </select>
             </div>
-            <div className="mb-4"><label style={labelStyle}>Service location</label><input value={form.location} onChange={(e) => update("location", e.target.value)} maxLength={500} placeholder="Community, parish or site address" style={inputStyle} /></div>
-            <div className="mb-5"><label style={labelStyle}>Requirements *</label><textarea value={form.message} onChange={(e) => update("message", e.target.value)} required minLength={5} maxLength={4000} rows={5} style={{ ...inputStyle, resize: "vertical" }} /></div>
+            <div className="mb-4"><label htmlFor="contact-location" style={labelStyle}>Service location</label><input id="contact-location" value={form.location} onChange={(e) => update("location", e.target.value)} maxLength={500} placeholder="Community, parish or site address" style={inputStyle} /></div>
+            <div className="mb-5"><label htmlFor="contact-requirements" style={labelStyle}>Requirements *</label><textarea id="contact-requirements" value={form.message} onChange={(e) => update("message", e.target.value)} required minLength={5} maxLength={4000} rows={5} style={{ ...inputStyle, resize: "vertical" }} /></div>
 
             <TurnstileWidget ref={turnstileRef} action="quote_request" onTokenChange={handleTurnstileToken} onUnavailable={handleTurnstileUnavailable} />
 

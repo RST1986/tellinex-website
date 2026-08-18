@@ -24,7 +24,6 @@
   "dependencies": {
     "@emotion/react": "11.14.0",
     "@emotion/styled": "11.14.1",
-    "@netlify/functions": "^2.8.0",
     "@radix-ui/react-navigation-menu": "1.2.5",
     "@radix-ui/react-select": "2.1.6",
     "@radix-ui/react-separator": "1.1.2",

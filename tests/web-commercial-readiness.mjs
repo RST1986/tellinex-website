@@ -113,3 +113,12 @@ if (!fs.existsSync("docs/TELLINEX_WEBSITE_COMMERCIAL_READINESS_R1.md")) fail("WE
 if (!fs.existsSync("docs/TELLINEX_WEBSITE_COMMERCIAL_READINESS_R2.md")) fail("WEB20", "R2 compose doc missing");
 if (!fs.existsSync("docs/TELLINEX_WEBSITE_FUTURE_CUTOVER_CONTRACT.md")) fail("WEB20", "cutover contract missing");
 pass("WEB20", "readiness and future-cutover docs present");
+
+const status = read("src/app/pages/Status.tsx");
+if (/(confirmation|unsubscribe)[^.]{0,80}\bwill be sent\b/i.test(status)) {
+  fail("WEB21", "status page promises email delivery this repo does not provide");
+}
+if (status.includes("Your notification request was recorded") && !/not live yet/i.test(status)) {
+  fail("WEB21", "status page must state email notifications are not live yet");
+}
+pass("WEB21", "status page makes no unproven email delivery promise");

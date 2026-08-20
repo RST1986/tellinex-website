@@ -1,0 +1,447 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>RST Quick Survey</title>
+<meta name="theme-color" content="#0b3d61">
+<style>
+:root{--bg:#f2f5f8;--card:#fff;--ink:#16232e;--mut:#5b6b78;--line:#dbe3ea;--brand:#0b3d61;--acc:#0a84c1;--ok:#177a4c;--warn:#b26a00;--bad:#b3261e;--chip:#e8eff5}
+*{box-sizing:border-box}
+html,body{margin:0;padding:0}
+body{font:16px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:var(--bg);color:var(--ink);padding-bottom:90px}
+header.top{position:sticky;top:0;z-index:30;background:var(--brand);color:#fff;padding:10px 14px calc(8px + env(safe-area-inset-top)) 14px;padding-top:calc(10px + env(safe-area-inset-top));box-shadow:0 2px 8px rgba(0,0,0,.18)}
+.toprow{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.toprow h1{font-size:17px;margin:0;font-weight:700;letter-spacing:.2px}
+.jobref{margin-left:auto;font-weight:700;font-size:14px;background:rgba(255,255,255,.14);padding:4px 10px;border-radius:999px}
+.pbar{height:5px;border-radius:99px;background:rgba(255,255,255,.22);margin-top:8px;overflow:hidden}
+.pfill{height:100%;background:#6fd3a2;width:0%;transition:width .3s}
+.pmeta{display:flex;justify-content:space-between;font-size:11.5px;opacity:.92;margin-top:4px}
+nav.chips{display:flex;gap:8px;overflow-x:auto;padding:10px 14px;scrollbar-width:none;position:sticky;top:0;z-index:20;background:linear-gradient(var(--bg) 75%,transparent)}
+nav.chips::-webkit-scrollbar{display:none}
+nav.chips a{flex:0 0 auto;background:var(--chip);color:var(--brand);text-decoration:none;font-size:12.5px;font-weight:600;padding:7px 12px;border-radius:999px;border:1px solid var(--line)}
+nav.chips a.done{background:#dff1e7;border-color:#bfe3cf;color:var(--ok)}
+main{max-width:760px;margin:0 auto;padding:0 12px}
+section.card{background:var(--card);border:1px solid var(--line);border-radius:14px;margin:12px 0;padding:14px 14px 6px;box-shadow:0 1px 3px rgba(20,40,60,.05)}
+section.card h2{font-size:15px;margin:0 0 10px;color:var(--brand);display:flex;align-items:center;gap:8px}
+section.card h2 .cnt{margin-left:auto;font-size:11.5px;color:var(--mut);font-weight:600}
+.q{margin:0 0 14px}
+.q label.main{display:block;font-weight:600;font-size:14px;margin-bottom:6px}
+.seg{display:flex;gap:8px;flex-wrap:wrap}
+.seg button{flex:1 0 auto;min-width:84px;min-height:46px;border:1.5px solid var(--line);background:#fff;border-radius:10px;font-size:15px;font-weight:600;color:var(--ink)}
+.seg button.on{background:var(--brand);border-color:var(--brand);color:#fff}
+.seg button.onNo{background:#8a1f18;border-color:#8a1f18;color:#fff}
+input[type=text],input[type=tel],input[type=email],input[type=date],select,textarea{width:100%;min-height:46px;border:1.5px solid var(--line);border-radius:10px;padding:10px 12px;font-size:16px;background:#fff;color:var(--ink)}
+textarea{min-height:74px;resize:vertical}
+.banner{display:none;background:var(--bad);color:#fff;font-weight:800;text-align:center;padding:14px;border-radius:12px;margin:12px 0;letter-spacing:.5px}
+.banner.show{display:block}
+.slot{border:1px dashed var(--line);border-radius:12px;padding:10px;margin:0 0 12px;background:#fbfdfe}
+.slot .st{font-weight:600;font-size:13.5px;margin-bottom:8px;display:flex;gap:8px;align-items:center}
+.slot .mirror{margin-left:auto;font-size:11px;color:var(--mut);background:var(--chip);border-radius:99px;padding:2px 8px}
+.snapRow{display:flex;gap:8px;margin-bottom:8px}
+.snapRow label{flex:1;display:flex;align-items:center;justify-content:center;gap:6px;min-height:46px;border-radius:10px;font-weight:700;font-size:14px;border:1.5px solid var(--acc);color:var(--acc);background:#fff}
+.snapRow label.cam{background:var(--acc);color:#fff}
+.snapRow input{display:none}
+.thumbs{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px}
+.thumbs .ph{position:relative;width:86px;height:86px;border-radius:10px;overflow:hidden;border:1px solid var(--line)}
+.thumbs img{width:100%;height:100%;object-fit:cover;display:block}
+.thumbs .rm{position:absolute;top:2px;right:2px;background:rgba(0,0,0,.62);color:#fff;border:0;border-radius:99px;width:24px;height:24px;font-size:13px;line-height:1}
+.sub{margin:6px 0}
+.sub input,.sub textarea{min-height:42px;font-size:14.5px}
+.sub .lbl{font-size:11.5px;font-weight:700;color:var(--mut);text-transform:uppercase;letter-spacing:.06em;margin-bottom:3px}
+.morebtn{width:100%;min-height:46px;border:1.5px dashed var(--acc);color:var(--acc);background:#fff;border-radius:10px;font-weight:700;font-size:14px;margin-bottom:12px}
+.ai{background:linear-gradient(135deg,#0b3d61,#0a84c1);border:none;color:#fff;border-radius:12px;padding:12px;margin:12px 0;color:#fff}
+.ai h2{color:#fff;font-size:15px;margin:0 0 8px}
+.ai textarea{border:none;margin-bottom:8px}
+.ai .row{display:flex;gap:8px}
+.ai button{flex:1;min-height:46px;border:0;border-radius:10px;font-weight:700;font-size:14px;background:#fff;color:var(--brand)}
+.ai .msg{font-size:12.5px;margin-top:6px;min-height:16px}
+footer.bar{position:fixed;bottom:0;left:0;right:0;z-index:40;background:#fff;border-top:1px solid var(--line);display:flex;gap:8px;padding:10px 12px calc(10px + env(safe-area-inset-bottom));box-shadow:0 -2px 10px rgba(20,40,60,.08)}
+footer.bar button{flex:1;min-height:48px;border-radius:12px;font-weight:700;font-size:14.5px;border:1.5px solid var(--line);background:#fff;color:var(--ink)}
+footer.bar button.primary{background:var(--brand);border-color:var(--brand);color:#fff}
+.saved{position:fixed;left:50%;transform:translateX(-50%);bottom:76px;background:rgba(20,35,46,.92);color:#fff;font-size:12.5px;padding:6px 14px;border-radius:99px;opacity:0;transition:opacity .3s;pointer-events:none;z-index:50}
+.saved.show{opacity:1}
+.menuwrap{position:relative}
+dialog{border:none;border-radius:14px;max-width:420px;width:92vw;padding:16px}
+dialog h3{margin:0 0 10px}
+dialog .list button{display:block;width:100%;text-align:left;margin:6px 0;padding:10px;border:1px solid var(--line);border-radius:10px;background:#fff;font-size:14px}
+dialog .rowb{display:flex;gap:8px;margin-top:12px}
+dialog .rowb button{flex:1;min-height:44px;border-radius:10px;border:1px solid var(--line);background:#fff;font-weight:600}
+
+/* --- annotation editor --- */
+#annWrap{position:fixed;inset:0;background:#0d1418;z-index:100;display:none;flex-direction:column}
+#annWrap.open{display:flex}
+#annTop{display:flex;gap:6px;align-items:center;padding:8px 10px;background:#16232e;flex-wrap:wrap}
+#annTop button{min-height:40px;min-width:44px;border-radius:9px;border:1px solid #33475a;background:#1e3242;color:#dce8f2;font-weight:700;font-size:13px;padding:0 10px}
+#annTop button.sel{background:#0a84c1;border-color:#0a84c1;color:#fff}
+#annTop input[type=color]{width:44px;height:40px;border:none;border-radius:9px;background:none;padding:0}
+#annTop select{min-height:40px;border-radius:9px;background:#1e3242;color:#dce8f2;border:1px solid #33475a;font-size:13px}
+#annCanvasBox{flex:1;display:flex;align-items:center;justify-content:center;overflow:hidden;touch-action:none}
+#annCanvas{max-width:100%;max-height:100%;touch-action:none}
+#annBottom{display:flex;gap:8px;padding:10px calc(10px + env(safe-area-inset-bottom)) calc(10px + env(safe-area-inset-bottom))}
+#annBottom button{flex:1;min-height:48px;border-radius:12px;border:0;font-weight:800;font-size:15px}
+#annSave{background:#177a4c;color:#fff}
+#annCancel{background:#3a4a57;color:#fff}
+
+@media print{
+ header.top,nav.chips,footer.bar,.snapRow,.ai,.morebtn,.rm,dialog,.saved{display:none!important}
+ body{background:#fff;padding:0}
+ section.card{break-inside:avoid;border:1px solid #999;box-shadow:none}
+ .thumbs .ph{width:45%;height:auto;max-height:none}
+ .thumbs img{height:auto}
+ .printhead{display:block!important;font-size:20px;font-weight:800;margin:0 0 12px}
+}
+.printhead{display:none}
+</style>
+</head>
+<body>
+<header class="top">
+ <div class="toprow">
+  <h1>RST Quick Survey</h1>
+  <span class="jobref" id="jobrefBadge">—</span>
+ </div>
+ <div class="pbar"><div class="pfill" id="pfill"></div></div>
+ <div class="pmeta"><span id="pAnswered">0 answered</span><span id="pPhotos">0 photos</span></div>
+</header>
+<nav class="chips" id="chips"></nav>
+<main>
+ <p class="printhead" id="printhead"></p>
+ <div class="banner" id="dnp">DO NOT PROCEED — RESOLVE SAFETY ISSUE</div>
+ <section class="ai" id="aibox">
+  <h2>AI · prefill from job pack</h2>
+  <textarea id="aitext" rows="3" placeholder="Paste the planner / job pack text here…"></textarea>
+  <div class="row">
+   <button type="button" id="aiPrefill">Prefill survey with AI</button>
+   <button type="button" id="aiNotes">AI final comments</button>
+  </div>
+  <div class="msg" id="aimsg"></div>
+ </section>
+ <div id="formRoot"></div>
+ <div id="photoRoot"></div>
+</main>
+<footer class="bar">
+ <button type="button" id="btnSurveys">Surveys</button>
+ <button type="button" id="btnExport">Backup</button>
+ <button type="button" class="primary" id="btnPrint">Print / Save PDF</button>
+</footer>
+<div class="saved" id="savedToast">Saved</div>
+
+<div id="annWrap">
+ <div id="annTop">
+  <button type="button" data-tool="arrow" class="sel">→ Arrow</button>
+  <button type="button" data-tool="pen">✎ Pen</button>
+  <button type="button" data-tool="circle">◯ Circle</button>
+  <button type="button" data-tool="text">T Text</button>
+  <input type="color" id="annColor" value="#ff2d2d">
+  <select id="annWidth"><option value="5">Thin</option><option value="8" selected>Medium</option><option value="14">Thick</option></select>
+  <button type="button" id="annUndo">↶</button>
+  <button type="button" id="annRedo">↷</button>
+  <button type="button" id="annClear">Clear marks</button>
+ </div>
+ <div id="annCanvasBox"><canvas id="annCanvas"></canvas></div>
+ <div id="annBottom">
+  <button type="button" id="annCancel">Cancel</button>
+  <button type="button" id="annSave">Save annotation</button>
+ </div>
+</div>
+
+
+<dialog id="dlgSurveys">
+ <h3>Surveys on this device</h3>
+ <div class="list" id="surveyList"></div>
+ <div class="rowb">
+  <button type="button" id="dlgNew">New survey</button>
+  <button type="button" id="dlgImport">Restore backup</button>
+  <button type="button" id="dlgClose">Close</button>
+ </div>
+ <input type="file" id="importFile" accept="application/json" style="display:none">
+</dialog>
+
+<script>
+const SCHEMA = {"fields":[{"s":"Point-of-Work Safety Check","l":"Applicable RAMS / risk assessment reviewed?","n":"safetyRams","t":"radio","o":["Yes","No"],"c":"always","p":""},{"s":"Point-of-Work Safety Check","l":"Site safe to enter and proceed?","n":"safetyProceed","t":"radio","o":["Yes","No"],"c":"always","p":""},{"s":"Point-of-Work Safety Check","l":"Any new or uncontrolled hazards?","n":"safetyHazards","t":"radio","o":["Yes","No"],"c":"always","p":""},{"s":"Point-of-Work Safety Check","l":"Required PPE available and worn?","n":"safetyPpe","t":"radio","o":["Yes","No"],"c":"always","p":""},{"s":"Survey details","l":"S Number","n":"sNumber","t":"text","o":[],"c":"always","p":""},{"s":"Survey details","l":"Surveyor name","n":"surveyor","t":"text","o":[],"c":"always","p":""},{"s":"Survey details","l":"Survey date (automatic)","n":"surveyDate","t":"date","o":[],"c":"always","p":""},{"s":"Survey details","l":"Site address / postcode","n":"siteAddress","t":"text","o":[],"c":"always","p":""},{"s":"Survey details","l":"Wayleave contact name","n":"contactName","t":"text","o":[],"c":"always","p":""},{"s":"Survey details","l":"Wayleave contact number","n":"contactNumber","t":"tel","o":[],"c":"always","p":""},{"s":"Survey details","l":"Wayleave contact email","n":"contactEmail","t":"email","o":[],"c":"always","p":""},{"s":"Survey details","l":"Internal cabling","n":"internalCabling","t":"text","o":[],"c":"always","p":""},{"s":"Survey details","l":"Total civils meterage","n":"civilsMetres","t":"text","o":[],"c":"always","p":""},{"s":"Survey details","l":"Hazards / SEDs onsite","n":"hazards","t":"textarea","o":[],"c":"always","p":"Asbestos, litter, rats, dirt, access issues, etc."},{"s":"Asbestos","l":"Is there an asbestos register onsite? (Pre-2000 only)","n":"asbestos","t":"radio","o":["Yes","No"],"c":"always","p":""},{"s":"Cabinets","l":"PN Cabinet?","n":"pnCabinet","t":"radio","o":["Yes","No"],"c":"always","p":""},{"s":"Cabinets","l":"PN reference","n":"pnRef","t":"text","o":[],"c":"always","p":""},{"s":"Cabinets","l":"Number of spare ports","n":"pnPorts","t":"text","o":[],"c":"always","p":""},{"s":"Cabinets","l":"Metro cables exiting cabinet/joint? (PN)","n":"pnMetro","t":"radio","o":["Yes","No"],"c":"always","p":""},{"s":"Cabinets","l":"Comments (PN)","n":"pnComments","t":"textarea","o":[],"c":"always","p":""},{"s":"Cabinets","l":"SN Cabinet?","n":"snCabinet","t":"radio","o":["Yes","No"],"c":"always","p":""},{"s":"Cabinets","l":"SN reference","n":"snRef","t":"text","o":[],"c":"always","p":""},{"s":"Cabinets","l":"Metro cables exiting cabinet/joint? (SN)","n":"snMetro","t":"radio","o":["Yes","No"],"c":"always","p":""},{"s":"Cabinets","l":"Comments (SN)","n":"snComments","t":"textarea","o":[],"c":"always","p":""},{"s":"Poles","l":"Pole involved?","n":"pole1","t":"radio","o":["Yes","No"],"c":"always","p":""},{"s":"Poles","l":"Associated hazards / markings (pole1)","n":"pole1Hazards","t":"textarea","o":[],"c":"always","p":""},{"s":"Poles","l":"Number of spans (pole1)","n":"pole1Spans","t":"text","o":[],"c":"always","p":""},{"s":"Poles","l":"ASN reference (pole1)","n":"pole1Ref","t":"text","o":[],"c":"always","p":""},{"s":"Poles","l":"Comments (pole1)","n":"pole1Comments","t":"textarea","o":[],"c":"always","p":""},{"s":"Poles","l":"Second pole required?","n":"pole2","t":"radio","o":["Yes","No"],"c":"always","p":""},{"s":"Poles","l":"Associated hazards / markings (pole2)","n":"pole2Hazards","t":"textarea","o":[],"c":"always","p":""},{"s":"Poles","l":"Number of spans (pole2)","n":"pole2Spans","t":"text","o":[],"c":"always","p":""},{"s":"Poles","l":"ASN reference (pole2)","n":"pole2Ref","t":"text","o":[],"c":"always","p":""},{"s":"Poles","l":"Comments (pole2)","n":"pole2Comments","t":"textarea","o":[],"c":"always","p":""},{"s":"Poles","l":"Third pole required?","n":"pole3","t":"radio","o":["Yes","No"],"c":"always","p":""},{"s":"Poles","l":"Associated hazards / markings (pole3)","n":"pole3Hazards","t":"textarea","o":[],"c":"always","p":""},{"s":"Poles","l":"Number of spans (pole3)","n":"pole3Spans","t":"text","o":[],"c":"always","p":""},{"s":"Poles","l":"ASN reference (pole3)","n":"pole3Ref","t":"text","o":[],"c":"always","p":""},{"s":"Poles","l":"Comments (pole3)","n":"pole3Comments","t":"textarea","o":[],"c":"always","p":""},{"s":"Metro joints","l":"Metro Joint 1?","n":"metroJoint","t":"radio","o":["Yes","No"],"c":"always","p":""},{"s":"Metro joints","l":"Joint reference (metroJoint)","n":"metroJointRef","t":"text","o":[],"c":"always","p":""},{"s":"Metro joints","l":"Number of spare ports (metroJoint)","n":"metroJointPorts","t":"text","o":[],"c":"always","p":""},{"s":"Metro joints","l":"Comments (metroJoint)","n":"metroJointComments","t":"textarea","o":[],"c":"always","p":""},{"s":"Metro joints","l":"Additional Metro Joint 2?","n":"additionalJoint","t":"radio","o":["Yes","No"],"c":"always","p":""},{"s":"Metro joints","l":"Joint reference (additionalJoint)","n":"additionalJointRef","t":"text","o":[],"c":"always","p":""},{"s":"Metro joints","l":"Number of spare ports (additionalJoint)","n":"additionalJointPorts","t":"text","o":[],"c":"always","p":""},{"s":"Metro joints","l":"Comments (additionalJoint)","n":"additionalJointComments","t":"textarea","o":[],"c":"always","p":""},{"s":"Metro joints","l":"Additional Metro Joint 3?","n":"additionalJoint2","t":"radio","o":["Yes","No"],"c":"always","p":""},{"s":"Metro joints","l":"Joint reference (additionalJoint2)","n":"additionalJoint2Ref","t":"text","o":[],"c":"always","p":""},{"s":"Metro joints","l":"Number of spare ports (additionalJoint2)","n":"additionalJoint2Ports","t":"text","o":[],"c":"always","p":""},{"s":"Metro joints","l":"Comments (additionalJoint2)","n":"additionalJoint2Comments","t":"textarea","o":[],"c":"always","p":""},{"s":"Civils","l":"Civils required?","n":"civilsRequired","t":"radio","o":["Yes","No"],"c":"always","p":""},{"s":"Civils","l":"Detailed civils description","n":"civilsDescription","t":"textarea","o":[],"c":"always","p":"Start/end point, construction type, entry and termination locations"},{"s":"Cabling","l":"Cabling required?","n":"cablingRequired","t":"radio","o":["Yes","No"],"c":"always","p":""},{"s":"Cabling","l":"Detailed cabling description","n":"cablingDescription","t":"textarea","o":[],"c":"always","p":"Duct entry, route and termination location"},{"s":"BT Openreach network","l":"Will the survey use the BT Openreach network?","n":"openreachUsed","t":"radio","o":["Yes","No"],"c":"always","p":""},{"s":"BT Openreach network","l":"Confirm the existing lead-in condition","n":"leadInStatus","t":"select","o":["(Select condition)","Usable","Direct buried","Inaccessible"],"c":"openreachUsed=Yes","p":""},{"s":"BT Openreach network","l":"Straw location confirmed?","n":"strawConfirmed","t":"radio","o":["Yes","No"],"c":"openreachUsed=Yes","p":""},{"s":"BT Openreach network","l":"Will a MICE joint be introduced?","n":"miceJoint","t":"radio","o":["Yes","No"],"c":"openreachUsed=Yes","p":""},{"s":"BT Openreach network","l":"Is there sufficient space inside the chamber?","n":"miceSpace","t":"radio","o":["Yes","No"],"c":"openreachUsed=Yes AND miceJoint=Yes","p":""},{"s":"Final comments","l":"Planner comments","n":"finalComments","t":"textarea","o":[],"c":"always","p":"Section 58s, trees, hand dig, hard dig, concrete, straw location, dogs, access issues, etc."}],"slots":[{"id":"civilsPlan","t":"Civils overhead plan","card":"Smallworld/GIS overhead plans","c":"always","loc":false,"com":false},{"id":"cablingPlan","t":"Cabling overhead plan","card":"Smallworld/GIS overhead plans","c":"always","loc":false,"com":false},{"id":"1","t":"Civils \u2014 Image 1","card":"Images","c":"civilsRequired=Yes","loc":false,"com":true},{"id":"2","t":"Civils \u2014 Image 2","card":"Images","c":"civilsRequired=Yes","loc":false,"com":true},{"id":"3","t":"Civils \u2014 Image 3","card":"Images","c":"civilsRequired=Yes","loc":false,"com":true},{"id":"4","t":"Civils \u2014 Image 4","card":"Images","c":"civilsRequired=Yes","loc":false,"com":true},{"id":"5","t":"Civils \u2014 Image 5","card":"Images","c":"civilsRequired=Yes","loc":false,"com":true},{"id":"6","t":"Civils \u2014 Image 6","card":"Images","c":"civilsRequired=Yes AND 'Add More' button clicked","loc":false,"com":true},{"id":"7","t":"Civils \u2014 Image 7","card":"Images","c":"civilsRequired=Yes AND 'Add More' button clicked","loc":false,"com":true},{"id":"8","t":"Civils \u2014 Image 8","card":"Images","c":"civilsRequired=Yes AND 'Add More' button clicked","loc":false,"com":true},{"id":"9","t":"Civils \u2014 Image 9","card":"Images","c":"civilsRequired=Yes AND 'Add More' button clicked","loc":false,"com":true},{"id":"10","t":"Civils \u2014 Image 10","card":"Images","c":"civilsRequired=Yes AND 'Add More' button clicked","loc":false,"com":true},{"id":"11","t":"Primary Node \u2014 Image 1","card":"Images","c":"pnCabinet=Yes","loc":false,"com":true},{"id":"12","t":"Primary Node \u2014 Image 2","card":"Images","c":"pnCabinet=Yes","loc":false,"com":true},{"id":"13","t":"Primary Node \u2014 Image 3","card":"Images","c":"pnCabinet=Yes","loc":false,"com":true},{"id":"14","t":"Secondary Node \u2014 Image 1","card":"Images","c":"snCabinet=Yes","loc":false,"com":true},{"id":"15","t":"Secondary Node \u2014 Image 2","card":"Images","c":"snCabinet=Yes","loc":false,"com":true},{"id":"16","t":"Secondary Node \u2014 Image 3","card":"Images","c":"snCabinet=Yes","loc":false,"com":true},{"id":"17","t":"Metro Joint 1 \u2014 Image 1","card":"Images","c":"metroJoint=Yes","loc":false,"com":true},{"id":"18","t":"Metro Joint 1 \u2014 Image 2","card":"Images","c":"metroJoint=Yes","loc":false,"com":true},{"id":"19","t":"Metro Joint 1 \u2014 Image 3","card":"Images","c":"metroJoint=Yes","loc":false,"com":true},{"id":"20","t":"Additional Metro Joint 2 \u2014 Image 1","card":"Images","c":"additionalJoint=Yes","loc":false,"com":true},{"id":"21","t":"Additional Metro Joint 2 \u2014 Image 2","card":"Images","c":"additionalJoint=Yes","loc":false,"com":true},{"id":"22","t":"Additional Metro Joint 2 \u2014 Image 3","card":"Images","c":"additionalJoint=Yes","loc":false,"com":true},{"id":"23","t":"Additional Metro Joint 3 \u2014 Image 1","card":"Images","c":"additionalJoint2=Yes","loc":false,"com":true},{"id":"24","t":"Additional Metro Joint 3 \u2014 Image 2","card":"Images","c":"additionalJoint2=Yes","loc":false,"com":true},{"id":"25","t":"Additional Metro Joint 3 \u2014 Image 3","card":"Images","c":"additionalJoint2=Yes","loc":false,"com":true},{"id":"26","t":"Pole 1 \u2014 Image 1","card":"Images","c":"pole1=Yes","loc":false,"com":true},{"id":"27","t":"Pole 1 \u2014 Image 2","card":"Images","c":"pole1=Yes","loc":false,"com":true},{"id":"28","t":"Pole 1 \u2014 Image 3","card":"Images","c":"pole1=Yes","loc":false,"com":true},{"id":"29","t":"Pole 1 \u2014 Image 4","card":"Images","c":"pole1=Yes","loc":false,"com":true},{"id":"30","t":"Pole 1 \u2014 Image 5","card":"Images","c":"pole1=Yes","loc":false,"com":true},{"id":"31","t":"Pole 2 \u2014 Image 1","card":"Images","c":"pole2=Yes","loc":false,"com":true},{"id":"32","t":"Pole 2 \u2014 Image 2","card":"Images","c":"pole2=Yes","loc":false,"com":true},{"id":"33","t":"Pole 2 \u2014 Image 3","card":"Images","c":"pole2=Yes","loc":false,"com":true},{"id":"34","t":"Pole 2 \u2014 Image 4","card":"Images","c":"pole2=Yes","loc":false,"com":true},{"id":"35","t":"Pole 2 \u2014 Image 5","card":"Images","c":"pole2=Yes","loc":false,"com":true},{"id":"36","t":"Pole 3 \u2014 Image 1","card":"Images","c":"pole3=Yes","loc":false,"com":true},{"id":"37","t":"Pole 3 \u2014 Image 2","card":"Images","c":"pole3=Yes","loc":false,"com":true},{"id":"38","t":"Pole 3 \u2014 Image 3","card":"Images","c":"pole3=Yes","loc":false,"com":true},{"id":"39","t":"Pole 3 \u2014 Image 4","card":"Images","c":"pole3=Yes","loc":false,"com":true},{"id":"40","t":"Pole 3 \u2014 Image 5","card":"Images","c":"pole3=Yes","loc":false,"com":true},{"id":"41","t":"Cabling \u2014 BTOR duct entry","card":"Images","c":"cablingRequired=Yes","loc":true,"com":true},{"id":"42","t":"Cabling \u2014 Cable route image 1","card":"Images","c":"cablingRequired=Yes","loc":true,"com":true},{"id":"43","t":"Cabling \u2014 Cable route image 2","card":"Images","c":"cablingRequired=Yes","loc":true,"com":true},{"id":"44","t":"Cabling \u2014 Cable route image 3","card":"Images","c":"cablingRequired=Yes","loc":true,"com":true},{"id":"45","t":"Cabling \u2014 Cable route image 4","card":"Images","c":"cablingRequired=Yes","loc":true,"com":true},{"id":"46","t":"Cabling \u2014 Cable route image 5","card":"Images","c":"cablingRequired=Yes","loc":true,"com":true},{"id":"47","t":"Cabling \u2014 Cable route image 6","card":"Images","c":"cablingRequired=Yes","loc":true,"com":true},{"id":"48","t":"Cabling \u2014 Cable route image 7","card":"Images","c":"cablingRequired=Yes","loc":true,"com":true},{"id":"49","t":"Cabling \u2014 Cable route image 8","card":"Images","c":"cablingRequired=Yes","loc":true,"com":true},{"id":"50","t":"Cabling \u2014 Cable route image 9","card":"Images","c":"cablingRequired=Yes","loc":true,"com":true},{"id":"61","t":"Cabling \u2014 Cable route image 10","card":"Images","c":"cablingRequired=Yes AND 'Add More' button clicked","loc":true,"com":true},{"id":"62","t":"Cabling \u2014 Cable route image 11","card":"Images","c":"cablingRequired=Yes AND 'Add More' button clicked","loc":true,"com":true},{"id":"63","t":"Cabling \u2014 Cable route image 12","card":"Images","c":"cablingRequired=Yes AND 'Add More' button clicked","loc":true,"com":true},{"id":"64","t":"Cabling \u2014 Cable route image 13","card":"Images","c":"cablingRequired=Yes AND 'Add More' button clicked","loc":true,"com":true},{"id":"65","t":"Cabling \u2014 Cable route image 14","card":"Images","c":"cablingRequired=Yes AND 'Add More' button clicked","loc":true,"com":true},{"id":"66","t":"Cabling \u2014 Cable route image 15","card":"Images","c":"cablingRequired=Yes AND 'Add More' button clicked","loc":true,"com":true},{"id":"67","t":"Cabling \u2014 Cable route image 16","card":"Images","c":"cablingRequired=Yes AND 'Add More' button clicked","loc":true,"com":true},{"id":"68","t":"Cabling \u2014 Cable route image 17","card":"Images","c":"cablingRequired=Yes AND 'Add More' button clicked","loc":true,"com":true},{"id":"69","t":"Cabling \u2014 Cable route image 18","card":"Images","c":"cablingRequired=Yes AND 'Add More' button clicked","loc":true,"com":true},{"id":"70","t":"Cabling \u2014 Cable route image 19","card":"Images","c":"cablingRequired=Yes AND 'Add More' button clicked","loc":true,"com":true},{"id":"leadInDuctEntry","t":"BTOR lead-in \u2014 Duct entry","card":"BT Openreach evidence","c":"openreachUsed=Yes","loc":true,"com":true},{"id":"leadInChamber","t":"BTOR lead-in \u2014 Lead-in chamber","card":"BT Openreach evidence","c":"openreachUsed=Yes","loc":false,"com":true},{"id":"leadInInside","t":"BTOR lead-in \u2014 Inside chamber showing duct heading to site","card":"BT Openreach evidence","c":"openreachUsed=Yes","loc":false,"com":true},{"id":"mice1","t":"MICE joint \u2014 Chamber open with available space","card":"BT Openreach evidence","c":"openreachUsed=Yes AND miceJoint=Yes","loc":false,"com":true},{"id":"mice2","t":"MICE joint \u2014 Chamber closed, stood back with reference point","card":"BT Openreach evidence","c":"openreachUsed=Yes AND miceJoint=Yes","loc":false,"com":true},{"id":"51","t":"Additional Image 1","card":"Additional Images","c":"always","loc":false,"com":true},{"id":"52","t":"Additional Image 2","card":"Additional Images","c":"always","loc":false,"com":true},{"id":"53","t":"Additional Image 3","card":"Additional Images","c":"always","loc":false,"com":true},{"id":"54","t":"Additional Image 4","card":"Additional Images","c":"always","loc":false,"com":true},{"id":"55","t":"Additional Image 5","card":"Additional Images","c":"always","loc":false,"com":true},{"id":"56","t":"Additional Image 6","card":"Additional Images","c":"always","loc":false,"com":true},{"id":"57","t":"Additional Image 7","card":"Additional Images","c":"always","loc":false,"com":true},{"id":"58","t":"Additional Image 8","card":"Additional Images","c":"always","loc":false,"com":true},{"id":"59","t":"Additional Image 9","card":"Additional Images","c":"always","loc":false,"com":true},{"id":"60","t":"Additional Image 10","card":"Additional Images","c":"always","loc":false,"com":true}],"cards":["Smallworld/GIS overhead plans","Images","BT Openreach evidence","Additional Images"],"sections":["Point-of-Work Safety Check","Survey details","Asbestos","Cabinets","Poles","Metro joints","Civils","Cabling","BT Openreach network","Final comments"]};
+const DNP = [["safetyRams","No"],["safetyProceed","No"],["safetyHazards","Yes"],["safetyPpe","No"]];
+const LSKEY = "rst-alex-v1";
+const IDB = "rst-alex-images";
+
+/* ---------- state ---------- */
+let DB=null, S=null, ALL=null;
+function blank(ref){return {ref:ref||"", f:{}, com:{}, loc:{}, civilsMore:false, cablingMore:false, created:new Date().toISOString()};}
+function loadAll(){try{ALL=JSON.parse(localStorage.getItem(LSKEY))||null;}catch{ALL=null;}
+ if(!ALL||!ALL.surveys){ALL={current:"draft",surveys:{draft:blank("")}};}
+ if(!ALL.surveys[ALL.current]) ALL.current=Object.keys(ALL.surveys)[0];
+ S=ALL.surveys[ALL.current];}
+let saveT=null;
+function save(){ALL.surveys[ALL.current]=S;localStorage.setItem(LSKEY,JSON.stringify(ALL));
+ clearTimeout(saveT);const t=document.getElementById("savedToast");t.classList.add("show");saveT=setTimeout(()=>t.classList.remove("show"),900);}
+
+/* ---------- IndexedDB photos ---------- */
+function idb(){return new Promise((res,rej)=>{const r=indexedDB.open(IDB,1);
+ r.onupgradeneeded=()=>r.result.createObjectStore("ph");
+ r.onsuccess=()=>res(r.result);r.onerror=()=>rej(r.error);});}
+async function phPut(key,blob){const db=await idb();return new Promise((res,rej)=>{const tx=db.transaction("ph","readwrite");tx.objectStore("ph").put(blob,key);tx.oncomplete=res;tx.onerror=()=>rej(tx.error);});}
+async function phDel(key){const db=await idb();return new Promise((res)=>{const tx=db.transaction("ph","readwrite");tx.objectStore("ph").delete(key);tx.oncomplete=res;});}
+async function phKeys(prefix){const db=await idb();return new Promise((res)=>{const out=[];const tx=db.transaction("ph");const c=tx.objectStore("ph").openCursor();
+ c.onsuccess=e=>{const cur=e.target.result;if(cur){if(String(cur.key).startsWith(prefix))out.push(String(cur.key));cur.continue();}else res(out);};});}
+async function phGet(key){const db=await idb();return new Promise((res)=>{const tx=db.transaction("ph");const g=tx.objectStore("ph").get(key);g.onsuccess=()=>res(g.result||null);g.onerror=()=>res(null);});}
+function pKey(slot,n){return ALL.current+"::"+slot+"::"+n;}
+
+/* ---------- condition eval ---------- */
+function condOk(c){if(c==="always")return true;
+ let more=null,parts;
+ if(c.indexOf("'Add More' button clicked")>=0){const base=c.split(" AND ")[0];more=base.indexOf("civils")===0?"civilsMore":"cablingMore";parts=[base];}
+ else parts=c.split(" AND ").map(x=>x.trim());
+ for(const p of parts){if(p.indexOf("=")>=0){const i=p.indexOf("=");if((S.f[p.slice(0,i)]||"")!==p.slice(i+1))return false;}}
+ if(more&&!S[more])return false;return true;}
+
+/* ---------- render form ---------- */
+function esc(x){return String(x).replace(/[&<>"]/g,ch=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;"}[ch]));}
+function renderForm(){
+ const root=document.getElementById("formRoot");root.innerHTML="";
+ for(const sec of SCHEMA.sections){
+  const card=document.createElement("section");card.className="card";card.id="sec-"+sec.replace(/\W+/g,"-");
+  card.innerHTML="<h2>"+esc(sec)+"<span class='cnt' data-cnt></span></h2>";
+  for(const f of SCHEMA.fields){
+   if(f.s!==sec)continue;
+   const q=document.createElement("div");q.className="q";q.dataset.cond=f.c;q.dataset.field=f.n;
+   let inner="<label class='main'>"+esc(f.l)+"</label>";
+   if(f.t==="radio"){inner+="<div class='seg'>"+f.o.map(o=>"<button type='button' data-opt='"+esc(o)+"'>"+esc(o)+"</button>").join("")+"</div>";}
+   else if(f.t==="select"){inner+="<select><option value=''>— select —</option>"+f.o.map(o=>"<option>"+esc(o)+"</option>").join("")+"</select>";}
+   else if(f.t==="textarea"){inner+="<textarea placeholder='"+esc(f.p)+"'></textarea>";}
+   else{inner+="<input type='"+f.t+"' placeholder='"+esc(f.p)+"'>";}
+   q.innerHTML=inner;
+   if(f.t==="radio"){q.querySelectorAll("button").forEach(b=>b.addEventListener("click",()=>{S.f[f.n]=(S.f[f.n]===b.dataset.opt)?"":b.dataset.opt;save();refresh();}));}
+   else{const el=q.querySelector("select,textarea,input");el.addEventListener("input",()=>{S.f[f.n]=el.value;save();refreshLight();});el.addEventListener("change",()=>{S.f[f.n]=el.value;save();refresh();});}
+   card.appendChild(q);
+  }
+  root.appendChild(card);
+ }
+}
+function renderPhotos(){
+ const root=document.getElementById("photoRoot");root.innerHTML="";
+ for(const cname of SCHEMA.cards){
+  const card=document.createElement("section");card.className="card";card.id="card-"+cname.replace(/\W+/g,"-");
+  card.innerHTML="<h2>"+esc(cname)+"<span class='cnt' data-cnt></span></h2>";
+  for(const sl of SCHEMA.slots){
+   if(sl.card!==cname)continue;
+   const el=document.createElement("div");el.className="slot";el.dataset.cond=sl.c;el.dataset.slot=sl.id;
+   let sub="";
+   if(sl.loc)sub+="<div class='sub'><div class='lbl'>Location</div><input type='text' data-sub='loc' placeholder='e.g. Rear yard, riser cupboard…'></div>";
+   if(sl.com)sub+="<div class='sub'><div class='lbl'>Comments</div><textarea data-sub='com' rows='2'></textarea></div>";
+   el.innerHTML="<div class='st'>"+esc(sl.t)+"<span class='mirror' data-mirror></span></div>"+
+    "<div class='thumbs' data-thumbs></div>"+
+    "<div class='snapRow'>"+
+    "<label class='cam'>📷 Take photo<input type='file' accept='image/*' capture='environment' data-take></label>"+
+    "<label>🖼 Gallery<input type='file' accept='image/*' multiple data-gal></label>"+
+    "</div>"+sub;
+   const wire=inp=>inp.addEventListener("change",async()=>{for(const file of inp.files){const n=Date.now()+Math.floor(Math.random()*999);await phPut(pKey(sl.id,n),file);}inp.value="";await drawThumbs(el,sl.id);refreshLight();});
+   el.querySelectorAll("[data-take],[data-gal]").forEach(wire);
+   el.querySelectorAll("[data-sub]").forEach(i=>{i.addEventListener("input",()=>{const m=i.dataset.sub==="loc"?S.loc:S.com;m[sl.id]=i.value;save();});});
+   card.appendChild(el);
+   drawThumbs(el,sl.id);
+  }
+  if(cname==="Images"){
+   const b1=document.createElement("button");b1.type="button";b1.className="morebtn";b1.id="moreCivils";b1.textContent="＋ Add 5 more civils images";
+   b1.addEventListener("click",()=>{S.civilsMore=true;save();refresh();});
+   const b2=document.createElement("button");b2.type="button";b2.className="morebtn";b2.id="moreCabling";b2.textContent="＋ Add 10 more cabling images";
+   b2.addEventListener("click",()=>{S.cablingMore=true;save();refresh();});
+   card.appendChild(b1);card.appendChild(b2);
+  }
+  root.appendChild(card);
+ }
+}
+async function drawThumbs(el,slot){
+ const box=el.querySelector("[data-thumbs]");const keys=(await phKeys(ALL.current+"::"+slot+"::")).filter(k=>!k.endsWith("::orig"));
+ box.innerHTML="";
+ for(const k of keys){const blob=await phGet(k);if(!blob)continue;
+  const d=document.createElement("div");d.className="ph";
+  const img=document.createElement("img");img.src=URL.createObjectURL(blob);d.appendChild(img);
+  img.addEventListener("click",()=>openAnnotator(k,el));
+  const rm=document.createElement("button");rm.className="rm";rm.textContent="✕";
+  rm.addEventListener("click",async()=>{await phDel(k);drawThumbs(el,slot);refreshLight();});
+  d.appendChild(rm);box.appendChild(d);}
+}
+
+/* ---------- refresh ---------- */
+function refreshLight(){
+ document.getElementById("jobrefBadge").textContent=S.f["sNumber"]||S.ref||"—";
+ document.getElementById("printhead").textContent="RST Survey — "+(S.f["sNumber"]||S.ref||"")+" — "+(S.f["siteAddress"]||"");
+ document.querySelectorAll("[data-mirror]").forEach(m=>m.textContent=S.f["sNumber"]||"");
+ let answered=0;for(const f of SCHEMA.fields){if((S.f[f.n]||"").trim())answered++;}
+ document.getElementById("pAnswered").textContent=answered+" / "+SCHEMA.fields.length+" answered";
+ document.getElementById("pfill").style.width=Math.round(100*answered/SCHEMA.fields.length)+"%";
+ phKeys(ALL.current+"::").then(ks=>{document.getElementById("pPhotos").textContent=ks.filter(k=>!k.endsWith("::orig")).length+" photos";});
+ const dnp=DNP.some(([k,v])=>S.f[k]===v);
+ document.getElementById("dnp").classList.toggle("show",dnp);
+}
+function refresh(){
+ for(const f of SCHEMA.fields){
+  const q=document.querySelector("[data-field='"+f.n+"']");if(!q)continue;
+  q.style.display=condOk(f.c)?"":"none";
+  if(f.t==="radio"){q.querySelectorAll("button").forEach(b=>{const on=S.f[f.n]===b.dataset.opt;b.className=on?(b.dataset.opt==="No"||b.dataset.opt==="Yes"&&f.n==="safetyHazards"?"onNo":"on"):"";if(on&&!( (f.n==="safetyHazards"&&b.dataset.opt==="Yes")||(["safetyRams","safetyProceed","safetyPpe"].includes(f.n)&&b.dataset.opt==="No")))b.className="on";});}
+  else{const el=q.querySelector("select,textarea,input");if(el&&el.value!==(S.f[f.n]||""))el.value=S.f[f.n]||"";}
+ }
+ document.querySelectorAll(".slot").forEach(el=>{el.style.display=condOk(el.dataset.cond)?"":"none";});
+ document.querySelectorAll(".slot").forEach(el=>{const id=el.dataset.slot;
+  el.querySelectorAll("[data-sub]").forEach(i=>{const m=i.dataset.sub==="loc"?S.loc:S.com;if(i.value!==(m[id]||""))i.value=m[id]||"";});});
+ const mc=document.getElementById("moreCivils"),mb=document.getElementById("moreCabling");
+ if(mc)mc.style.display=(S.f["civilsRequired"]==="Yes"&&!S.civilsMore)?"":"none";
+ if(mb)mb.style.display=(S.f["cablingRequired"]==="Yes"&&!S.cablingMore)?"":"none";
+ document.querySelectorAll("section.card").forEach(c=>{const vis=[...c.querySelectorAll(".q,.slot")].filter(x=>x.style.display!=="none");const done=vis.filter(x=>{const fn=x.dataset.field;if(fn)return (S.f[fn]||"").trim();return false;});
+  const cnt=c.querySelector("[data-cnt]");if(cnt&&vis.some(x=>x.dataset.field))cnt.textContent=done.length+"/"+vis.filter(x=>x.dataset.field).length;});
+ buildChips();refreshLight();
+}
+function buildChips(){
+ const nav=document.getElementById("chips");nav.innerHTML="";
+ for(const sec of SCHEMA.sections){const a=document.createElement("a");a.href="#sec-"+sec.replace(/\W+/g,"-");a.textContent=sec.replace("Point-of-Work ","");nav.appendChild(a);}
+ for(const cname of SCHEMA.cards){const a=document.createElement("a");a.href="#card-"+cname.replace(/\W+/g,"-");a.textContent=cname.replace("Smallworld/GIS ","");nav.appendChild(a);}
+}
+
+/* ---------- AI (same gateway as the RST app, same origin) ---------- */
+function aiToken(){try{return localStorage.getItem("rst_cloud_token")||"";}catch{return "";}}
+async function aiCall(body){
+ const r=await fetch("/api/agent/survey",{method:"POST",headers:{"Content-Type":"application/json",Authorization:"Bearer "+aiToken()},body:JSON.stringify(Object.assign({clientApp:"rst_field_report",agentId:"survey_reader"},body))});
+ return r.json();
+}
+const AI_FIELD_MAP={jobReference:"sNumber",customerName:"customerName",siteAddress:"siteAddress",network:"network",asbestos:"asbestosRegister"};
+document.getElementById("aiPrefill").addEventListener("click",async()=>{
+ const msg=document.getElementById("aimsg");const text=document.getElementById("aitext").value.trim();
+ if(!text){msg.textContent="Paste the job pack text first.";return;}
+ msg.textContent="Analysing…";
+ try{
+  const res=await aiCall({task:"jobpack",extractedText:text.slice(0,8000),surveyTypeHint:"",images:[]});
+  const j=(res&&res.json)||{};let hits=0;
+  for(const k in AI_FIELD_MAP){const v=(j[k]||"").toString().trim();if(!v)continue;
+   const target=AI_FIELD_MAP[k];
+   const field=SCHEMA.fields.find(f=>f.n===target||f.n.toLowerCase()===target.toLowerCase());
+   if(field){if(!(S.f[field.n]||"").trim()){S.f[field.n]=v;hits++;}}}
+  const pts=Array.isArray(j.points)?j.points:[];
+  if(pts.length){const fc=SCHEMA.fields.find(f=>f.n==="finalComments"||f.s==="Final comments"&&f.t==="textarea");
+   const lines=pts.map(p=>"Point "+(p.sequence||"?")+": "+(p.title||p.interpretedRequirement||"")).join("\n");
+   if(fc&&!(S.f[fc.n]||"").trim()){S.f[fc.n]="JOB PACK POINTS (AI, unconfirmed):\n"+lines;hits++;}}
+  save();refresh();
+  msg.textContent=hits?("Prefilled "+hits+" fields + "+pts.length+" points. Review before relying on them."):"Nothing new to prefill (fields already filled or no data found).";
+ }catch(e){msg.textContent="AI unavailable — check connection.";}
+});
+document.getElementById("aiNotes").addEventListener("click",async()=>{
+ const msg=document.getElementById("aimsg");msg.textContent="Writing notes…";
+ const answered=SCHEMA.fields.filter(f=>(S.f[f.n]||"").trim()).map(f=>f.l+": "+S.f[f.n]).join("\n");
+ try{
+  const res=await aiCall({task:"professional_notes",extractedText:answered.slice(0,8000)});
+  const textOut=(res&&(res.text||(res.json&&res.json.notes)))||"";
+  const fc=SCHEMA.fields.find(f=>f.s==="Final comments"&&f.t==="textarea");
+  if(textOut&&fc){S.f[fc.n]=((S.f[fc.n]||"")+"\n\n"+textOut).trim();save();refresh();msg.textContent="Notes added to Final comments — review them.";}
+  else msg.textContent=textOut?"Got notes but no target field.":"No notes returned.";
+ }catch(e){msg.textContent="AI unavailable — check connection.";}
+});
+
+/* ---------- surveys dialog / backup ---------- */
+const dlg=document.getElementById("dlgSurveys");
+document.getElementById("btnSurveys").addEventListener("click",()=>{listSurveys();dlg.showModal();});
+document.getElementById("dlgClose").addEventListener("click",()=>dlg.close());
+function listSurveys(){const box=document.getElementById("surveyList");box.innerHTML="";
+ for(const key in ALL.surveys){const s=ALL.surveys[key];
+  const b=document.createElement("button");b.type="button";
+  b.textContent=(s.f&&s.f.sNumber?s.f.sNumber:key)+(key===ALL.current?"  ✓ current":"")+"  ·  "+((s.created||"").slice(0,10));
+  b.addEventListener("click",()=>{ALL.current=key;S=ALL.surveys[key];save();dlg.close();refresh();renderAllThumbs();});
+  box.appendChild(b);}}
+document.getElementById("dlgNew").addEventListener("click",()=>{
+ const ref=prompt("Job reference (S-number) for the new survey?")||("survey-"+Date.now());
+ const key=ref.trim().toUpperCase()||("survey-"+Date.now());
+ ALL.surveys[key]=blank(key);ALL.current=key;S=ALL.surveys[key];S.f["sNumber"]=key.indexOf("SURVEY-")===0?"":key;
+ save();dlg.close();refresh();renderAllThumbs();});
+document.getElementById("btnExport").addEventListener("click",async()=>{
+ const keys=await phKeys(ALL.current+"::");const photos={};
+ for(const k of keys){const blob=await phGet(k);photos[k]=await new Promise(res=>{const fr=new FileReader();fr.onload=()=>res(fr.result);fr.readAsDataURL(blob);});}
+ const payload={version:1,survey:S,key:ALL.current,photos};
+ const a=document.createElement("a");a.href="data:application/json;charset=utf-8,"+encodeURIComponent(JSON.stringify(payload));
+ a.download="rst-survey-"+(S.f["sNumber"]||ALL.current)+".json";a.click();});
+document.getElementById("dlgImport").addEventListener("click",()=>document.getElementById("importFile").click());
+document.getElementById("importFile").addEventListener("change",async e=>{
+ const file=e.target.files[0];if(!file)return;
+ const data=JSON.parse(await file.text());
+ const key=(data.key||"imported-"+Date.now());
+ ALL.surveys[key]=data.survey;ALL.current=key;S=data.survey;
+ for(const k in (data.photos||{})){const res=await fetch(data.photos[k]);await phPut(k,await res.blob());}
+ save();dlg.close();refresh();renderAllThumbs();});
+document.getElementById("btnPrint").addEventListener("click",()=>window.print());
+function renderAllThumbs(){document.querySelectorAll(".slot").forEach(el=>drawThumbs(el,el.dataset.slot));}
+
+
+/* ---------- annotation editor ---------- */
+const ANN={key:null,slotEl:null,img:null,ops:[],redo:[],tool:"arrow",color:"#ff2d2d",width:8,drag:null};
+const annWrap=document.getElementById("annWrap"),annCv=document.getElementById("annCanvas"),actx=annCv.getContext("2d");
+document.querySelectorAll("#annTop [data-tool]").forEach(b=>b.addEventListener("click",()=>{ANN.tool=b.dataset.tool;
+ document.querySelectorAll("#annTop [data-tool]").forEach(x=>x.classList.toggle("sel",x===b));}));
+document.getElementById("annColor").addEventListener("input",e=>ANN.color=e.target.value);
+document.getElementById("annWidth").addEventListener("change",e=>ANN.width=Number(e.target.value));
+document.getElementById("annUndo").addEventListener("click",()=>{if(ANN.ops.length){ANN.redo.push(ANN.ops.pop());annDraw();}});
+document.getElementById("annRedo").addEventListener("click",()=>{if(ANN.redo.length){ANN.ops.push(ANN.redo.pop());annDraw();}});
+document.getElementById("annClear").addEventListener("click",async()=>{
+ const orig=await phGet(ANN.key+"::orig");
+ if(orig){await phPut(ANN.key,orig);await openAnnotator(ANN.key,ANN.slotEl);}
+ else{ANN.ops=[];ANN.redo=[];annDraw();}});
+document.getElementById("annCancel").addEventListener("click",()=>{annWrap.classList.remove("open");});
+document.getElementById("annSave").addEventListener("click",async()=>{
+ const hasOrig=await phGet(ANN.key+"::orig");
+ if(!hasOrig){const cur=await phGet(ANN.key);if(cur)await phPut(ANN.key+"::orig",cur);}
+ const blob=await new Promise(res=>annCv.toBlob(res,"image/jpeg",0.9));
+ await phPut(ANN.key,blob);
+ annWrap.classList.remove("open");
+ if(ANN.slotEl)drawThumbs(ANN.slotEl,ANN.slotEl.dataset.slot);
+});
+async function openAnnotator(key,slotEl){
+ ANN.key=key;ANN.slotEl=slotEl;ANN.ops=[];ANN.redo=[];
+ const blob=await phGet(key);if(!blob)return;
+ const img=new Image();img.src=URL.createObjectURL(blob);
+ await new Promise(r=>img.onload=r);
+ ANN.img=img;
+ const maxW=Math.min(img.naturalWidth,1600);
+ const scale=maxW/img.naturalWidth;
+ annCv.width=Math.round(img.naturalWidth*scale);
+ annCv.height=Math.round(img.naturalHeight*scale);
+ annDraw();
+ annWrap.classList.add("open");
+}
+function annDraw(){
+ actx.clearRect(0,0,annCv.width,annCv.height);
+ actx.drawImage(ANN.img,0,0,annCv.width,annCv.height);
+ for(const op of ANN.ops)paintOp(op);
+ if(ANN.drag)paintOp(ANN.drag);
+}
+function paintOp(op){
+ actx.strokeStyle=op.color;actx.fillStyle=op.color;actx.lineWidth=op.width;actx.lineCap="round";actx.lineJoin="round";
+ if(op.t==="pen"){actx.beginPath();op.pts.forEach((p,i)=>i?actx.lineTo(p[0],p[1]):actx.moveTo(p[0],p[1]));actx.stroke();}
+ else if(op.t==="circle"){const rx=Math.abs(op.x2-op.x1)/2,ry=Math.abs(op.y2-op.y1)/2;
+  actx.beginPath();actx.ellipse((op.x1+op.x2)/2,(op.y1+op.y2)/2,Math.max(rx,2),Math.max(ry,2),0,0,Math.PI*2);actx.stroke();}
+ else if(op.t==="arrow"){const dx=op.x2-op.x1,dy=op.y2-op.y1,len=Math.hypot(dx,dy)||1;
+  actx.beginPath();actx.moveTo(op.x1,op.y1);actx.lineTo(op.x2,op.y2);actx.stroke();
+  const hl=Math.max(14,op.width*2.6),ang=Math.atan2(dy,dx);
+  actx.beginPath();actx.moveTo(op.x2,op.y2);
+  actx.lineTo(op.x2-hl*Math.cos(ang-0.45),op.y2-hl*Math.sin(ang-0.45));
+  actx.lineTo(op.x2-hl*Math.cos(ang+0.45),op.y2-hl*Math.sin(ang+0.45));
+  actx.closePath();actx.fill();}
+ else if(op.t==="text"){actx.font="bold "+Math.max(22,op.width*3.4)+"px -apple-system,sans-serif";
+  actx.lineWidth=Math.max(3,op.width/2);actx.strokeStyle="rgba(0,0,0,.55)";
+  actx.strokeText(op.text,op.x1,op.y1);actx.fillText(op.text,op.x1,op.y1);}
+}
+function annPos(ev){const r=annCv.getBoundingClientRect();
+ return [ (ev.clientX-r.left)*annCv.width/r.width, (ev.clientY-r.top)*annCv.height/r.height ];}
+annCv.addEventListener("pointerdown",ev=>{
+ ev.preventDefault();annCv.setPointerCapture(ev.pointerId);
+ const [x,y]=annPos(ev);
+ if(ANN.tool==="text"){const txt=prompt("Text:");if(txt){ANN.ops.push({t:"text",text:txt,x1:x,y1:y,color:ANN.color,width:ANN.width});ANN.redo=[];annDraw();}return;}
+ if(ANN.tool==="pen")ANN.drag={t:"pen",pts:[[x,y]],color:ANN.color,width:ANN.width};
+ else ANN.drag={t:ANN.tool,x1:x,y1:y,x2:x,y2:y,color:ANN.color,width:ANN.width};
+});
+annCv.addEventListener("pointermove",ev=>{if(!ANN.drag)return;const [x,y]=annPos(ev);
+ if(ANN.drag.t==="pen")ANN.drag.pts.push([x,y]);else{ANN.drag.x2=x;ANN.drag.y2=y;}annDraw();});
+annCv.addEventListener("pointerup",()=>{if(!ANN.drag)return;ANN.ops.push(ANN.drag);ANN.drag=null;ANN.redo=[];annDraw();});
+
+/* ---------- boot ---------- */
+loadAll();
+renderForm();
+renderPhotos();
+refresh();
+</script>
+</body>
+</html>

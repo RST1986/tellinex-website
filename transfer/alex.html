@@ -92,6 +92,35 @@ dialog.wide{max-width:560px}
 .nabtn{margin-left:auto;font-size:11px;font-weight:700;border:1px solid var(--line);background:var(--chip);color:var(--brand);border-radius:99px;padding:4px 9px}
 .locbtn{min-height:42px;min-width:46px;border:1.5px solid var(--acc);color:var(--acc);background:#fff;border-radius:10px;font-size:16px}
 .locrow{display:flex;gap:6px}
+#siteCheck{display:none;margin:10px 0;padding:10px 12px;border-radius:10px;font-weight:700;font-size:13.5px}
+#siteCheck.ok{display:block;background:#dff1e7;color:#177a4c}
+#siteCheck.near{display:block;background:#fff3d6;color:#8a5b00}
+#siteCheck.far{display:block;background:#fdeceb;color:#b3261e}
+.pow{border:1px solid var(--line);border-left:4px solid var(--acc);border-radius:10px;padding:10px;margin:0 0 10px;background:#fbfdfe}
+.pow .pt{font-weight:800;font-size:14px}
+.pow .pr{font-size:12.5px;color:var(--mut);margin:2px 0 8px}
+.pow.done{border-left-color:#177a4c;background:#f4faf7}
+.pow .pt .tick{color:#177a4c;margin-right:6px}
+.ph .vbadge{position:absolute;left:2px;bottom:2px;border-radius:99px;font-size:12px;padding:2px 6px;font-weight:800;border:0}
+.ph .vok{background:rgba(23,122,76,.9);color:#fff}
+.ph .vwarn{background:rgba(224,163,0,.95);color:#fff}
+#guideBtn{position:fixed;right:14px;bottom:86px;z-index:45;background:var(--acc);color:#fff;border:0;border-radius:99px;padding:13px 18px;font-weight:800;font-size:14px;box-shadow:0 4px 14px rgba(10,132,193,.4)}
+#wiz{position:fixed;inset:0;background:#0d1418;color:#fff;z-index:120;display:none;flex-direction:column;padding:calc(14px + env(safe-area-inset-top)) 16px calc(14px + env(safe-area-inset-bottom))}
+#wiz.open{display:flex}
+#wiz .prog{font-size:12.5px;color:#8fb3c9;font-weight:700;letter-spacing:.08em}
+#wiz h2{font-size:22px;margin:10px 0 6px;line-height:1.25}
+#wiz .why{font-size:14.5px;color:#b9cbd8;flex:0 1 auto}
+#wiz .verify{margin-top:10px;font-size:13.5px;font-weight:700;min-height:20px}
+#wiz .verify.ok{color:#6fd3a2}
+#wiz .verify.warn{color:#ffcf66}
+#wiz .spacer{flex:1}
+#wiz .wbtns{display:flex;flex-direction:column;gap:10px}
+#wiz .wbtns label.shoot{display:flex;align-items:center;justify-content:center;background:var(--acc);border-radius:14px;min-height:60px;font-size:18px;font-weight:800}
+#wiz .wbtns label.shoot input{display:none}
+#wiz .wbtns .row2{display:flex;gap:10px}
+#wiz .wbtns .row2 button{flex:1;min-height:48px;border-radius:12px;border:1px solid #33475a;background:#1e3242;color:#dce8f2;font-weight:700}
+
+
 
 
 
@@ -134,6 +163,7 @@ dialog.wide{max-width:560px}
 <main>
  <p class="printhead" id="printhead"></p>
  <div class="banner" id="dnp">DO NOT PROCEED — RESOLVE SAFETY ISSUE</div>
+ <div id="siteCheck" role="status"></div>
  <section class="ai" id="aibox">
   <h2>AI · prefill from job pack</h2>
   <div class="uprow"><label>📎 Load job pack files (XLSX / PDF)<input type="file" id="aifiles" accept=".xlsx,.pdf,application/pdf" multiple></label></div>
@@ -144,6 +174,7 @@ dialog.wide{max-width:560px}
   </div>
   <div class="msg" id="aimsg"></div>
  </section>
+ <section class="card" id="powCard" style="display:none"><h2>Point of work checklist<span class="cnt" id="powCnt"></span></h2><div id="powRoot"></div></section>
  <div id="formRoot"></div>
  <div id="photoRoot"></div>
 </main>
@@ -152,7 +183,23 @@ dialog.wide{max-width:560px}
  <button type="button" id="btnCheck">Check ✓</button>
  <button type="button" class="primary" id="btnPdf">Export PDF</button>
 </footer>
+<button type="button" id="guideBtn">▶ Guide me</button>
 <div class="saved" id="savedToast">Saved</div>
+
+<div id="wiz">
+ <div class="prog" id="wizProg"></div>
+ <h2 id="wizTitle"></h2>
+ <div class="why" id="wizWhy"></div>
+ <div class="verify" id="wizVerify"></div>
+ <div class="spacer"></div>
+ <div class="wbtns">
+  <label class="shoot">📷 Take this photo<input type="file" accept="image/*" capture="environment" id="wizInput"></label>
+  <div class="row2">
+   <button type="button" id="wizSkip">Skip</button>
+   <button type="button" id="wizClose">Exit guide</button>
+  </div>
+ </div>
+</div>
 
 <div id="annWrap">
  <div id="annTop">
@@ -200,7 +247,7 @@ const IDB = "rst-alex-images";
 
 /* ---------- state ---------- */
 let DB=null, S=null, ALL=null;
-function blank(ref){return {ref:ref||"", f:{}, com:{}, loc:{}, civilsMore:false, cablingMore:false, created:new Date().toISOString()};}
+function blank(ref){return {ref:ref||"", f:{}, com:{}, loc:{}, powCom:{}, points:[], siteGeo:null, verif:{}, civilsMore:false, cablingMore:false, created:new Date().toISOString()};}
 function loadAll(){try{ALL=JSON.parse(localStorage.getItem(LSKEY))||null;}catch{ALL=null;}
  if(!ALL||!ALL.surveys){ALL={current:"draft",surveys:{draft:blank("")}};}
  if(!ALL.surveys[ALL.current]) ALL.current=Object.keys(ALL.surveys)[0];
@@ -277,7 +324,8 @@ function renderPhotos(){
     "<label class='cam'>📷 Take photo<input type='file' accept='image/*' capture='environment' data-take></label>"+
     "<label>🖼 Gallery<input type='file' accept='image/*' multiple data-gal></label>"+
     "</div>"+sub;
-   const wire=inp=>inp.addEventListener("change",async()=>{const added=[...inp.files];for(const file of added){const n=Date.now()+Math.floor(Math.random()*999);await phPut(pKey(sl.id,n),file);}inp.value="";await drawThumbs(el,sl.id);refreshLight();if(added.length){void getFix().then(fx=>{if(fx){S.gps=S.gps||{};S.gps[sl.id]=fx.lat+","+fx.lon;save();}});}
+   const wire=inp=>inp.addEventListener("change",async()=>{const added=[...inp.files];for(const file of added){const n=Date.now()+Math.floor(Math.random()*999);await phPut(pKey(sl.id,n),file);}inp.value="";await drawThumbs(el,sl.id);refreshLight();if(added.length){void getFix().then(fx=>{if(fx){S.gps=S.gps||{};S.gps[sl.id]=fx.lat+","+fx.lon;save();}});
+    void verifyPhoto({t:sl.t,req:""},el,added[0],ALL.current+"::"+sl.id);}
    if(added.length&&sl.com)void aiCaption(sl,el,added[0]);});
    el.querySelectorAll("[data-take],[data-gal]").forEach(wire);
    el.querySelectorAll("[data-sub]").forEach(i=>{i.addEventListener("input",()=>{const m=i.dataset.sub==="loc"?S.loc:S.com;m[sl.id]=i.value;save();});});
@@ -300,6 +348,21 @@ function renderPhotos(){
   root.appendChild(card);
  }
 }
+async function drawThumbsInto(box,prefix){
+ const keys=(await phKeys(prefix)).filter(k=>!k.endsWith("::orig"));
+ box.innerHTML="";
+ for(const k of keys){const blob=await phGet(k);if(!blob)continue;
+  const d=document.createElement("div");d.className="ph";
+  const img=document.createElement("img");img.src=URL.createObjectURL(blob);d.appendChild(img);
+  const v=(S.verif||{})[k];
+  if(v){const b=document.createElement("button");b.type="button";
+   b.className="vbadge "+(v.ok?"vok":"vwarn");b.textContent=v.ok?"✓":"⚠";
+   b.addEventListener("click",()=>alert(v.note||(v.ok?"AI: photo matches the expected subject.":"AI flagged this photo.")));
+   d.appendChild(b);}
+  const rm=document.createElement("button");rm.className="rm";rm.textContent="✕";
+  rm.addEventListener("click",async()=>{await phDel(k);d.remove();refreshLight();});
+  d.appendChild(rm);box.appendChild(d);}
+}
 async function drawThumbs(el,slot){
  const box=el.querySelector("[data-thumbs]");const keys=(await phKeys(ALL.current+"::"+slot+"::")).filter(k=>!k.endsWith("::orig"));
  box.innerHTML="";
@@ -313,6 +376,55 @@ async function drawThumbs(el,slot){
 }
 
 /* ---------- refresh ---------- */
+async function renderPow(){
+ const card=document.getElementById("powCard"),root=document.getElementById("powRoot");
+ const pts=S.points||[];
+ if(!pts.length){card.style.display="none";return;}
+ card.style.display="";root.innerHTML="";
+ let done=0;
+ for(const p of pts){
+  const keys=(await phKeys(ALL.current+"::pow:"+p.seq+"::")).filter(k=>!k.endsWith("::orig"));
+  const has=keys.length>0;if(has)done++;
+  const el=document.createElement("div");el.className="pow"+(has?" done":"");el.dataset.pow=p.seq;
+  el.innerHTML="<div class='pt'>"+(has?"<span class='tick'>✓</span>":"")+"Point "+p.seq+": "+esc(p.title)+"</div>"+
+   (p.req&&p.req!==p.title?"<div class='pr'>"+esc(p.req)+"</div>":"")+
+   "<div class='thumbs' data-thumbs></div>"+
+   "<div class='snapRow'><label class='cam'>📷 Photo of this point<input type='file' accept='image/*' capture='environment' data-powtake></label></div>"+
+   "<div class='sub'><textarea data-powcom rows='2' placeholder='Comment (AI fills after photo)…'></textarea></div>";
+  const inp=el.querySelector("[data-powtake]");
+  inp.addEventListener("change",async()=>{const added=[...inp.files];
+   for(const file of added){const n=Date.now()+Math.floor(Math.random()*999);await phPut(ALL.current+"::pow:"+p.seq+"::"+n,file);}
+   inp.value="";
+   if(added.length){
+    void getFix().then(fx=>{if(fx){S.gps=S.gps||{};S.gps["pow:"+p.seq]=fx.lat+","+fx.lon;save();}});
+    void verifyPhoto({t:"Point "+p.seq+": "+p.title,req:p.req},el,added[0],ALL.current+"::pow:"+p.seq);
+    void aiCaptionPow(p,el,added[0]);
+   }
+   await renderPow();refreshLight();});
+  const ta=el.querySelector("[data-powcom]");
+  ta.value=S.powCom["pow:"+p.seq]||"";
+  ta.addEventListener("input",()=>{S.powCom["pow:"+p.seq]=ta.value;save();});
+  root.appendChild(el);
+  await drawThumbsInto(el.querySelector("[data-thumbs]"),ALL.current+"::pow:"+p.seq+"::");
+ }
+ document.getElementById("powCnt").textContent=done+"/"+pts.length;
+}
+async function aiCaptionPow(p,el,file){
+ const key="pow:"+p.seq;
+ if((S.powCom[key]||"").trim())return;
+ try{
+  const dataUrl=await downscale(file,1024);
+  const res=await aiCall({task:"analyse_point",
+   extractedText:"Photo for survey point: "+p.title+". Planner requirement: "+(p.req||p.title)+". Write ONE concise professional photo caption in UK English describing exactly what is visible. Include readable asset IDs. No speculation.",
+   images:[{dataUrl,group:key,caption:"",key}]});
+  const j=(res&&res.json)||{};
+  let cap=(j.finding||"").trim();
+  const ids=Array.isArray(j.ids)?j.ids.filter(Boolean):[];
+  if(ids.length)cap+=(cap?" ":"")+"("+ids.join(", ")+")";
+  if(cap&&!(S.powCom[key]||"").trim()){S.powCom[key]=cap;save();
+   const ta=el.querySelector("[data-powcom]");if(ta)ta.value=cap;}
+ }catch{}
+}
 function refreshLight(){
  document.getElementById("jobrefBadge").textContent=S.f["sNumber"]||S.ref||"—";
  document.getElementById("printhead").textContent="Site Survey — "+(S.f["sNumber"]||S.ref||"")+" — "+(S.f["siteAddress"]||"");
@@ -352,6 +464,31 @@ function aiToken(){try{return localStorage.getItem("rst_cloud_token")||"";}catch
 async function aiCall(body){
  const r=await fetch("/api/agent/survey",{method:"POST",headers:{"Content-Type":"application/json",Authorization:"Bearer "+aiToken()},body:JSON.stringify(Object.assign({clientApp:"rst_field_report",agentId:"survey_reader"},body))});
  return r.json();
+}
+async function geoForPostcode(pc){
+ const norm=(pc||"").replace(/\s+/g,"").toUpperCase();if(!norm)return null;
+ try{const c=localStorage.getItem("rst.travel.pc."+norm);if(c)return JSON.parse(c);}catch{}
+ try{const r=await fetch("https://api.postcodes.io/postcodes/"+norm,{signal:AbortSignal.timeout(6000)});
+  if(!r.ok)return null;const d=await r.json();
+  const la=d.result&&d.result.latitude,lo=d.result&&d.result.longitude;
+  if(typeof la!=="number")return null;
+  const v={lat:la,lon:lo};try{localStorage.setItem("rst.travel.pc."+norm,JSON.stringify(v));}catch{}
+  return v;
+ }catch{return null;}
+}
+function extractPc(addr){const m=/\b([A-Z]{1,2}\d[A-Z\d]?)\s*(\d[A-Z]{2})\b/i.exec(addr||"");return m?(m[1]+m[2]).toUpperCase():null;}
+async function checkSite(){
+ const el=document.getElementById("siteCheck");
+ el.className="";el.textContent="";
+ if(!S.siteGeo){const pc=extractPc(S.f["siteAddress"]||"");if(pc){S.siteGeo=await geoForPostcode(pc);if(S.siteGeo)save();}}
+ if(!S.siteGeo)return;
+ const fx=await getFix();if(!fx)return;
+ const mi=hMiles(fx.lat,fx.lon,S.siteGeo.lat,S.siteGeo.lon);
+ const m=Math.round(mi*1609.34);
+ if(m<=250){el.className="ok";el.textContent="✓ You are "+m+" m from the "+(S.f["sNumber"]||"job")+" site";}
+ else if(m<=1000){el.className="near";el.textContent=m+" m from the "+(S.f["sNumber"]||"job")+" site — confirm you are at the right point of work";}
+ else{el.className="far";el.textContent="⚠ You are "+(mi<10?(mi.toFixed(1)+" km"):"far")+" from this job's address — wrong survey open?";}
+ el.onclick=()=>void checkSite();
 }
 let LASTFIX=null;
 function getFix(){return new Promise(res=>{
@@ -469,7 +606,7 @@ function listSurveys(){const box=document.getElementById("surveyList");box.inner
    "<div class='l3'></div>";
   const l3=row.querySelector(".l3");
   const open=document.createElement("button");open.type="button";open.className="open";open.textContent=key===ALL.current?"Continue":"Open";
-  open.addEventListener("click",()=>{ALL.current=key;S=ALL.surveys[key];save();dlg.close();refresh();renderAllThumbs();});
+  open.addEventListener("click",()=>{ALL.current=key;S=ALL.surveys[key];save();dlg.close();refresh();renderAllThumbs();void renderPow();void checkSite();});
   l3.appendChild(open);
   for(const [val,lab] of QSTATUS){const b=document.createElement("button");b.type="button";
    b.textContent=lab;b.className=s.status===val?(val==="no_access"?"stNo":"stOn"):"";
@@ -689,6 +826,14 @@ async function aiMergeCombined(combined){
   const j=(res&&res.json)||{};let ai=0;
   for(const k in AI_FIELD_MAP){const v=(j[k]||"").toString().trim();if(!v)continue;
    const f=SCHEMA.fields.find(x=>x.n===AI_FIELD_MAP[k]);if(f&&!(S.f[f.n]||"").trim()){S.f[f.n]=v;REVIEW.add(f.n);ai++;}}
+  const pts=Array.isArray(j.points)?j.points:[];
+  if(pts.length&&(!S.points||!S.points.length)){
+   S.points=pts.map((p,i)=>({seq:Number(p.sequence||i+1)||i+1,
+    title:String(p.title||p.interpretedRequirement||("Point "+(i+1))).slice(0,140),
+    req:String(p.originalRequirement||p.interpretedRequirement||"").slice(0,300),
+    asset:String(p.assetIdGuess||"")}));
+   ai+=1;
+  }
   return ai;
  }catch{return 0;}
 }
@@ -743,7 +888,7 @@ document.getElementById("aifiles").addEventListener("change",async e=>{
   }
   save();
   if(groups.size===1){
-   refresh();markReview();renderAllThumbs();
+   refresh();markReview();renderAllThumbs();void renderPow();void checkSite();
    msg.textContent="Survey "+(S.f["sNumber"]||lastKey)+" ready — "+made[0].split("(")[1].replace(")","")+" auto-filled. Amber = review.";
   }else{
    S=ALL.surveys[lastKey];refresh();markReview();renderAllThumbs();
@@ -839,6 +984,10 @@ async function runSurveyCheck(){
  }
  const keys=(await phKeys(ALL.current+"::")).filter(k=>!k.endsWith("::orig"));
  const bySlot={};for(const k of keys){const slot=k.split("::")[1];bySlot[slot]=(bySlot[slot]||0)+1;}
+ for(const p of (S.points||[])){
+  const n=keys.filter(k=>k.indexOf("::pow:"+p.seq+"::")>=0).length;
+  if(!n)gaps.push({t:"crit",m:"Point "+p.seq+" (\""+p.title.slice(0,50)+"\") has no photo."});
+ }
  const total=keys.length;
  if(total===0)gaps.unshift({t:"crit",m:"No photos captured at all."});
  const groupCount={};
@@ -916,8 +1065,35 @@ async function buildPdfOnce(maxImgW,q){
   y-=2;
   for(const [l,v] of rows){textWrapped(M,9,l+": "+v,false);}
  }
+ const colW0=(W-2*M-14)/2;
+ // ===== point of work =====
+ if((S.points||[]).length){
+  need(30);y-=10;
+  ops.push("q 0.90 0.94 0.96 rg "+(M-6)+" "+(y-16)+" "+(W-2*M+12)+" 20 re f Q");
+  text(M,11,"POINT OF WORK CHECKLIST",true);
+  const allKeys=(await phKeys(ALL.current+"::")).filter(k=>!k.endsWith("::orig"));
+  for(const p of S.points){
+   need(24);y-=6;text(M,10,"Point "+p.seq+": "+p.title,true);
+   if(p.req&&p.req!==p.title)textWrapped(M,8.5,p.req,false);
+   const com=(S.powCom["pow:"+p.seq]||"").trim();if(com)textWrapped(M,8.5,com,false);
+   const gp=((S.gps||{})["pow:"+p.seq]||"").trim();if(gp)text(M,7.5,"GPS: "+gp,false);
+   const pks=allKeys.filter(k=>k.indexOf("::pow:"+p.seq+"::")>=0);
+   for(let i=0;i<pks.length;i+=2){
+    const pair=[];
+    for(const k of [pks[i],pks[i+1]]){if(!k)continue;const blob=await phGet(k);if(!blob)continue;
+     try{pair.push(await jpegFor(blob));}catch{}}
+    if(!pair.length)continue;
+    const hMax=Math.max(...pair.map(px=>Math.min(200,colW0*px.h/px.w)));
+    need(hMax+10);y-=hMax+6;
+    pair.forEach((jp,ci)=>{const dw=colW0,dh=Math.min(200,dw*jp.h/jp.w);
+     const iid=alloc();imgObjs.push({id:iid,jp});
+     const name="Im"+iid;curImgs[name]=iid;
+     ops.push("q "+dw.toFixed(1)+" 0 0 "+dh.toFixed(1)+" "+(M+ci*(colW0+14))+" "+(y+(hMax-dh)).toFixed(1)+" cm /"+name+" Do Q");});
+   }
+  }
+ }
  // ===== fotos: grelha 2 colunas =====
- const keys=(await phKeys(ALL.current+"::")).filter(k=>!k.endsWith("::orig"));
+ const keys=(await phKeys(ALL.current+"::")).filter(k=>!k.endsWith("::orig")&&k.indexOf("::pow:")<0);
  const bySlot={};
  for(const k of keys){const slot=k.split("::")[1];(bySlot[slot]=bySlot[slot]||[]).push(k);}
  const colW=(W-2*M-14)/2;
@@ -1012,11 +1188,112 @@ document.getElementById("btnPdf").addEventListener("click",async()=>{
  btn.textContent=orig;btn.disabled=false;
 });
 
+
+/* ---------- AI photo verification ---------- */
+async function verifyPhoto(subject,el,file,keyPrefix){
+ try{
+  const keys=(await phKeys(keyPrefix+"::")).filter(k=>!k.endsWith("::orig"));
+  const key=keys[keys.length-1];if(!key)return null;
+  const dataUrl=await downscale(file,800);
+  const res=await aiCall({task:"analyse_point",
+   extractedText:"STRICT PHOTO VERIFICATION. Expected subject of this survey photo: \""+subject.t+"\". "+(subject.req?("Planner requirement: "+subject.req+". "):"")+
+    "Start your finding with exactly MATCH: if the photo plausibly shows the expected subject and is usable (sharp enough, adequately lit, subject visible), or exactly MISMATCH: if it shows something else or is unusable (blurred, dark, obstructed). Then one short sentence of reason in UK English.",
+   images:[{dataUrl,group:"verify",caption:"",key:"verify"}]});
+  const j=(res&&res.json)||{};
+  const finding=String(j.finding||res.text||"");
+  let ok=true;
+  if(/^\s*MISMATCH/i.test(finding))ok=false;
+  else if(/^\s*MATCH/i.test(finding))ok=true;
+  else if(/mismatch|does not show|cannot see|not visible|blurr|too dark|unusable/i.test(finding))ok=false;
+  const note=finding.replace(/^\s*(MATCH|MISMATCH)\s*:?\s*/i,"").slice(0,220)||(ok?"Photo matches the expected subject.":"Photo may not match — check it.");
+  S.verif=S.verif||{};S.verif[key]={ok,note};save();
+  if(el){const box=el.querySelector("[data-thumbs]");if(box)await drawThumbsInto(box,keyPrefix+"::");}
+  return {ok,note};
+ }catch{return null;}
+}
+
+/* ---------- guided capture ---------- */
+let WIZ={queue:[],i:0};
+async function buildWizQueue(){
+ const q=[];
+ const keys=(await phKeys(ALL.current+"::")).filter(k=>!k.endsWith("::orig"));
+ for(const p of (S.points||[])){
+  const n=keys.filter(k=>k.indexOf("::pow:"+p.seq+"::")>=0).length;
+  if(!n)q.push({kind:"pow",id:"pow:"+p.seq,t:"Point "+p.seq+": "+p.title,why:p.req||p.title,seq:p.seq});
+ }
+ const bySlot={};for(const k of keys){const slot=k.split("::")[1];bySlot[slot]=(bySlot[slot]||0)+1;}
+ const planCount=(bySlot["civilsPlan"]||0)+(bySlot["cablingPlan"]||0);
+ if(planCount===0)q.push({kind:"slot",id:"civilsPlan",t:"GIS / overhead plan",why:"Load or photograph the network plan for this job."});
+ const groupSeen=new Set();
+ for(const sl of SCHEMA.slots){
+  if(sl.c==="always")continue;if(!condOk(sl.c))continue;
+  if(groupSeen.has(sl.c))continue;
+  const cnt=[...SCHEMA.slots].filter(s2=>s2.c===sl.c).reduce((a,s2)=>a+(bySlot[s2.id]||0),0);
+  if(cnt===0){groupSeen.add(sl.c);
+   q.push({kind:"slot",id:sl.id,t:SLOT_GROUP_LABEL[sl.c]||sl.t,why:"Required because you answered Yes ("+sl.c.split("=")[0]+")."});}
+ }
+ return q;
+}
+function wizShow(){
+ const w=document.getElementById("wiz");
+ if(WIZ.i>=WIZ.queue.length){
+  document.getElementById("wizTitle").textContent="All required photos captured ✓";
+  document.getElementById("wizWhy").textContent="Run Check ✓ before exporting the PDF.";
+  document.getElementById("wizProg").textContent=WIZ.queue.length+" / "+WIZ.queue.length;
+  document.getElementById("wizVerify").textContent="";
+  document.querySelector("#wiz label.shoot").style.display="none";
+  return;
+ }
+ document.querySelector("#wiz label.shoot").style.display="";
+ const step=WIZ.queue[WIZ.i];
+ document.getElementById("wizProg").textContent="PHOTO "+(WIZ.i+1)+" OF "+WIZ.queue.length;
+ document.getElementById("wizTitle").textContent=step.t;
+ document.getElementById("wizWhy").textContent=step.why||"";
+ document.getElementById("wizVerify").textContent="";
+ document.getElementById("wizVerify").className="verify";
+}
+document.getElementById("guideBtn").addEventListener("click",async()=>{
+ WIZ.queue=await buildWizQueue();WIZ.i=0;
+ document.getElementById("wiz").classList.add("open");
+ wizShow();
+});
+document.getElementById("wizClose").addEventListener("click",()=>{
+ document.getElementById("wiz").classList.remove("open");
+ void renderPow();renderAllThumbs();refreshLight();
+});
+document.getElementById("wizSkip").addEventListener("click",()=>{WIZ.i++;wizShow();});
+document.getElementById("wizInput").addEventListener("change",async e=>{
+ const file=e.target.files[0];e.target.value="";
+ if(!file||WIZ.i>=WIZ.queue.length)return;
+ const step=WIZ.queue[WIZ.i];
+ const keyPrefix=ALL.current+"::"+step.id;
+ const n=Date.now();
+ await phPut(keyPrefix+"::"+n,file);
+ void getFix().then(fx=>{if(fx){S.gps=S.gps||{};S.gps[step.id]=fx.lat+","+fx.lon;save();}});
+ const v=document.getElementById("wizVerify");
+ v.textContent="AI checking the photo…";v.className="verify";
+ const subject={t:step.t,req:step.why};
+ const res=await verifyPhoto(subject,null,file,keyPrefix);
+ if(res&&!res.ok){
+  v.className="verify warn";
+  v.textContent="⚠ "+res.note+"  — retake, or Skip to keep it.";
+ }else{
+  if(res){v.className="verify ok";v.textContent="✓ "+res.note;}
+  if(step.kind==="pow"){const p=(S.points||[]).find(pp=>"pow:"+pp.seq===step.id);
+   if(p)void aiCaptionPow(p,document.createElement("div"),file);}
+  else{const sl=SCHEMA.slots.find(s2=>s2.id===step.id);
+   if(sl&&sl.com)void aiCaption(sl,document.querySelector(".slot[data-slot='"+sl.id+"']")||document.createElement("div"),file);}
+  setTimeout(()=>{WIZ.i++;wizShow();},900);
+ }
+});
+
 /* ---------- boot ---------- */
 loadAll();
 renderForm();
 renderPhotos();
 refresh();
+void renderPow();
+void checkSite();
 </script>
 </body>
 </html>

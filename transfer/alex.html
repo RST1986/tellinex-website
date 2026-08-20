@@ -431,6 +431,28 @@ const dlg=document.getElementById("dlgSurveys");
 document.getElementById("btnSurveys").addEventListener("click",()=>{listSurveys();dlg.showModal();});
 document.getElementById("dlgClose").addEventListener("click",()=>dlg.close());
 function surveyProgress(s){let a=0;for(const f of SCHEMA.fields){if(((s.f||{})[f.n]||"").trim())a++;}return Math.round(100*a/SCHEMA.fields.length);}
+const TRAVEL_BASE={lat:52.059859,lon:-0.759437};
+function hMiles(a,b,c,d){const R=3958.7613,r=x=>x*Math.PI/180;const dl=r(c-a),dn=r(d-b);
+ const h=Math.sin(dl/2)**2+Math.cos(r(a))*Math.cos(r(c))*Math.sin(dn/2)**2;return R*2*Math.atan2(Math.sqrt(h),Math.sqrt(1-h));}
+async function distFor(addr){
+ const m=/\b([A-Z]{1,2}\d[A-Z\d]?)\s*(\d[A-Z]{2})\b/i.exec(addr||"");if(!m)return null;
+ const pc=(m[1]+m[2]).toUpperCase();
+ try{const c=localStorage.getItem("rst.travel.pc."+pc);if(c){const p=JSON.parse(c);return Math.round(hMiles(TRAVEL_BASE.lat,TRAVEL_BASE.lon,p.lat,p.lon)*10)/10;}}catch{}
+ try{const r=await fetch("https://api.postcodes.io/postcodes/"+pc,{signal:AbortSignal.timeout(6000)});
+  if(!r.ok)return null;const d=await r.json();const la=d.result&&d.result.latitude,lo=d.result&&d.result.longitude;
+  if(typeof la!=="number")return null;
+  try{localStorage.setItem("rst.travel.pc."+pc,JSON.stringify({lat:la,lon:lo}));}catch{}
+  return Math.round(hMiles(TRAVEL_BASE.lat,TRAVEL_BASE.lon,la,lo)*10)/10;
+ }catch{return null;}
+}
+function fillDistances(){
+ document.querySelectorAll("[data-dist]").forEach(sp=>{
+  const key=sp.getAttribute("data-dist");const s=ALL.surveys[key];if(!s)return;
+  void distFor((s.f||{}).siteAddress||"").then(mi=>{
+   if(mi==null)return;sp.textContent="· "+mi+" mi"+(mi>50?" · +£30":"");
+   if(mi>50)sp.style.color="#b26a00";});
+ });
+}
 const QSTATUS=[["done","Done"],["partial","Partial"],["no_access","No access"]];
 function listSurveys(){const box=document.getElementById("surveyList");box.innerHTML="";
  const keys=Object.keys(ALL.surveys).sort((a,b)=>{
@@ -443,7 +465,7 @@ function listSurveys(){const box=document.getElementById("surveyList");box.inner
   const site=(f.siteAddress||"").split(",").slice(0,2).join(",");
   const stLabel=(QSTATUS.find(q=>q[0]===s.status)||[])[1]||"";
   row.innerHTML="<div class='l1'>"+esc(f.sNumber||key)+(stLabel?" · <span style='font-size:12px;color:#177a4c'>"+esc(stLabel)+"</span>":"")+"<span class='pct'>"+pct+"%</span></div>"+
-   "<div class='l2'>"+esc(site||"—")+" · "+esc(f.surveyDate||s.created&&s.created.slice(0,10)||"")+"</div>"+
+   "<div class='l2'>"+esc(site||"—")+" · "+esc(f.surveyDate||s.created&&s.created.slice(0,10)||"")+" <span data-dist='"+esc(key)+"'></span></div>"+
    "<div class='l3'></div>";
   const l3=row.querySelector(".l3");
   const open=document.createElement("button");open.type="button";open.className="open";open.textContent=key===ALL.current?"Continue":"Open";
@@ -458,7 +480,14 @@ function listSurveys(){const box=document.getElementById("surveyList");box.inner
    delete ALL.surveys[key];if(ALL.current===key){ALL.current=Object.keys(ALL.surveys)[0]||"draft";if(!ALL.surveys[ALL.current])ALL.surveys[ALL.current]=blank("");S=ALL.surveys[ALL.current];}
    save();listSurveys();refresh();renderAllThumbs();});
   l3.appendChild(del);
-  box.appendChild(row);}}
+  box.appendChild(row);}
+ fillDistances();
+ if(navigator.storage&&navigator.storage.estimate){void navigator.storage.estimate().then(est=>{
+  if(!est.quota)return;const pct=Math.round(100*est.usage/est.quota);
+  if(pct>=80){const w=document.createElement("div");w.className="gap warn";
+   w.textContent="Device storage for this app is "+pct+"% full — export finished surveys and delete them.";
+   box.prepend(w);}});}
+}
 document.getElementById("dlgNew").addEventListener("click",()=>{
  const ref=prompt("Job reference (S-number) for the new survey?")||("survey-"+Date.now());
  const key=ref.trim().toUpperCase()||("survey-"+Date.now());
@@ -551,6 +580,57 @@ async function readPdfText(file){
  }
  return out.join(" ").replace(/\\[()]/g,x=>x[1]);
 }
+function pngUnfilter(data,w,h,colors){
+ const bpp=colors,rowLen=w*colors,stride=rowLen+1,out=new Uint8Array(rowLen*h);
+ for(let y=0;y<h;y++){
+  const ft=data[y*stride];const src=y*stride+1;const dst=y*rowLen;const prev=(y-1)*rowLen;
+  for(let x=0;x<rowLen;x++){
+   const raw=data[src+x];const left=x>=bpp?out[dst+x-bpp]:0;const up=y>0?out[prev+x]:0;const ul=(y>0&&x>=bpp)?out[prev+x-bpp]:0;
+   let v;
+   if(ft===0)v=raw;else if(ft===1)v=raw+left;else if(ft===2)v=raw+up;
+   else if(ft===3)v=raw+((left+up)>>1);
+   else{const p=left+up-ul,pa=Math.abs(p-left),pb=Math.abs(p-up),pc=Math.abs(p-ul);
+    v=raw+(pa<=pb&&pa<=pc?left:pb<=pc?up:ul);}
+   out[dst+x]=v&255;
+  }
+ }
+ return out;
+}
+async function readPdfImages(file){
+ const b=new Uint8Array(await file.arrayBuffer());
+ const raw=new TextDecoder("latin1").decode(b);
+ const out=[];
+ const re=/<<([^]{0,600}?)>>\s*stream\r?\n/g;let m;
+ while((m=re.exec(raw))){
+  const dict=m[1];
+  if(dict.indexOf("/Subtype/Image")<0)continue;
+  const W=Number((dict.match(/\/Width\s+(\d+)/)||[])[1]||0);
+  const H=Number((dict.match(/\/Height\s+(\d+)/)||[])[1]||0);
+  if(!W||!H||W*H<10000)continue;
+  const end=raw.indexOf("endstream",re.lastIndex);if(end<0)break;
+  let seg=b.slice(m.index+m[0].length,end);
+  try{
+   if(dict.indexOf("/DCTDecode")>=0){
+    out.push({blob:new Blob([seg],{type:"image/jpeg"}),w:W,h:H,area:W*H});
+   }else if(dict.indexOf("/FlateDecode")>=0&&dict.indexOf("/DeviceRGB")>=0){
+    let px=await inflateZlib(seg);
+    const pred=Number((dict.match(/\/Predictor\s+(\d+)/)||[])[1]||1);
+    if(pred>=10)px=pngUnfilter(px,W,H,3);
+    if(px.length<W*H*3)throw new Error("px");
+    const cv=document.createElement("canvas");cv.width=W;cv.height=H;
+    const cx=cv.getContext("2d");cx.fillStyle="#fff";cx.fillRect(0,0,W,H);
+    const id=cx.createImageData(W,H);
+    for(let i=0,j=0;i<W*H;i++){id.data[i*4]=px[j++];id.data[i*4+1]=px[j++];id.data[i*4+2]=px[j++];id.data[i*4+3]=255;}
+    cx.putImageData(id,0,0);
+    const blob=await new Promise(r=>cv.toBlob(r,"image/jpeg",0.85));
+    if(blob)out.push({blob,w:W,h:H,area:W*H});
+   }
+  }catch{}
+  re.lastIndex=end;
+ }
+ out.sort((a,b2)=>b2.area-a.area);
+ return out.slice(0,3);
+}
 /* ---------- deterministic prefill ---------- */
 const REVIEW=new Set();
 function setField(name,value,why){if(!value)return 0;const cur=(S.f[name]||"").trim();if(cur)return 0;
@@ -627,18 +707,20 @@ document.getElementById("aifiles").addEventListener("change",async e=>{
    else if(lower.endsWith(".pdf")){pdfText=await readPdfText(file);
     if(!sid){const m=pdfText.toUpperCase().match(/\bS\d{7}\b/);if(m)sid=m[0];}}
    else continue;
-   parsed.push({sid,pairs,pdfText});
+   parsed.push({sid,pairs,pdfText,pdfFile:lower.endsWith(".pdf")?file:null});
   }
   if(!parsed.length){msg.textContent="No readable XLSX/PDF files.";return;}
   // 2) agrupar por S-number; ficheiros sem sid vao para o unico grupo existente
   const groups=new Map();
-  for(const p of parsed){if(p.sid){const g=groups.get(p.sid)||{pairs:null,pdf:""};
-   if(p.pairs&&!g.pairs)g.pairs=p.pairs;if(p.pdfText)g.pdf+=(g.pdf?"\n":"")+p.pdfText;groups.set(p.sid,g);}}
+  for(const p of parsed){if(p.sid){const g=groups.get(p.sid)||{pairs:null,pdf:"",pdfFiles:[]};
+   if(p.pairs&&!g.pairs)g.pairs=p.pairs;if(p.pdfText)g.pdf+=(g.pdf?"\n":"")+p.pdfText;
+   if(p.pdfFile)g.pdfFiles.push(p.pdfFile);groups.set(p.sid,g);}}
   let orphan=0;
   for(const p of parsed){if(!p.sid){
    if(groups.size===1){const g=groups.values().next().value;
-    if(p.pairs&&!g.pairs)g.pairs=p.pairs;if(p.pdfText)g.pdf+=(g.pdf?"\n":"")+p.pdfText;}
-   else{orphan++;groups.set("PACK-"+orphan,{pairs:p.pairs,pdf:p.pdfText});}}}
+    if(p.pairs&&!g.pairs)g.pairs=p.pairs;if(p.pdfText)g.pdf+=(g.pdf?"\n":"")+p.pdfText;
+    if(p.pdfFile)g.pdfFiles.push(p.pdfFile);}
+   else{orphan++;groups.set("PACK-"+orphan,{pairs:p.pairs,pdf:p.pdfText,pdfFiles:p.pdfFile?[p.pdfFile]:[]});}}}
   // 3) criar/preencher um survey por grupo
   const made=[];let lastKey="";
   for(const [sid,g] of groups){
@@ -646,6 +728,15 @@ document.getElementById("aifiles").addEventListener("change",async e=>{
    ALL.current=sid;S=ALL.surveys[sid];
    if(!(S.f["sNumber"]||"").trim()&&sid.indexOf("PACK-")!==0)S.f["sNumber"]=sid;
    const hits=applyPackData(g.pairs,g.pdf);
+   // mapas do PDF -> slots de plano
+   let plans=0;
+   for(const pf of (g.pdfFiles||[])){
+    try{const imgs=await readPdfImages(pf);
+     for(const im of imgs){
+      const slot=plans===0?"civilsPlan":plans===1?"cablingPlan":"51";
+      await phPut(pKey(slot,Date.now()+plans),im.blob);plans++;
+     }}catch{}
+   }
    const combined=((g.pairs?g.pairs.map(p=>p[0]+": "+p[1]).join("\n"):"")+"\n"+(g.pdf||"")).trim();
    const ai=await aiMergeCombined(combined);
    made.push(sid+" ("+(hits+ai)+" fields)");lastKey=sid;
@@ -779,61 +870,88 @@ async function blobToJpeg(blob,maxW){
  for(let i=0;i<bin.length;i++)bytes[i]=bin.charCodeAt(i);
  return {bytes,w:cv.width,h:cv.height};
 }
-async function buildPdf(){
+async function buildPdfOnce(maxImgW,q){
  const enc=new TextEncoder();
- const objs=[];  // {id, parts:[Uint8Array|string]}
- const pageIds=[],contentIds=[],imgObjs=[];
- let nextId=1;
- const alloc=()=>nextId++;
+ const objs=[];const pageIds=[],contentIds=[],imgObjs=[];
+ let nextId=1;const alloc=()=>nextId++;
  const catId=alloc(),pagesId=alloc(),fontId=alloc(),fontBId=alloc();
- const W=595,H=842,M=40;
+ const W=595,H=842,M=40,FOOT=30;
  let ops=[],curImgs={},y=H-M;
  const pagesMeta=[];
  function newPage(){pagesMeta.push({ops:[],imgs:{}});ops=pagesMeta[pagesMeta.length-1].ops;curImgs=pagesMeta[pagesMeta.length-1].imgs;y=H-M;}
- function need(h){if(y-h<M)newPage();}
+ function need(h){if(y-h<M+FOOT)newPage();}
  function text(x,size,str,bold){need(size+4);y-=size+3;
   ops.push("BT /"+(bold?"F2":"F1")+" "+size+" Tf "+x+" "+y+" Td ("+pdfEsc(str)+") Tj ET");}
  function textWrapped(x,size,str,bold,width){const n=Math.floor((width||W-2*M)/(size*0.5));
   for(const ln of wrapText(str,n))text(x,size,ln,bold);}
+ async function jpegFor(blob){
+  const bmp=await createImageBitmap(blob);
+  const sc=Math.min(1,maxImgW/bmp.width);
+  const cv=document.createElement("canvas");cv.width=Math.round(bmp.width*sc);cv.height=Math.round(bmp.height*sc);
+  cv.getContext("2d").drawImage(bmp,0,0,cv.width,cv.height);
+  const durl=cv.toDataURL("image/jpeg",q);
+  const bin=atob(durl.split(",")[1]);const bytes=new Uint8Array(bin.length);
+  for(let i=0;i<bin.length;i++)bytes[i]=bin.charCodeAt(i);
+  return {bytes,w:cv.width,h:cv.height};
+ }
  newPage();
- // header
- text(M,18,(S.f["sNumber"]||"Survey")+" \u2014 ODP Site Survey",true);
- textWrapped(M,10,(S.f["siteAddress"]||""),false);
- text(M,10,"Survey date: "+(S.f["surveyDate"]||"")+"    Surveyor: "+(S.f["surveyor"]||""),false);
- y-=6;
- // fields por seccao
+ // ===== cabecalho de marca =====
+ ops.push("q 0.043 0.239 0.380 rg 0 "+(H-70)+" "+W+" 70 re f Q");
+ ops.push("BT /F2 20 Tf "+M+" "+(H-38)+" Td 1 1 1 rg ("+pdfEsc("RST TELECOM")+") Tj ET");
+ ops.push("BT /F1 10 Tf "+M+" "+(H-54)+" Td 1 1 1 rg ("+pdfEsc("ODP Site Survey Report")+") Tj ET");
+ ops.push("BT /F2 16 Tf "+(W-M-150)+" "+(H-44)+" Td 1 1 1 rg ("+pdfEsc(S.f["sNumber"]||"")+") Tj ET");
+ y=H-88;
+ textWrapped(M,11,(S.f["siteAddress"]||""),true);
+ text(M,9.5,"Survey date: "+(S.f["surveyDate"]||"")+"      Surveyor: "+(S.f["surveyor"]||"")+"      Product: "+((S.f["internalCabling"]||"").indexOf("Termination")===0?"":""),false);
+ y-=4;
+ // ===== campos =====
  for(const sec of SCHEMA.sections){
   const rows=[];
   for(const f of SCHEMA.fields){if(f.s!==sec)continue;if(!condOk(f.c))continue;
    const v=(S.f[f.n]||"").trim();if(!v)continue;rows.push([f.l,v]);}
   if(!rows.length)continue;
-  need(26);y-=8;text(M,12,sec.toUpperCase(),true);
+  need(30);y-=10;
+  ops.push("q 0.90 0.94 0.96 rg "+(M-6)+" "+(y-16)+" "+(W-2*M+12)+" 20 re f Q");
+  text(M,11,sec.toUpperCase(),true);
+  y-=2;
   for(const [l,v] of rows){textWrapped(M,9,l+": "+v,false);}
  }
- // fotos
+ // ===== fotos: grelha 2 colunas =====
  const keys=(await phKeys(ALL.current+"::")).filter(k=>!k.endsWith("::orig"));
  const bySlot={};
  for(const k of keys){const slot=k.split("::")[1];(bySlot[slot]=bySlot[slot]||[]).push(k);}
+ const colW=(W-2*M-14)/2;
  for(const sl of SCHEMA.slots){
   const ks=bySlot[sl.id];if(!ks||!ks.length)continue;
-  need(30);y-=10;text(M,11,sl.t,true);
+  need(34);y-=12;text(M,11,sl.t,true);
   const com=(S.com[sl.id]||"").trim(),loc=(S.loc[sl.id]||"").trim(),gps=((S.gps||{})[sl.id]||"").trim();
-  if(loc)textWrapped(M,9,"Location: "+loc,false);
-  if(com)textWrapped(M,9,com,false);
-  if(gps)text(M,8,"GPS: "+gps,false);
-  for(const k of ks){
-   const blob=await phGet(k);if(!blob)continue;
-   let jp;try{jp=await blobToJpeg(blob,1000);}catch{continue;}
-   const dispW=Math.min(340,W-2*M);const dispH=dispW*jp.h/jp.w;
-   need(dispH+8);y-=dispH+4;
-   const iid=alloc();
-   imgObjs.push({id:iid,jp});
-   const name="Im"+iid;
-   curImgs[name]=iid;
-   ops.push("q "+dispW.toFixed(1)+" 0 0 "+dispH.toFixed(1)+" "+M+" "+y+" cm /"+name+" Do Q");
+  if(loc)textWrapped(M,8.5,"Location: "+loc,false);
+  if(com)textWrapped(M,8.5,com,false);
+  if(gps)text(M,7.5,"GPS: "+gps,false);
+  for(let i=0;i<ks.length;i+=2){
+   const pair=[];
+   for(const k of [ks[i],ks[i+1]]){if(!k)continue;
+    const blob=await phGet(k);if(!blob)continue;
+    try{pair.push(await jpegFor(blob));}catch{}}
+   if(!pair.length)continue;
+   const hMax=Math.max(...pair.map(p=>Math.min(200,colW*p.h/p.w)));
+   need(hMax+10);y-=hMax+6;
+   pair.forEach((jp,ci)=>{
+    const dw=colW,dh=Math.min(200,dw*jp.h/jp.w);
+    const iid=alloc();imgObjs.push({id:iid,jp});
+    const name="Im"+iid;curImgs[name]=iid;
+    ops.push("q "+dw.toFixed(1)+" 0 0 "+dh.toFixed(1)+" "+(M+ci*(colW+14))+" "+(y+(hMax-dh)).toFixed(1)+" cm /"+name+" Do Q");
+   });
   }
  }
- // montar objetos
+ // ===== rodape com numeracao =====
+ const nPg=pagesMeta.length;
+ pagesMeta.forEach((pm,i)=>{
+  pm.ops.push("q 0.6 0.6 0.6 RG 0.5 w "+M+" "+(FOOT+8)+" m "+(W-M)+" "+(FOOT+8)+" l S Q");
+  pm.ops.push("BT /F1 8 Tf "+M+" "+FOOT+" Td 0.35 0.35 0.35 rg ("+pdfEsc("RST Telecom · "+(S.f["sNumber"]||"")+" · "+(S.f["surveyDate"]||""))+") Tj ET");
+  pm.ops.push("BT /F1 8 Tf "+(W-M-70)+" "+FOOT+" Td 0.35 0.35 0.35 rg ("+pdfEsc("Page "+(i+1)+" of "+nPg)+") Tj ET");
+ });
+ // ===== montar =====
  for(const pm of pagesMeta){
   const cId=alloc(),pId=alloc();
   contentIds.push(cId);pageIds.push(pId);
@@ -850,10 +968,9 @@ async function buildPdf(){
   objs.push({id:io.id,parts:["<</Type/XObject/Subtype/Image/Width "+io.jp.w+"/Height "+io.jp.h+"/ColorSpace/DeviceRGB/BitsPerComponent 8/Filter/DCTDecode/Length "+io.jp.bytes.length+">>\nstream\n",io.jp.bytes,"\nendstream"]});
  }
  objs.sort((a,b)=>a.id-b.id);
- // serializar
  const chunks=[];let off=0;
- const push=x=>{const b=typeof x==="string"?enc.encode(x):x;chunks.push(b);off+=b.length;};
- push("%PDF-1.4\n%\xe2\xe3\xcf\xd3\n");
+ const push=x=>{const b2=typeof x==="string"?enc.encode(x):x;chunks.push(b2);off+=b2.length;};
+ push("%PDF-1.4\n%âãÏÓ\n");
  const xref=[];
  for(const o of objs){xref[o.id]=off;push(o.id+" 0 obj\n");for(const p of o.parts)push(p);push("\nendobj\n");}
  const xrefOff=off;
@@ -865,11 +982,24 @@ async function buildPdf(){
  for(const c of chunks){out.set(c,p);p+=c.length;}
  return out;
 }
+const PDF_TIERS=[[1200,0.75],[1000,0.68],[850,0.6],[700,0.52]];
+async function buildPdf(){
+ const keys=(await phKeys(ALL.current+"::")).filter(k=>!k.endsWith("::orig"));
+ const n=keys.length;
+ let t=n<=30?0:n<=70?1:n<=110?2:3;
+ let bytes=await buildPdfOnce(PDF_TIERS[t][0],PDF_TIERS[t][1]);
+ while(bytes.length>28*1024*1024&&t<PDF_TIERS.length-1){
+  t++;bytes=await buildPdfOnce(PDF_TIERS[t][0],PDF_TIERS[t][1]);
+ }
+ return bytes;
+}
 document.getElementById("btnPdf").addEventListener("click",async()=>{
  const btn=document.getElementById("btnPdf");const orig=btn.textContent;
  btn.textContent="Building\u2026";btn.disabled=true;
  try{
   const bytes=await buildPdf();
+  const mb=(bytes.length/1048576).toFixed(1);
+  const t2=document.getElementById("savedToast");t2.textContent="PDF "+mb+" MB";t2.classList.add("show");setTimeout(()=>{t2.classList.remove("show");t2.textContent="Saved";},2500);
   const name=(S.f["sNumber"]||"survey")+" Survey.pdf";
   const file=new File([bytes],name,{type:"application/pdf"});
   if(navigator.canShare&&navigator.canShare({files:[file]})){

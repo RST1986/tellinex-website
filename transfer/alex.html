@@ -14,6 +14,12 @@ header.top{position:sticky;top:0;z-index:30;background:var(--brand);color:#fff;p
 .toprow{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
 .toprow h1{font-size:17px;margin:0;font-weight:700;letter-spacing:.2px}
 .jobref{margin-left:auto;font-weight:700;font-size:14px;background:rgba(255,255,255,.14);padding:4px 10px;border-radius:999px}
+.sync{font-size:11px;font-weight:800;padding:3px 9px;border-radius:99px}
+.sync.off{background:rgba(255,255,255,.14);color:#cfe0ec}
+.sync.run{background:#ffd76a;color:#5c4300}
+.sync.ok{background:#6fd3a2;color:#0b3d2a}
+.sync.err{background:#ff9b8f;color:#5c150d}
+
 .pbar{height:5px;border-radius:99px;background:rgba(255,255,255,.22);margin-top:8px;overflow:hidden}
 .pfill{height:100%;background:#6fd3a2;width:0%;transition:width .3s}
 .pmeta{display:flex;justify-content:space-between;font-size:11.5px;opacity:.92;margin-top:4px}
@@ -155,6 +161,7 @@ dialog.wide{max-width:560px}
  <div class="toprow">
   <h1>Site Survey</h1>
   <span class="jobref" id="jobrefBadge">—</span>
+  <button type="button" class="sync off" id="syncBadge" style="border:0">local</button>
  </div>
  <div class="pbar"><div class="pfill" id="pfill"></div></div>
  <div class="pmeta"><span id="pAnswered">0 answered</span><span id="pPhotos">0 photos</span></div>
@@ -253,15 +260,18 @@ function loadAll(){try{ALL=JSON.parse(localStorage.getItem(LSKEY))||null;}catch{
  if(!ALL.surveys[ALL.current]) ALL.current=Object.keys(ALL.surveys)[0];
  S=ALL.surveys[ALL.current];}
 let saveT=null;
-function save(){ALL.surveys[ALL.current]=S;localStorage.setItem(LSKEY,JSON.stringify(ALL));
+function save(){S.mtime=new Date().toISOString();ALL.surveys[ALL.current]=S;localStorage.setItem(LSKEY,JSON.stringify(ALL));
+ scheduleSync();
  clearTimeout(saveT);const t=document.getElementById("savedToast");t.classList.add("show");saveT=setTimeout(()=>t.classList.remove("show"),900);}
 
 /* ---------- IndexedDB photos ---------- */
 function idb(){return new Promise((res,rej)=>{const r=indexedDB.open(IDB,1);
  r.onupgradeneeded=()=>r.result.createObjectStore("ph");
  r.onsuccess=()=>res(r.result);r.onerror=()=>rej(r.error);});}
-async function phPut(key,blob){const db=await idb();return new Promise((res,rej)=>{const tx=db.transaction("ph","readwrite");tx.objectStore("ph").put(blob,key);tx.oncomplete=res;tx.onerror=()=>rej(tx.error);});}
-async function phDel(key){const db=await idb();return new Promise((res)=>{const tx=db.transaction("ph","readwrite");tx.objectStore("ph").delete(key);tx.oncomplete=res;});}
+async function phPut(key,blob,fromCloud){const db=await idb();await new Promise((res,rej)=>{const tx=db.transaction("ph","readwrite");tx.objectStore("ph").put(blob,key);tx.oncomplete=res;tx.onerror=()=>rej(tx.error);});
+ if(!fromCloud&&typeof uploadPhoto==="function")void uploadPhoto(key,blob);}
+async function phDel(key){const db=await idb();await new Promise((res)=>{const tx=db.transaction("ph","readwrite");tx.objectStore("ph").delete(key);tx.oncomplete=res;});
+ if(typeof deleteCloudPhoto==="function")void deleteCloudPhoto(key);}
 async function phKeys(prefix){const db=await idb();return new Promise((res)=>{const out=[];const tx=db.transaction("ph");const c=tx.objectStore("ph").openCursor();
  c.onsuccess=e=>{const cur=e.target.result;if(cur){if(String(cur.key).startsWith(prefix))out.push(String(cur.key));cur.continue();}else res(out);};});}
 async function phGet(key){const db=await idb();return new Promise((res)=>{const tx=db.transaction("ph");const g=tx.objectStore("ph").get(key);g.onsuccess=()=>res(g.result||null);g.onerror=()=>res(null);});}
@@ -459,6 +469,115 @@ function buildChips(){
  for(const cname of SCHEMA.cards){const a=document.createElement("a");a.href="#card-"+cname.replace(/\W+/g,"-");a.textContent=cname.replace("Smallworld/GIS ","");nav.appendChild(a);}
 }
 
+
+/* ---------- cloud sync (rides the main app's login, same origin) ---------- */
+const SB_URL="https://rdmztiwxrygjqsapcjda.supabase.co";
+const SB_ANON="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InJkbXp0aXd4cnlnanFzYXBjamRhIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE2NDQ0ODgsImV4cCI6MjA5NzIyMDQ4OH0.eTkyPFyJxl60aX4iH2hW4ytfJo5EZhk2fmwmTdLzHjk";
+function sbSession(){
+ try{
+  for(let i=0;i<localStorage.length;i++){
+   const k=localStorage.key(i);
+   if(/^sb-.*-auth-token$/.test(k)){
+    const v=JSON.parse(localStorage.getItem(k)||"null");
+    const cs=v&&(v.currentSession||v);
+    const tok=cs&&cs.access_token;
+    const uid=cs&&cs.user&&cs.user.id;
+    if(tok&&uid)return {tok,uid};
+   }
+  }
+ }catch{}
+ return null;
+}
+function sbHeaders(s){return {apikey:SB_ANON,Authorization:"Bearer "+s.tok,"Content-Type":"application/json"};}
+function syncBadge(txt,cls){const el=document.getElementById("syncBadge");if(el){el.textContent=txt;el.className="sync "+cls;}}
+let SYNC={t:null,busy:false};
+function scheduleSync(){if(SYNC.t)clearTimeout(SYNC.t);SYNC.t=setTimeout(()=>void pushSync(),4000);}
+function cloudName(key){return key.split("::").join("__");}
+function localName(name){return name.split("__").join("::");}
+async function pushSync(){
+ const s=sbSession();if(!s){syncBadge("local","off");return;}
+ if(SYNC.busy){scheduleSync();return;}
+ SYNC.busy=true;syncBadge("sync…","run");
+ try{
+  const rows=Object.keys(ALL.surveys).map(key=>({key,data:ALL.surveys[key],updated_at:new Date().toISOString()}));
+  const r=await fetch(SB_URL+"/rest/v1/quick_surveys?on_conflict=key",{method:"POST",
+   headers:{...sbHeaders(s),Prefer:"resolution=merge-duplicates,return=minimal"},
+   body:JSON.stringify(rows)});
+  syncBadge(r.ok?"cloud ✓":"sync err",r.ok?"ok":"err");
+ }catch{syncBadge("offline","err");}
+ SYNC.busy=false;
+}
+async function pullSync(){
+ const s=sbSession();if(!s){syncBadge("local","off");return;}
+ try{
+  const r=await fetch(SB_URL+"/rest/v1/quick_surveys?select=key,data",{headers:sbHeaders(s)});
+  if(!r.ok)return;
+  const rows=await r.json();
+  let adopted=0;
+  for(const row of rows){
+   const local=ALL.surveys[row.key];
+   const rm=(row.data&&row.data.mtime)||"";
+   const lm=(local&&local.mtime)||"";
+   if(!local||(rm&&rm>lm)){ALL.surveys[row.key]=row.data;adopted++;}
+  }
+  if(adopted){localStorage.setItem(LSKEY,JSON.stringify(ALL));if(!ALL.surveys[ALL.current])ALL.current=Object.keys(ALL.surveys)[0];S=ALL.surveys[ALL.current];}
+  syncBadge("cloud ✓","ok");
+ }catch{}
+}
+async function uploadPhoto(key,blob){
+ const s=sbSession();if(!s)return;
+ try{await fetch(SB_URL+"/storage/v1/object/quick-survey-photos/"+s.uid+"/"+encodeURIComponent(cloudName(key)),
+  {method:"POST",headers:{apikey:SB_ANON,Authorization:"Bearer "+s.tok,"x-upsert":"true","Content-Type":blob.type||"image/jpeg"},body:blob});}catch{}
+}
+async function deleteCloudPhoto(key){
+ const s=sbSession();if(!s)return;
+ try{await fetch(SB_URL+"/storage/v1/object/quick-survey-photos/"+s.uid+"/"+encodeURIComponent(cloudName(key)),
+  {method:"DELETE",headers:{apikey:SB_ANON,Authorization:"Bearer "+s.tok}});}catch{}
+}
+async function pullPhotosFor(surveyKey){
+ const s=sbSession();if(!s)return 0;
+ try{
+  const r=await fetch(SB_URL+"/storage/v1/object/list/quick-survey-photos",{method:"POST",headers:sbHeaders(s),
+   body:JSON.stringify({prefix:s.uid+"/",limit:1000})});
+  if(!r.ok)return 0;
+  const rows=await r.json();let got=0;
+  for(const row of rows){
+   const name=row.name;if(!name)continue;
+   const key=localName(decodeURIComponent(name));
+   if(key.indexOf(surveyKey+"::")!==0)continue;
+   if(await phGet(key))continue;
+   const g=await fetch(SB_URL+"/storage/v1/object/quick-survey-photos/"+s.uid+"/"+name,
+    {headers:{apikey:SB_ANON,Authorization:"Bearer "+s.tok}});
+   if(!g.ok)continue;
+   await phPut(key,await g.blob(),true);got++;
+  }
+  return got;
+ }catch{return 0;}
+}
+/* Done -> report row in the main app (invoice-ready, with travel surcharge) */
+async function pushDoneReport(key){
+ const s=sbSession();if(!s)return;
+ const sv=ALL.surveys[key];if(!sv)return;const f=sv.f||{};
+ const sn=(f.sNumber||key).toUpperCase();
+ let miles=null;try{miles=await distFor(f.siteAddress||"");}catch{}
+ const surcharge=(typeof miles==="number"&&miles>50)?30:0;
+ const dataObj={quickSurvey:true,jobStatus:sv.status||"",jobStatusAt:new Date().toISOString(),travelMiles:miles,travelSurchargeGbp:surcharge,customer:{name:(f.siteAddress||"").split(",")[0],siteAddress:f.siteAddress||""},fields:f};
+ try{
+  const q=await fetch(SB_URL+"/rest/v1/reports?job_reference=eq."+encodeURIComponent(sn)+"&select=id",{headers:sbHeaders(s)});
+  const rows=q.ok?await q.json():[];
+  if(rows.length){
+   await fetch(SB_URL+"/rest/v1/reports?id=eq."+rows[0].id,{method:"PATCH",headers:{...sbHeaders(s),Prefer:"return=minimal"},
+    body:JSON.stringify({data:dataObj,readiness:100})});
+  }else{
+   await fetch(SB_URL+"/rest/v1/reports",{method:"POST",headers:{...sbHeaders(s),Prefer:"return=minimal"},
+    body:JSON.stringify({report_type:"quick_survey",title:sn+" site survey",client:dataObj.customer.name,network_operator:"",
+     job_reference:sn,site_area:f.siteAddress||"",report_date:f.surveyDate||new Date().toISOString().slice(0,10),
+     engineer:f.surveyor||"",readiness:100,created_by:s.uid,data:dataObj})});
+  }
+ }catch{}
+}
+document.getElementById("syncBadge").addEventListener("click",async()=>{await pullSync();await pushSync();refresh();void renderPow();renderAllThumbs();});
+
 /* ---------- AI (same gateway as the main app, same origin) ---------- */
 function aiToken(){try{return localStorage.getItem("rst_cloud_token")||"";}catch{return "";}}
 async function aiCall(body){
@@ -606,11 +725,11 @@ function listSurveys(){const box=document.getElementById("surveyList");box.inner
    "<div class='l3'></div>";
   const l3=row.querySelector(".l3");
   const open=document.createElement("button");open.type="button";open.className="open";open.textContent=key===ALL.current?"Continue":"Open";
-  open.addEventListener("click",()=>{ALL.current=key;S=ALL.surveys[key];save();dlg.close();refresh();renderAllThumbs();void renderPow();void checkSite();});
+  open.addEventListener("click",()=>{ALL.current=key;S=ALL.surveys[key];save();dlg.close();refresh();renderAllThumbs();void renderPow();void checkSite();void pullPhotosFor(key).then(g=>{if(g){renderAllThumbs();void renderPow();}});});
   l3.appendChild(open);
   for(const [val,lab] of QSTATUS){const b=document.createElement("button");b.type="button";
    b.textContent=lab;b.className=s.status===val?(val==="no_access"?"stNo":"stOn"):"";
-   b.addEventListener("click",()=>{s.status=s.status===val?"":val;save();listSurveys();});
+   b.addEventListener("click",()=>{s.status=s.status===val?"":val;s.mtime=new Date().toISOString();save();listSurveys();if(s.status)void pushDoneReport(key);});
    l3.appendChild(b);}
   const del=document.createElement("button");del.type="button";del.textContent="🗑";
   del.addEventListener("click",()=>{if(!confirm("Delete survey "+(f.sNumber||key)+"? Photos stay on device."))return;
@@ -1294,6 +1413,9 @@ renderPhotos();
 refresh();
 void renderPow();
 void checkSite();
+void pullSync().then(async()=>{refresh();void renderPow();
+ const got=await pullPhotosFor(ALL.current);
+ if(got){renderAllThumbs();void renderPow();}});
 </script>
 </body>
 </html>

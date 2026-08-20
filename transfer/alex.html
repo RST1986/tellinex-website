@@ -86,6 +86,13 @@ dialog .rowb button{flex:1;min-height:44px;border-radius:10px;border:1px solid v
 .qrow .l3 button.stNo{background:#fdeceb;border-color:#f0b6b2;color:var(--bad)}
 .qrow.cur{outline:2.5px solid var(--acc)}
 dialog.wide{max-width:560px}
+.gap{padding:8px 10px;border-left:3px solid var(--bad);background:#fdf3f2;border-radius:6px;margin:6px 0;font-size:13.5px}
+.gap.warn{border-left-color:#e0a300;background:#fffaf0}
+.allok{padding:14px;border-radius:10px;background:#dff1e7;color:var(--ok);font-weight:800;text-align:center}
+.nabtn{margin-left:auto;font-size:11px;font-weight:700;border:1px solid var(--line);background:var(--chip);color:var(--brand);border-radius:99px;padding:4px 9px}
+.locbtn{min-height:42px;min-width:46px;border:1.5px solid var(--acc);color:var(--acc);background:#fff;border-radius:10px;font-size:16px}
+.locrow{display:flex;gap:6px}
+
 
 
 /* --- annotation editor --- */
@@ -142,8 +149,8 @@ dialog.wide{max-width:560px}
 </main>
 <footer class="bar">
  <button type="button" id="btnSurveys">Surveys</button>
- <button type="button" id="btnExport">Backup</button>
- <button type="button" class="primary" id="btnPrint">Print / Save PDF</button>
+ <button type="button" id="btnCheck">Check ✓</button>
+ <button type="button" class="primary" id="btnPdf">Export PDF</button>
 </footer>
 <div class="saved" id="savedToast">Saved</div>
 
@@ -172,10 +179,17 @@ dialog.wide{max-width:560px}
  <div class="list" id="surveyList"></div>
  <div class="rowb">
   <button type="button" id="dlgNew">New survey</button>
-  <button type="button" id="dlgImport">Restore backup</button>
+  <button type="button" id="btnExport">Backup</button>
+  <button type="button" id="dlgImport">Restore</button>
   <button type="button" id="dlgClose">Close</button>
  </div>
  <input type="file" id="importFile" accept="application/json" style="display:none">
+</dialog>
+
+<dialog id="dlgCheck">
+ <h3>Survey check</h3>
+ <div id="checkList"></div>
+ <div class="rowb"><button type="button" id="checkClose">Close</button></div>
 </dialog>
 
 <script>
@@ -221,6 +235,15 @@ function renderForm(){
  for(const sec of SCHEMA.sections){
   const card=document.createElement("section");card.className="card";card.id="sec-"+sec.replace(/\W+/g,"-");
   card.innerHTML="<h2>"+esc(sec)+"<span class='cnt' data-cnt></span></h2>";
+  if(sec!=="Point-of-Work Safety Check"){
+   const na=document.createElement("button");na.type="button";na.className="nabtn";na.textContent="Rest \u2192 No";
+   na.addEventListener("click",()=>{let n=0;
+    for(const f of SCHEMA.fields){if(f.s!==sec||f.t!=="radio")continue;
+     if(!condOk(f.c))continue;if((S.f[f.n]||"").trim())continue;
+     if(f.o.includes("No")){S.f[f.n]="No";n++;}}
+    save();refresh();});
+   card.querySelector("h2").appendChild(na);
+  }
   for(const f of SCHEMA.fields){
    if(f.s!==sec)continue;
    const q=document.createElement("div");q.className="q";q.dataset.cond=f.c;q.dataset.field=f.n;
@@ -246,7 +269,7 @@ function renderPhotos(){
    if(sl.card!==cname)continue;
    const el=document.createElement("div");el.className="slot";el.dataset.cond=sl.c;el.dataset.slot=sl.id;
    let sub="";
-   if(sl.loc)sub+="<div class='sub'><div class='lbl'>Location</div><input type='text' data-sub='loc' placeholder='e.g. Rear yard, riser cupboard…'></div>";
+   if(sl.loc)sub+="<div class='sub'><div class='lbl'>Location</div><div class='locrow'><input type='text' data-sub='loc' placeholder='e.g. Rear yard, riser cupboard…'><button type='button' class='locbtn' data-locbtn>\ud83d\udccd</button></div></div>";
    if(sl.com)sub+="<div class='sub'><div class='lbl'>Comments</div><textarea data-sub='com' rows='2'></textarea></div>";
    el.innerHTML="<div class='st'>"+esc(sl.t)+"<span class='aist' data-aist></span><span class='mirror' data-mirror></span></div>"+
     "<div class='thumbs' data-thumbs></div>"+
@@ -254,9 +277,16 @@ function renderPhotos(){
     "<label class='cam'>📷 Take photo<input type='file' accept='image/*' capture='environment' data-take></label>"+
     "<label>🖼 Gallery<input type='file' accept='image/*' multiple data-gal></label>"+
     "</div>"+sub;
-   const wire=inp=>inp.addEventListener("change",async()=>{const added=[...inp.files];for(const file of added){const n=Date.now()+Math.floor(Math.random()*999);await phPut(pKey(sl.id,n),file);}inp.value="";await drawThumbs(el,sl.id);refreshLight();if(added.length&&sl.com)void aiCaption(sl,el,added[0]);});
+   const wire=inp=>inp.addEventListener("change",async()=>{const added=[...inp.files];for(const file of added){const n=Date.now()+Math.floor(Math.random()*999);await phPut(pKey(sl.id,n),file);}inp.value="";await drawThumbs(el,sl.id);refreshLight();if(added.length){void getFix().then(fx=>{if(fx){S.gps=S.gps||{};S.gps[sl.id]=fx.lat+","+fx.lon;save();}});}
+   if(added.length&&sl.com)void aiCaption(sl,el,added[0]);});
    el.querySelectorAll("[data-take],[data-gal]").forEach(wire);
    el.querySelectorAll("[data-sub]").forEach(i=>{i.addEventListener("input",()=>{const m=i.dataset.sub==="loc"?S.loc:S.com;m[sl.id]=i.value;save();});});
+   const lb=el.querySelector("[data-locbtn]");
+   if(lb)lb.addEventListener("click",()=>{lb.textContent="\u2026";void getFix().then(fx=>{
+    lb.textContent="\ud83d\udccd";if(!fx)return;
+    const inp=el.querySelector("input[data-sub='loc']");
+    const v=(inp.value?inp.value+" ":"")+fx.lat+", "+fx.lon+" (\u00b1"+fx.acc+"m)";
+    inp.value=v;S.loc[sl.id]=v;save();});});
    card.appendChild(el);
    drawThumbs(el,sl.id);
   }
@@ -323,6 +353,13 @@ async function aiCall(body){
  const r=await fetch("/api/agent/survey",{method:"POST",headers:{"Content-Type":"application/json",Authorization:"Bearer "+aiToken()},body:JSON.stringify(Object.assign({clientApp:"rst_field_report",agentId:"survey_reader"},body))});
  return r.json();
 }
+let LASTFIX=null;
+function getFix(){return new Promise(res=>{
+ if(!navigator.geolocation)return res(null);
+ const t=setTimeout(()=>res(LASTFIX),5000);
+ navigator.geolocation.getCurrentPosition(p=>{clearTimeout(t);
+  LASTFIX={lat:+p.coords.latitude.toFixed(6),lon:+p.coords.longitude.toFixed(6),acc:Math.round(p.coords.accuracy)};
+  res(LASTFIX);},()=>{clearTimeout(t);res(LASTFIX);},{enableHighAccuracy:true,timeout:4500,maximumAge:60000});});}
 async function downscale(file,max){
  const bmp=await createImageBitmap(file);
  const sc=Math.min(1,max/Math.max(bmp.width,bmp.height));
@@ -442,7 +479,7 @@ document.getElementById("importFile").addEventListener("change",async e=>{
  ALL.surveys[key]=data.survey;ALL.current=key;S=data.survey;
  for(const k in (data.photos||{})){const res=await fetch(data.photos[k]);await phPut(k,await res.blob());}
  save();dlg.close();refresh();renderAllThumbs();});
-document.getElementById("btnPrint").addEventListener("click",()=>window.print());
+
 function renderAllThumbs(){document.querySelectorAll(".slot").forEach(el=>drawThumbs(el,el.dataset.slot));}
 
 
@@ -694,6 +731,156 @@ annCv.addEventListener("pointerdown",ev=>{
 annCv.addEventListener("pointermove",ev=>{if(!ANN.drag)return;const [x,y]=annPos(ev);
  if(ANN.drag.t==="pen")ANN.drag.pts.push([x,y]);else{ANN.drag.x2=x;ANN.drag.y2=y;}annDraw();});
 annCv.addEventListener("pointerup",()=>{if(!ANN.drag)return;ANN.ops.push(ANN.drag);ANN.drag=null;ANN.redo=[];annDraw();});
+
+
+/* ---------- survey check ---------- */
+const SLOT_GROUP_LABEL={ "civilsRequired=Yes":"Civils evidence","pnCabinet=Yes":"Primary Node evidence","snCabinet=Yes":"Secondary Node evidence","metroJoint=Yes":"Metro Joint 1 evidence","additionalJoint=Yes":"Metro Joint 2 evidence","additionalJoint2=Yes":"Metro Joint 3 evidence","pole1=Yes":"Pole 1 evidence","pole2=Yes":"Pole 2 evidence","pole3=Yes":"Pole 3 evidence","cablingRequired=Yes":"Cabling evidence","openreachUsed=Yes":"Openreach lead-in evidence","openreachUsed=Yes AND miceJoint=Yes":"MICE joint evidence"};
+async function runSurveyCheck(){
+ const gaps=[];
+ for(const f of SCHEMA.fields){
+  if(f.s!=="Point-of-Work Safety Check")continue;
+  if(!(S.f[f.n]||"").trim())gaps.push({t:"crit",m:"Safety unanswered: "+f.l});
+ }
+ for(const f of SCHEMA.fields){
+  if(f.s==="Point-of-Work Safety Check")continue;
+  if(!condOk(f.c))continue;
+  if((f.t==="radio"||f.t==="select")&&!(S.f[f.n]||"").trim())gaps.push({t:"warn",m:"Unanswered: "+f.l});
+ }
+ const keys=(await phKeys(ALL.current+"::")).filter(k=>!k.endsWith("::orig"));
+ const bySlot={};for(const k of keys){const slot=k.split("::")[1];bySlot[slot]=(bySlot[slot]||0)+1;}
+ const total=keys.length;
+ if(total===0)gaps.unshift({t:"crit",m:"No photos captured at all."});
+ const groupCount={};
+ for(const sl of SCHEMA.slots){if(sl.c==="always")continue;if(!condOk(sl.c))continue;
+  groupCount[sl.c]=(groupCount[sl.c]||0)+(bySlot[sl.id]||0);}
+ for(const c in groupCount){if(groupCount[c]===0)gaps.push({t:"crit",m:"No photos: "+(SLOT_GROUP_LABEL[c]||c)});}
+ const planCount=(bySlot["civilsPlan"]||0)+(bySlot["cablingPlan"]||0);
+ if(planCount===0)gaps.push({t:"warn",m:"No GIS/overhead plan image loaded."});
+ const box=document.getElementById("checkList");box.innerHTML="";
+ if(!gaps.length){box.innerHTML="<div class='allok'>All checks passed \u2014 ready to export \u2713</div>";}
+ else{for(const g of gaps){const d=document.createElement("div");d.className="gap"+(g.t==="warn"?" warn":"");d.textContent=g.m;box.appendChild(d);}}
+ document.getElementById("dlgCheck").showModal();
+}
+document.getElementById("btnCheck").addEventListener("click",()=>{void runSurveyCheck();});
+document.getElementById("checkClose").addEventListener("click",()=>document.getElementById("dlgCheck").close());
+
+/* ---------- PDF builder (minimal, self-contained) ---------- */
+function pdfEsc(s){return String(s).replace(/[\\()]/g,x=>"\\"+x).replace(/[^\x20-\x7e]/g,"?");}
+function wrapText(s,n){const out=[];for(const rawLine of String(s).split(/\n/)){let line=rawLine;
+ while(line.length>n){let cut=line.lastIndexOf(" ",n);if(cut<n*0.5)cut=n;out.push(line.slice(0,cut));line=line.slice(cut).trim();}
+ out.push(line);}return out;}
+async function blobToJpeg(blob,maxW){
+ const bmp=await createImageBitmap(blob);
+ const sc=Math.min(1,maxW/bmp.width);
+ const cv=document.createElement("canvas");cv.width=Math.round(bmp.width*sc);cv.height=Math.round(bmp.height*sc);
+ cv.getContext("2d").drawImage(bmp,0,0,cv.width,cv.height);
+ const durl=cv.toDataURL("image/jpeg",0.72);
+ const bin=atob(durl.split(",")[1]);const bytes=new Uint8Array(bin.length);
+ for(let i=0;i<bin.length;i++)bytes[i]=bin.charCodeAt(i);
+ return {bytes,w:cv.width,h:cv.height};
+}
+async function buildPdf(){
+ const enc=new TextEncoder();
+ const objs=[];  // {id, parts:[Uint8Array|string]}
+ const pageIds=[],contentIds=[],imgObjs=[];
+ let nextId=1;
+ const alloc=()=>nextId++;
+ const catId=alloc(),pagesId=alloc(),fontId=alloc(),fontBId=alloc();
+ const W=595,H=842,M=40;
+ let ops=[],curImgs={},y=H-M;
+ const pagesMeta=[];
+ function newPage(){pagesMeta.push({ops:[],imgs:{}});ops=pagesMeta[pagesMeta.length-1].ops;curImgs=pagesMeta[pagesMeta.length-1].imgs;y=H-M;}
+ function need(h){if(y-h<M)newPage();}
+ function text(x,size,str,bold){need(size+4);y-=size+3;
+  ops.push("BT /"+(bold?"F2":"F1")+" "+size+" Tf "+x+" "+y+" Td ("+pdfEsc(str)+") Tj ET");}
+ function textWrapped(x,size,str,bold,width){const n=Math.floor((width||W-2*M)/(size*0.5));
+  for(const ln of wrapText(str,n))text(x,size,ln,bold);}
+ newPage();
+ // header
+ text(M,18,(S.f["sNumber"]||"Survey")+" \u2014 ODP Site Survey",true);
+ textWrapped(M,10,(S.f["siteAddress"]||""),false);
+ text(M,10,"Survey date: "+(S.f["surveyDate"]||"")+"    Surveyor: "+(S.f["surveyor"]||""),false);
+ y-=6;
+ // fields por seccao
+ for(const sec of SCHEMA.sections){
+  const rows=[];
+  for(const f of SCHEMA.fields){if(f.s!==sec)continue;if(!condOk(f.c))continue;
+   const v=(S.f[f.n]||"").trim();if(!v)continue;rows.push([f.l,v]);}
+  if(!rows.length)continue;
+  need(26);y-=8;text(M,12,sec.toUpperCase(),true);
+  for(const [l,v] of rows){textWrapped(M,9,l+": "+v,false);}
+ }
+ // fotos
+ const keys=(await phKeys(ALL.current+"::")).filter(k=>!k.endsWith("::orig"));
+ const bySlot={};
+ for(const k of keys){const slot=k.split("::")[1];(bySlot[slot]=bySlot[slot]||[]).push(k);}
+ for(const sl of SCHEMA.slots){
+  const ks=bySlot[sl.id];if(!ks||!ks.length)continue;
+  need(30);y-=10;text(M,11,sl.t,true);
+  const com=(S.com[sl.id]||"").trim(),loc=(S.loc[sl.id]||"").trim(),gps=((S.gps||{})[sl.id]||"").trim();
+  if(loc)textWrapped(M,9,"Location: "+loc,false);
+  if(com)textWrapped(M,9,com,false);
+  if(gps)text(M,8,"GPS: "+gps,false);
+  for(const k of ks){
+   const blob=await phGet(k);if(!blob)continue;
+   let jp;try{jp=await blobToJpeg(blob,1000);}catch{continue;}
+   const dispW=Math.min(340,W-2*M);const dispH=dispW*jp.h/jp.w;
+   need(dispH+8);y-=dispH+4;
+   const iid=alloc();
+   imgObjs.push({id:iid,jp});
+   const name="Im"+iid;
+   curImgs[name]=iid;
+   ops.push("q "+dispW.toFixed(1)+" 0 0 "+dispH.toFixed(1)+" "+M+" "+y+" cm /"+name+" Do Q");
+  }
+ }
+ // montar objetos
+ for(const pm of pagesMeta){
+  const cId=alloc(),pId=alloc();
+  contentIds.push(cId);pageIds.push(pId);
+  const stream=pm.ops.join("\n");
+  objs.push({id:cId,parts:["<</Length "+enc.encode(stream).length+">>\nstream\n"+stream+"\nendstream"]});
+  let xo="";for(const nm in pm.imgs)xo+="/"+nm+" "+pm.imgs[nm]+" 0 R ";
+  objs.push({id:pId,parts:["<</Type/Page/Parent "+pagesId+" 0 R/MediaBox[0 0 "+W+" "+H+"]/Resources<</Font<</F1 "+fontId+" 0 R/F2 "+fontBId+" 0 R>>"+(xo?"/XObject<<"+xo+">>":"")+">>/Contents "+cId+" 0 R>>"]});
+ }
+ objs.push({id:catId,parts:["<</Type/Catalog/Pages "+pagesId+" 0 R>>"]});
+ objs.push({id:pagesId,parts:["<</Type/Pages/Kids["+pageIds.map(i=>i+" 0 R").join(" ")+"]/Count "+pageIds.length+">>"]});
+ objs.push({id:fontId,parts:["<</Type/Font/Subtype/Type1/BaseFont/Helvetica>>"]});
+ objs.push({id:fontBId,parts:["<</Type/Font/Subtype/Type1/BaseFont/Helvetica-Bold>>"]});
+ for(const io of imgObjs){
+  objs.push({id:io.id,parts:["<</Type/XObject/Subtype/Image/Width "+io.jp.w+"/Height "+io.jp.h+"/ColorSpace/DeviceRGB/BitsPerComponent 8/Filter/DCTDecode/Length "+io.jp.bytes.length+">>\nstream\n",io.jp.bytes,"\nendstream"]});
+ }
+ objs.sort((a,b)=>a.id-b.id);
+ // serializar
+ const chunks=[];let off=0;
+ const push=x=>{const b=typeof x==="string"?enc.encode(x):x;chunks.push(b);off+=b.length;};
+ push("%PDF-1.4\n%\xe2\xe3\xcf\xd3\n");
+ const xref=[];
+ for(const o of objs){xref[o.id]=off;push(o.id+" 0 obj\n");for(const p of o.parts)push(p);push("\nendobj\n");}
+ const xrefOff=off;
+ push("xref\n0 "+nextId+"\n0000000000 65535 f \n");
+ for(let i=1;i<nextId;i++){push(String(xref[i]||0).padStart(10,"0")+" 00000 n \n");}
+ push("trailer\n<</Size "+nextId+"/Root "+catId+" 0 R>>\nstartxref\n"+xrefOff+"\n%%EOF");
+ const total=chunks.reduce((a,c)=>a+c.length,0);
+ const out=new Uint8Array(total);let p=0;
+ for(const c of chunks){out.set(c,p);p+=c.length;}
+ return out;
+}
+document.getElementById("btnPdf").addEventListener("click",async()=>{
+ const btn=document.getElementById("btnPdf");const orig=btn.textContent;
+ btn.textContent="Building\u2026";btn.disabled=true;
+ try{
+  const bytes=await buildPdf();
+  const name=(S.f["sNumber"]||"survey")+" Survey.pdf";
+  const file=new File([bytes],name,{type:"application/pdf"});
+  if(navigator.canShare&&navigator.canShare({files:[file]})){
+   await navigator.share({files:[file],title:name}).catch(()=>{});
+  }else{
+   const a=document.createElement("a");a.href=URL.createObjectURL(new Blob([bytes],{type:"application/pdf"}));
+   a.download=name;a.click();
+  }
+ }catch(e){alert("PDF failed: "+e);}
+ btn.textContent=orig;btn.disabled=false;
+});
 
 /* ---------- boot ---------- */
 loadAll();

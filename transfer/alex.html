@@ -56,6 +56,13 @@ textarea{min-height:74px;resize:vertical}
 .ai .row{display:flex;gap:8px}
 .ai button{flex:1;min-height:46px;border:0;border-radius:10px;font-weight:700;font-size:14px;background:#fff;color:var(--brand)}
 .ai .msg{font-size:12.5px;margin-top:6px;min-height:16px}
+.ai .uprow{display:flex;gap:8px;margin-bottom:8px}
+.ai .uprow label{flex:1;display:flex;align-items:center;justify-content:center;gap:6px;min-height:46px;border-radius:10px;font-weight:700;font-size:14px;background:rgba(255,255,255,.16);color:#fff;border:1.5px dashed rgba(255,255,255,.6)}
+.ai .uprow input{display:none}
+.q.review input,.q.review select,.q.review textarea{border-color:#e0a300;background:#fffaf0}
+.q.review .seg button.on{outline:3px solid #e0a300}
+.q.review label.main::after{content:" ● review";color:#b26a00;font-size:11px;font-weight:800}
+
 footer.bar{position:fixed;bottom:0;left:0;right:0;z-index:40;background:#fff;border-top:1px solid var(--line);display:flex;gap:8px;padding:10px 12px calc(10px + env(safe-area-inset-bottom));box-shadow:0 -2px 10px rgba(20,40,60,.08)}
 footer.bar button{flex:1;min-height:48px;border-radius:12px;font-weight:700;font-size:14.5px;border:1.5px solid var(--line);background:#fff;color:var(--ink)}
 footer.bar button.primary{background:var(--brand);border-color:var(--brand);color:#fff}
@@ -109,6 +116,7 @@ dialog .rowb button{flex:1;min-height:44px;border-radius:10px;border:1px solid v
  <div class="banner" id="dnp">DO NOT PROCEED — RESOLVE SAFETY ISSUE</div>
  <section class="ai" id="aibox">
   <h2>AI · prefill from job pack</h2>
+  <div class="uprow"><label>📎 Load job pack files (XLSX / PDF)<input type="file" id="aifiles" accept=".xlsx,.pdf,application/pdf" multiple></label></div>
   <textarea id="aitext" rows="3" placeholder="Paste the planner / job pack text here…"></textarea>
   <div class="row">
    <button type="button" id="aiPrefill">Prefill survey with AI</button>
@@ -366,6 +374,146 @@ document.getElementById("importFile").addEventListener("change",async e=>{
 document.getElementById("btnPrint").addEventListener("click",()=>window.print());
 function renderAllThumbs(){document.querySelectorAll(".slot").forEach(el=>drawThumbs(el,el.dataset.slot));}
 
+
+
+/* ---------- job pack file readers (native, no libs) ---------- */
+async function inflateRaw(bytes){const ds=new DecompressionStream("deflate-raw");
+ const st=new Blob([bytes]).stream().pipeThrough(ds);return new Uint8Array(await new Response(st).arrayBuffer());}
+async function inflateZlib(bytes){
+ let b=bytes;while(b.length&&(b[b.length-1]===10||b[b.length-1]===13||b[b.length-1]===32))b=b.slice(0,-1);
+ for(let trim=0;trim<=4;trim++){
+  try{const ds=new DecompressionStream("deflate");
+   const st=new Blob([trim?b.slice(0,b.length-trim):b]).stream().pipeThrough(ds);
+   return new Uint8Array(await new Response(st).arrayBuffer());}catch{}
+ }
+ throw new Error("deflate");}
+function u16(b,o){return b[o]|b[o+1]<<8}function u32(b,o){return (b[o]|b[o+1]<<8|b[o+2]<<16|b[o+3]<<24)>>>0}
+async function zipEntries(buf){
+ const b=new Uint8Array(buf);let e=-1;
+ for(let i=b.length-22;i>=0&&i>b.length-66000;i--){if(u32(b,i)===0x06054b50){e=i;break;}}
+ if(e<0)throw new Error("zip");
+ const n=u16(b,e+10);let off=u32(b,e+16);const out={};
+ for(let i=0;i<n;i++){
+  if(u32(b,off)!==0x02014b50)break;
+  const method=u16(b,off+10),csize=u32(b,off+20),nlen=u16(b,off+28),xlen=u16(b,off+30),clen=u16(b,off+32),lho=u32(b,off+42);
+  const name=new TextDecoder().decode(b.slice(off+46,off+46+nlen));
+  out[name]={method,csize,lho};off+=46+nlen+xlen+clen;
+ }
+ return {b,out};
+}
+async function zipRead(z,name){
+ const ent=z.out[name];if(!ent)return null;const b=z.b;const o=ent.lho;
+ const nlen=u16(b,o+26),xlen=u16(b,o+28);const start=o+30+nlen+xlen;
+ const data=b.slice(start,start+ent.csize);
+ return ent.method===0?data:await inflateRaw(data);
+}
+async function readXlsxPairs(file){
+ const z=await zipEntries(await file.arrayBuffer());
+ const dec=new TextDecoder();const parse=x=>new DOMParser().parseFromString(dec.decode(x),"text/xml");
+ const shX=await zipRead(z,"xl/sharedStrings.xml");const shared=[];
+ if(shX){for(const si of parse(shX).getElementsByTagName("si")){let t="";for(const tt of si.getElementsByTagName("t"))t+=tt.textContent;shared.push(t);}}
+ const s1=await zipRead(z,"xl/worksheets/sheet1.xml");if(!s1)return [];
+ const doc=parse(s1);const rows={};
+ for(const c of doc.getElementsByTagName("c")){
+  const ref=c.getAttribute("r")||"";const m=ref.match(/([A-Z]+)(\d+)/);if(!m)continue;
+  const v=c.getElementsByTagName("v")[0];if(!v)continue;
+  const val=c.getAttribute("t")==="s"?shared[Number(v.textContent)]:v.textContent;
+  (rows[m[2]]=rows[m[2]]||[]).push({col:m[1],val:String(val||"").trim()});
+ }
+ const pairs=[];
+ for(const r in rows){const cells=rows[r].sort((a,b)=>a.col.length-b.col.length||(a.col<b.col?-1:1));
+  for(let i=0;i<cells.length;i++){if(cells[i].val&&cells[i+1]&&cells[i+1].val)pairs.push([cells[i].val,cells[i+1].val]);}}
+ return pairs;
+}
+async function readPdfText(file){
+ const b=new Uint8Array(await file.arrayBuffer());
+ const dec=new TextDecoder("latin1");const raw=dec.decode(b);
+ let out=[];
+ const re=/stream\r?\n/g;let m;
+ while((m=re.exec(raw))){
+  if(raw.slice(Math.max(0,m.index-3),m.index)==="end")continue;
+  const end=raw.indexOf("endstream",re.lastIndex);if(end<0)break;
+  let seg=b.slice(m.index+m[0].length,end);
+  try{seg=await inflateZlib(seg);}catch{}
+  const s=new TextDecoder("latin1").decode(seg);
+  if(s.indexOf("Tj")<0&&s.indexOf("TJ")<0){re.lastIndex=end;continue;}
+  for(const t of s.matchAll(/\((.*?)\)\s*Tj/g))out.push(t[1]);
+  for(const arr of s.matchAll(/\[(.*?)\]\s*TJ/gs)){for(const p of arr[1].matchAll(/\((.*?)\)/g))out.push(p[1]);}
+  re.lastIndex=end+9;
+ }
+ return out.join(" ").replace(/\\[()]/g,x=>x[1]);
+}
+/* ---------- deterministic prefill ---------- */
+const REVIEW=new Set();
+function setField(name,value,why){if(!value)return 0;const cur=(S.f[name]||"").trim();if(cur)return 0;
+ S.f[name]=value;REVIEW.add(name);return 1;}
+function ukDateIso(s){const m=String(s).match(/(\d{1,2})\/(\d{1,2})\/(\d{2,4})/);if(!m)return "";
+ let y=m[3].length===2?"20"+m[3]:m[3];return y+"-"+m[2].padStart(2,"0")+"-"+m[1].padStart(2,"0");}
+function applyChecklistPairs(pairs){
+ let hits=0;const get=lbl=>{const p=pairs.find(x=>x[0].toLowerCase().startsWith(lbl.toLowerCase()));return p?p[1]:"";};
+ hits+=setField("sNumber",get("Service ID"));
+ hits+=setField("surveyDate",ukDateIso(get("Survey Date")));
+ hits+=setField("contactName",get("Site Contact"));
+ hits+=setField("contactNumber",get("Tel Number"));
+ hits+=setField("contactEmail",get("Email"));
+ const addr=get("Company Address"),comp=get("Company Name");
+ hits+=setField("siteAddress",[comp,addr].filter(Boolean).join(", "));
+ const term=get("Termination Details");if(term)hits+=setField("internalCabling","Termination: "+term);
+ const asb=get("Asbestos Register");if(asb)hits+=setField("asbestos",/^y/i.test(asb)?"Yes":"No");
+ const extra=[];
+ for(const lbl of ["Product","Presentation","UPRN","Timeslot","Route Approver Availability","Floor Plans","Listed Building","Access Restrictions","Induction Requirements","Permit Number","PPE Requirements","Parking Availability","Building or Landlord Contact"]){
+  const v=get(lbl);if(v)extra.push(lbl+": "+v);}
+ const freeC=pairs.filter(p=>/comments/i.test(p[0])).map(p=>p[1]).join(" ");
+ const tail=pairs.length?pairs[pairs.length-1]:null;
+ let notes="CHECKLIST: "+extra.join(" · ");
+ const loose=pairs.map(p=>p[0]).filter(t=>t.length>25&&!/please|checklist|outsource/i.test(t));
+ if(loose.length)notes+="\nCOMMENTS: "+loose.join(" ");
+ hits+=setField("finalComments",notes);
+ return hits;
+}
+function applyPdfHeuristics(text){
+ let hits=0;const T=text.toUpperCase();
+ const pn=T.match(/\b([A-Z]{2,4}-\d+-PN\d+)\b/);const sn=T.match(/\b([A-Z]{2,4}-\d+-PN\d+-SN\d+|\bSN\d+\b)/);
+ if(pn){hits+=setField("pnCabinet","Yes");hits+=setField("pnRef",pn[1]);}
+ if(sn){hits+=setField("snCabinet","Yes");hits+=setField("snRef",sn[1]);}
+ if(/CIVILS/.test(T)){hits+=setField("civilsRequired","Yes");hits+=setField("civilsDescription",text.trim());}
+ if(/TOBY|STRAW|LEAD[- ]?IN/.test(T)){hits+=setField("openreachUsed","Yes");}
+ if(/STRAW/.test(T)){hits+=setField("strawConfirmed","Yes");}
+ if(/CABL/.test(T)){hits+=setField("cablingRequired","Yes");hits+=setField("cablingDescription",text.trim());}
+ return hits;
+}
+function markReview(){
+ document.querySelectorAll(".q").forEach(q=>{const n=q.dataset.field;
+  q.classList.toggle("review",REVIEW.has(n));
+  if(REVIEW.has(n)&&!q.dataset.revwired){q.dataset.revwired="1";
+   q.addEventListener("pointerdown",()=>{REVIEW.delete(n);q.classList.remove("review");},{once:true});}});
+}
+document.getElementById("aifiles").addEventListener("change",async e=>{
+ const msg=document.getElementById("aimsg");msg.textContent="Reading job pack…";
+ let hits=0,pdfText="",xlsxText="";
+ try{
+  for(const file of e.target.files){
+   const nm=file.name.toLowerCase();
+   if(nm.endsWith(".xlsx")){const pairs=await readXlsxPairs(file);hits+=applyChecklistPairs(pairs);
+    xlsxText=pairs.map(p=>p[0]+": "+p[1]).join("\n");}
+   else if(nm.endsWith(".pdf")){pdfText=await readPdfText(file);if(pdfText.trim())hits+=applyPdfHeuristics(pdfText);}
+  }
+  e.target.value="";
+  save();refresh();markReview();
+  const combined=(xlsxText+"\n"+pdfText).trim();
+  if(combined)document.getElementById("aitext").value=combined.slice(0,8000);
+  msg.textContent="Filled "+hits+" fields from the documents (amber = review). Running AI for the rest…";
+  if(combined){
+   try{const res=await aiCall({task:"jobpack",extractedText:combined.slice(0,8000),surveyTypeHint:"",images:[]});
+    const j=(res&&res.json)||{};let ai=0;
+    for(const k in AI_FIELD_MAP){const v=(j[k]||"").toString().trim();if(!v)continue;
+     const f=SCHEMA.fields.find(x=>x.n===AI_FIELD_MAP[k]);if(f&&!(S.f[f.n]||"").trim()){S.f[f.n]=v;REVIEW.add(f.n);ai++;}}
+    save();refresh();markReview();
+    msg.textContent="Done — "+hits+" fields from documents + "+ai+" from AI. Amber fields need your review (tap to accept).";
+   }catch{msg.textContent="Filled "+hits+" from documents. AI merge unavailable (offline?).";}
+  }
+ }catch(err){msg.textContent="Could not read a file: "+err;}
+});
 
 /* ---------- annotation editor ---------- */
 const ANN={key:null,slotEl:null,img:null,ops:[],redo:[],tool:"arrow",color:"#ff2d2d",width:8,drag:null};

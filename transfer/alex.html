@@ -561,7 +561,7 @@ async function pushDoneReport(key){
  const sn=(f.sNumber||key).toUpperCase();
  let miles=null;try{miles=await distFor(f.siteAddress||"");}catch{}
  const surcharge=(typeof miles==="number"&&miles>50)?30:0;
- const dataObj={quickSurvey:true,jobStatus:sv.status||"",jobStatusAt:new Date().toISOString(),travelMiles:miles,travelSurchargeGbp:surcharge,customer:{name:(f.siteAddress||"").split(",")[0],siteAddress:f.siteAddress||""},fields:f};
+ const dataObj={quickSurvey:true,jobStatus:sv.status||"",jobStatusAt:new Date().toISOString(),travelMiles:miles,travelSurchargeGbp:surcharge,cis:{applicable:false,note:"Survey services - outside the scope of the Construction Industry Scheme (CIS). No CIS deduction to be applied."},customer:{name:(f.siteAddress||"").split(",")[0],siteAddress:f.siteAddress||""},fields:f};
  try{
   const q=await fetch(SB_URL+"/rest/v1/reports?job_reference=eq."+encodeURIComponent(sn)+"&select=id",{headers:sbHeaders(s)});
   const rows=q.ok?await q.json():[];

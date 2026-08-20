@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>RST Quick Survey</title>
+<title>Site Survey</title>
 <meta name="theme-color" content="#0b3d61">
 <style>
 :root{--bg:#f2f5f8;--card:#fff;--ink:#16232e;--mut:#5b6b78;--line:#dbe3ea;--brand:#0b3d61;--acc:#0a84c1;--ok:#177a4c;--warn:#b26a00;--bad:#b3261e;--chip:#e8eff5}
@@ -124,7 +124,7 @@ dialog.wide{max-width:560px}
 <body>
 <header class="top">
  <div class="toprow">
-  <h1>RST Quick Survey</h1>
+  <h1>Site Survey</h1>
   <span class="jobref" id="jobrefBadge">—</span>
  </div>
  <div class="pbar"><div class="pfill" id="pfill"></div></div>
@@ -315,7 +315,7 @@ async function drawThumbs(el,slot){
 /* ---------- refresh ---------- */
 function refreshLight(){
  document.getElementById("jobrefBadge").textContent=S.f["sNumber"]||S.ref||"—";
- document.getElementById("printhead").textContent="RST Survey — "+(S.f["sNumber"]||S.ref||"")+" — "+(S.f["siteAddress"]||"");
+ document.getElementById("printhead").textContent="Site Survey — "+(S.f["sNumber"]||S.ref||"")+" — "+(S.f["siteAddress"]||"");
  document.querySelectorAll("[data-mirror]").forEach(m=>m.textContent=S.f["sNumber"]||"");
  let answered=0;for(const f of SCHEMA.fields){if((S.f[f.n]||"").trim())answered++;}
  document.getElementById("pAnswered").textContent=answered+" / "+SCHEMA.fields.length+" answered";
@@ -347,7 +347,7 @@ function buildChips(){
  for(const cname of SCHEMA.cards){const a=document.createElement("a");a.href="#card-"+cname.replace(/\W+/g,"-");a.textContent=cname.replace("Smallworld/GIS ","");nav.appendChild(a);}
 }
 
-/* ---------- AI (same gateway as the RST app, same origin) ---------- */
+/* ---------- AI (same gateway as the main app, same origin) ---------- */
 function aiToken(){try{return localStorage.getItem("rst_cloud_token")||"";}catch{return "";}}
 async function aiCall(body){
  const r=await fetch("/api/agent/survey",{method:"POST",headers:{"Content-Type":"application/json",Authorization:"Bearer "+aiToken()},body:JSON.stringify(Object.assign({clientApp:"rst_field_report",agentId:"survey_reader"},body))});
@@ -897,8 +897,8 @@ async function buildPdfOnce(maxImgW,q){
  newPage();
  // ===== cabecalho de marca =====
  ops.push("q 0.043 0.239 0.380 rg 0 "+(H-70)+" "+W+" 70 re f Q");
- ops.push("BT /F2 20 Tf "+M+" "+(H-38)+" Td 1 1 1 rg ("+pdfEsc("RST TELECOM")+") Tj ET");
- ops.push("BT /F1 10 Tf "+M+" "+(H-54)+" Td 1 1 1 rg ("+pdfEsc("ODP Site Survey Report")+") Tj ET");
+ ops.push("BT /F2 20 Tf "+M+" "+(H-38)+" Td 1 1 1 rg ("+pdfEsc("ODP SITE SURVEY")+") Tj ET");
+ ops.push("BT /F1 10 Tf "+M+" "+(H-54)+" Td 1 1 1 rg ("+pdfEsc("Outsource Design Partner - Site Survey Checklist")+") Tj ET");
  ops.push("BT /F2 16 Tf "+(W-M-150)+" "+(H-44)+" Td 1 1 1 rg ("+pdfEsc(S.f["sNumber"]||"")+") Tj ET");
  y=H-88;
  textWrapped(M,11,(S.f["siteAddress"]||""),true);
@@ -948,7 +948,7 @@ async function buildPdfOnce(maxImgW,q){
  const nPg=pagesMeta.length;
  pagesMeta.forEach((pm,i)=>{
   pm.ops.push("q 0.6 0.6 0.6 RG 0.5 w "+M+" "+(FOOT+8)+" m "+(W-M)+" "+(FOOT+8)+" l S Q");
-  pm.ops.push("BT /F1 8 Tf "+M+" "+FOOT+" Td 0.35 0.35 0.35 rg ("+pdfEsc("RST Telecom · "+(S.f["sNumber"]||"")+" · "+(S.f["surveyDate"]||""))+") Tj ET");
+  pm.ops.push("BT /F1 8 Tf "+M+" "+FOOT+" Td 0.35 0.35 0.35 rg ("+pdfEsc((S.f["sNumber"]||"")+" · "+(S.f["siteAddress"]||"").split(",")[0].slice(0,40)+" · "+(S.f["surveyDate"]||""))+") Tj ET");
   pm.ops.push("BT /F1 8 Tf "+(W-M-70)+" "+FOOT+" Td 0.35 0.35 0.35 rg ("+pdfEsc("Page "+(i+1)+" of "+nPg)+") Tj ET");
  });
  // ===== montar =====

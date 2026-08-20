@@ -38,6 +38,7 @@ textarea{min-height:74px;resize:vertical}
 .slot{border:1px dashed var(--line);border-radius:12px;padding:10px;margin:0 0 12px;background:#fbfdfe}
 .slot .st{font-weight:600;font-size:13.5px;margin-bottom:8px;display:flex;gap:8px;align-items:center}
 .slot .mirror{margin-left:auto;font-size:11px;color:var(--mut);background:var(--chip);border-radius:99px;padding:2px 8px}
+.slot .aist{font-size:11px;color:#0a84c1;font-weight:700}
 .snapRow{display:flex;gap:8px;margin-bottom:8px}
 .snapRow label{flex:1;display:flex;align-items:center;justify-content:center;gap:6px;min-height:46px;border-radius:10px;font-weight:700;font-size:14px;border:1.5px solid var(--acc);color:var(--acc);background:#fff}
 .snapRow label.cam{background:var(--acc);color:#fff}
@@ -218,7 +219,7 @@ function renderForm(){
    else{inner+="<input type='"+f.t+"' placeholder='"+esc(f.p)+"'>";}
    q.innerHTML=inner;
    if(f.t==="radio"){q.querySelectorAll("button").forEach(b=>b.addEventListener("click",()=>{S.f[f.n]=(S.f[f.n]===b.dataset.opt)?"":b.dataset.opt;save();refresh();}));}
-   else{const el=q.querySelector("select,textarea,input");el.addEventListener("input",()=>{S.f[f.n]=el.value;save();refreshLight();});el.addEventListener("change",()=>{S.f[f.n]=el.value;save();refresh();});}
+   else{const el=q.querySelector("select,textarea,input");el.addEventListener("input",()=>{S.f[f.n]=el.value;if(f.n==="surveyor"){try{localStorage.setItem("rst-alex-surveyor",el.value);}catch{}}save();refreshLight();});el.addEventListener("change",()=>{S.f[f.n]=el.value;save();refresh();});}
    card.appendChild(q);
   }
   root.appendChild(card);
@@ -235,13 +236,13 @@ function renderPhotos(){
    let sub="";
    if(sl.loc)sub+="<div class='sub'><div class='lbl'>Location</div><input type='text' data-sub='loc' placeholder='e.g. Rear yard, riser cupboard…'></div>";
    if(sl.com)sub+="<div class='sub'><div class='lbl'>Comments</div><textarea data-sub='com' rows='2'></textarea></div>";
-   el.innerHTML="<div class='st'>"+esc(sl.t)+"<span class='mirror' data-mirror></span></div>"+
+   el.innerHTML="<div class='st'>"+esc(sl.t)+"<span class='aist' data-aist></span><span class='mirror' data-mirror></span></div>"+
     "<div class='thumbs' data-thumbs></div>"+
     "<div class='snapRow'>"+
     "<label class='cam'>📷 Take photo<input type='file' accept='image/*' capture='environment' data-take></label>"+
     "<label>🖼 Gallery<input type='file' accept='image/*' multiple data-gal></label>"+
     "</div>"+sub;
-   const wire=inp=>inp.addEventListener("change",async()=>{for(const file of inp.files){const n=Date.now()+Math.floor(Math.random()*999);await phPut(pKey(sl.id,n),file);}inp.value="";await drawThumbs(el,sl.id);refreshLight();});
+   const wire=inp=>inp.addEventListener("change",async()=>{const added=[...inp.files];for(const file of added){const n=Date.now()+Math.floor(Math.random()*999);await phPut(pKey(sl.id,n),file);}inp.value="";await drawThumbs(el,sl.id);refreshLight();if(added.length&&sl.com)void aiCaption(sl,el,added[0]);});
    el.querySelectorAll("[data-take],[data-gal]").forEach(wire);
    el.querySelectorAll("[data-sub]").forEach(i=>{i.addEventListener("input",()=>{const m=i.dataset.sub==="loc"?S.loc:S.com;m[sl.id]=i.value;save();});});
    card.appendChild(el);
@@ -310,6 +311,40 @@ async function aiCall(body){
  const r=await fetch("/api/agent/survey",{method:"POST",headers:{"Content-Type":"application/json",Authorization:"Bearer "+aiToken()},body:JSON.stringify(Object.assign({clientApp:"rst_field_report",agentId:"survey_reader"},body))});
  return r.json();
 }
+async function downscale(file,max){
+ const bmp=await createImageBitmap(file);
+ const sc=Math.min(1,max/Math.max(bmp.width,bmp.height));
+ const cv=document.createElement("canvas");cv.width=Math.round(bmp.width*sc);cv.height=Math.round(bmp.height*sc);
+ cv.getContext("2d").drawImage(bmp,0,0,cv.width,cv.height);
+ return cv.toDataURL("image/jpeg",0.8);
+}
+async function aiCaption(sl,el,file){
+ const st=el.querySelector("[data-aist]");
+ if((S.com[sl.id]||"").trim())return;
+ try{
+  if(st)st.textContent="AI writing caption…";
+  const dataUrl=await downscale(file,1024);
+  const res=await aiCall({task:"analyse_point",
+   extractedText:"Photo slot: "+sl.t+". Job "+(S.f["sNumber"]||"")+". Write ONE concise professional photo caption in UK English for an Openreach ODP survey record, describing exactly what is visible (assets, condition, surroundings). Include any readable asset IDs. No speculation.",
+   images:[{dataUrl,group:sl.id,caption:"",key:sl.id}]});
+  const j=(res&&res.json)||{};
+  let cap=(j.finding||"").trim();
+  const ids=Array.isArray(j.ids)?j.ids.filter(Boolean):[];
+  if(ids.length)cap+=(cap?" ":"")+"("+ids.join(", ")+")";
+  if(!cap)cap=(res&&res.text||"").trim();
+  if(cap&&!(S.com[sl.id]||"").trim()){
+   S.com[sl.id]=cap;save();
+   const ta=el.querySelector("textarea[data-sub='com']");if(ta)ta.value=cap;
+   if(st)st.textContent="AI ✓ (edit if needed)";
+  }else if(st)st.textContent="";
+ }catch{if(st)st.textContent="";}
+}
+function todayIso(){const d=new Date();return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0");}
+function storedSurveyor(){try{return localStorage.getItem("rst-alex-surveyor")||"";}catch{return "";}}
+function startSurveyDefaults(){
+ if(!(S.f["surveyDate"]||"").trim())S.f["surveyDate"]=todayIso();
+ if(!(S.f["surveyor"]||"").trim())S.f["surveyor"]=storedSurveyor();
+}
 const AI_FIELD_MAP={jobReference:"sNumber",customerName:"customerName",siteAddress:"siteAddress",network:"network",asbestos:"asbestosRegister"};
 document.getElementById("aiPrefill").addEventListener("click",async()=>{
  const msg=document.getElementById("aimsg");const text=document.getElementById("aitext").value.trim();
@@ -356,6 +391,7 @@ document.getElementById("dlgNew").addEventListener("click",()=>{
  const ref=prompt("Job reference (S-number) for the new survey?")||("survey-"+Date.now());
  const key=ref.trim().toUpperCase()||("survey-"+Date.now());
  ALL.surveys[key]=blank(key);ALL.current=key;S=ALL.surveys[key];S.f["sNumber"]=key.indexOf("SURVEY-")===0?"":key;
+ startSurveyDefaults();
  save();dlg.close();refresh();renderAllThumbs();});
 document.getElementById("btnExport").addEventListener("click",async()=>{
  const keys=await phKeys(ALL.current+"::");const photos={};
@@ -490,16 +526,28 @@ function markReview(){
 }
 document.getElementById("aifiles").addEventListener("change",async e=>{
  const msg=document.getElementById("aimsg");msg.textContent="Reading job pack…";
- let hits=0,pdfText="",xlsxText="";
+ let hits=0,pdfText="",xlsxText="",pairs=null;
  try{
-  for(const file of e.target.files){
+  const files=[...e.target.files];e.target.value="";
+  for(const file of files){
    const nm=file.name.toLowerCase();
-   if(nm.endsWith(".xlsx")){const pairs=await readXlsxPairs(file);hits+=applyChecklistPairs(pairs);
-    xlsxText=pairs.map(p=>p[0]+": "+p[1]).join("\n");}
-   else if(nm.endsWith(".pdf")){pdfText=await readPdfText(file);if(pdfText.trim())hits+=applyPdfHeuristics(pdfText);}
+   if(nm.endsWith(".xlsx")&&!pairs){pairs=await readXlsxPairs(file);}
+   else if(nm.endsWith(".pdf")){pdfText=await readPdfText(file);}
   }
-  e.target.value="";
-  save();refresh();markReview();
+  // auto-criar / mudar para o survey do Service ID
+  let sid="";
+  if(pairs){const p=pairs.find(x=>x[0].toLowerCase().startsWith("service id"));sid=(p?p[1]:"").trim().toUpperCase();}
+  if(!sid&&pdfText){const m=pdfText.toUpperCase().match(/\bS\d{7}\b/);if(m)sid=m[0];}
+  if(sid&&(S.f["sNumber"]||"").trim().toUpperCase()!==sid){
+   if(!ALL.surveys[sid])ALL.surveys[sid]=blank(sid);
+   ALL.current=sid;S=ALL.surveys[sid];
+   if(!(S.f["sNumber"]||"").trim())S.f["sNumber"]=sid;
+   msg.textContent="Survey "+sid+" opened automatically…";
+  }
+  startSurveyDefaults();
+  if(pairs){hits+=applyChecklistPairs(pairs);xlsxText=pairs.map(p=>p[0]+": "+p[1]).join("\n");}
+  if(pdfText.trim())hits+=applyPdfHeuristics(pdfText);
+  save();refresh();markReview();renderAllThumbs();
   const combined=(xlsxText+"\n"+pdfText).trim();
   if(combined)document.getElementById("aitext").value=combined.slice(0,8000);
   msg.textContent="Filled "+hits+" fields from the documents (amber = review). Running AI for the rest…";
@@ -509,7 +557,7 @@ document.getElementById("aifiles").addEventListener("change",async e=>{
     for(const k in AI_FIELD_MAP){const v=(j[k]||"").toString().trim();if(!v)continue;
      const f=SCHEMA.fields.find(x=>x.n===AI_FIELD_MAP[k]);if(f&&!(S.f[f.n]||"").trim()){S.f[f.n]=v;REVIEW.add(f.n);ai++;}}
     save();refresh();markReview();
-    msg.textContent="Done — "+hits+" fields from documents + "+ai+" from AI. Amber fields need your review (tap to accept).";
+    msg.textContent="Done — survey "+(S.f["sNumber"]||"")+" ready: "+hits+" fields from documents + "+ai+" from AI. Amber = review (tap to accept).";
    }catch{msg.textContent="Filled "+hits+" from documents. AI merge unavailable (offline?).";}
   }
  }catch(err){msg.textContent="Could not read a file: "+err;}

@@ -75,6 +75,18 @@ dialog h3{margin:0 0 10px}
 dialog .list button{display:block;width:100%;text-align:left;margin:6px 0;padding:10px;border:1px solid var(--line);border-radius:10px;background:#fff;font-size:14px}
 dialog .rowb{display:flex;gap:8px;margin-top:12px}
 dialog .rowb button{flex:1;min-height:44px;border-radius:10px;border:1px solid var(--line);background:#fff;font-weight:600}
+.qrow{border:1px solid var(--line);border-radius:12px;padding:10px;margin:8px 0;background:#fff}
+.qrow .l1{display:flex;gap:8px;align-items:center;font-weight:800;font-size:15px}
+.qrow .l1 .pct{margin-left:auto;font-size:12px;color:var(--mut);font-weight:700}
+.qrow .l2{font-size:12.5px;color:var(--mut);margin:2px 0 8px}
+.qrow .l3{display:flex;gap:6px;flex-wrap:wrap}
+.qrow .l3 button{flex:1 0 auto;min-height:40px;border-radius:9px;border:1px solid var(--line);background:#fff;font-size:12.5px;font-weight:700}
+.qrow .l3 button.open{background:var(--brand);border-color:var(--brand);color:#fff;flex:2 0 auto}
+.qrow .l3 button.stOn{background:#dff1e7;border-color:#9fd4b6;color:var(--ok)}
+.qrow .l3 button.stNo{background:#fdeceb;border-color:#f0b6b2;color:var(--bad)}
+.qrow.cur{outline:2.5px solid var(--acc)}
+dialog.wide{max-width:560px}
+
 
 /* --- annotation editor --- */
 #annWrap{position:fixed;inset:0;background:#0d1418;z-index:100;display:none;flex-direction:column}
@@ -155,8 +167,8 @@ dialog .rowb button{flex:1;min-height:44px;border-radius:10px;border:1px solid v
 </div>
 
 
-<dialog id="dlgSurveys">
- <h3>Surveys on this device</h3>
+<dialog id="dlgSurveys" class="wide">
+ <h3>Work queue</h3><p class="muted" style="font-size:12.5px;color:#5b6b78;margin:0 0 6px">Load all your job packs once — open each survey when the booking happens.</p>
  <div class="list" id="surveyList"></div>
  <div class="rowb">
   <button type="button" id="dlgNew">New survey</button>
@@ -381,12 +393,35 @@ document.getElementById("aiNotes").addEventListener("click",async()=>{
 const dlg=document.getElementById("dlgSurveys");
 document.getElementById("btnSurveys").addEventListener("click",()=>{listSurveys();dlg.showModal();});
 document.getElementById("dlgClose").addEventListener("click",()=>dlg.close());
+function surveyProgress(s){let a=0;for(const f of SCHEMA.fields){if(((s.f||{})[f.n]||"").trim())a++;}return Math.round(100*a/SCHEMA.fields.length);}
+const QSTATUS=[["done","Done"],["partial","Partial"],["no_access","No access"]];
 function listSurveys(){const box=document.getElementById("surveyList");box.innerHTML="";
- for(const key in ALL.surveys){const s=ALL.surveys[key];
-  const b=document.createElement("button");b.type="button";
-  b.textContent=(s.f&&s.f.sNumber?s.f.sNumber:key)+(key===ALL.current?"  ✓ current":"")+"  ·  "+((s.created||"").slice(0,10));
-  b.addEventListener("click",()=>{ALL.current=key;S=ALL.surveys[key];save();dlg.close();refresh();renderAllThumbs();});
-  box.appendChild(b);}}
+ const keys=Object.keys(ALL.surveys).sort((a,b)=>{
+  const da=(ALL.surveys[a].f||{}).surveyDate||"9999",db=(ALL.surveys[b].f||{}).surveyDate||"9999";
+  return da<db?-1:da>db?1:0;});
+ for(const key of keys){const s=ALL.surveys[key];const f=s.f||{};
+  if(key==="draft"&&!((f.sNumber||"").trim())&&surveyProgress(s)===0)continue;
+  const row=document.createElement("div");row.className="qrow"+(key===ALL.current?" cur":"");
+  const pct=surveyProgress(s);
+  const site=(f.siteAddress||"").split(",").slice(0,2).join(",");
+  const stLabel=(QSTATUS.find(q=>q[0]===s.status)||[])[1]||"";
+  row.innerHTML="<div class='l1'>"+esc(f.sNumber||key)+(stLabel?" · <span style='font-size:12px;color:#177a4c'>"+esc(stLabel)+"</span>":"")+"<span class='pct'>"+pct+"%</span></div>"+
+   "<div class='l2'>"+esc(site||"—")+" · "+esc(f.surveyDate||s.created&&s.created.slice(0,10)||"")+"</div>"+
+   "<div class='l3'></div>";
+  const l3=row.querySelector(".l3");
+  const open=document.createElement("button");open.type="button";open.className="open";open.textContent=key===ALL.current?"Continue":"Open";
+  open.addEventListener("click",()=>{ALL.current=key;S=ALL.surveys[key];save();dlg.close();refresh();renderAllThumbs();});
+  l3.appendChild(open);
+  for(const [val,lab] of QSTATUS){const b=document.createElement("button");b.type="button";
+   b.textContent=lab;b.className=s.status===val?(val==="no_access"?"stNo":"stOn"):"";
+   b.addEventListener("click",()=>{s.status=s.status===val?"":val;save();listSurveys();});
+   l3.appendChild(b);}
+  const del=document.createElement("button");del.type="button";del.textContent="🗑";
+  del.addEventListener("click",()=>{if(!confirm("Delete survey "+(f.sNumber||key)+"? Photos stay on device."))return;
+   delete ALL.surveys[key];if(ALL.current===key){ALL.current=Object.keys(ALL.surveys)[0]||"draft";if(!ALL.surveys[ALL.current])ALL.surveys[ALL.current]=blank("");S=ALL.surveys[ALL.current];}
+   save();listSurveys();refresh();renderAllThumbs();});
+  l3.appendChild(del);
+  box.appendChild(row);}}
 document.getElementById("dlgNew").addEventListener("click",()=>{
  const ref=prompt("Job reference (S-number) for the new survey?")||("survey-"+Date.now());
  const key=ref.trim().toUpperCase()||("survey-"+Date.now());
@@ -524,41 +559,68 @@ function markReview(){
   if(REVIEW.has(n)&&!q.dataset.revwired){q.dataset.revwired="1";
    q.addEventListener("pointerdown",()=>{REVIEW.delete(n);q.classList.remove("review");},{once:true});}});
 }
+function applyPackData(pairs,pdfText){
+ let hits=0;
+ startSurveyDefaults();
+ if(pairs)hits+=applyChecklistPairs(pairs);
+ if(pdfText&&pdfText.trim())hits+=applyPdfHeuristics(pdfText);
+ return hits;
+}
+async function aiMergeCombined(combined){
+ if(!combined)return 0;
+ try{const res=await aiCall({task:"jobpack",extractedText:combined.slice(0,8000),surveyTypeHint:"",images:[]});
+  const j=(res&&res.json)||{};let ai=0;
+  for(const k in AI_FIELD_MAP){const v=(j[k]||"").toString().trim();if(!v)continue;
+   const f=SCHEMA.fields.find(x=>x.n===AI_FIELD_MAP[k]);if(f&&!(S.f[f.n]||"").trim()){S.f[f.n]=v;REVIEW.add(f.n);ai++;}}
+  return ai;
+ }catch{return 0;}
+}
 document.getElementById("aifiles").addEventListener("change",async e=>{
- const msg=document.getElementById("aimsg");msg.textContent="Reading job pack…";
- let hits=0,pdfText="",xlsxText="",pairs=null;
+ const msg=document.getElementById("aimsg");msg.textContent="Reading job packs…";
  try{
   const files=[...e.target.files];e.target.value="";
+  // 1) ler tudo e detetar o S-number de cada ficheiro (nome do ficheiro > conteudo)
+  const parsed=[];
   for(const file of files){
-   const nm=file.name.toLowerCase();
-   if(nm.endsWith(".xlsx")&&!pairs){pairs=await readXlsxPairs(file);}
-   else if(nm.endsWith(".pdf")){pdfText=await readPdfText(file);}
+   const nm=file.name;const lower=nm.toLowerCase();
+   let sid=(nm.match(/S\d{7}/i)||[""])[0].toUpperCase();
+   let pairs=null,pdfText="";
+   if(lower.endsWith(".xlsx")){pairs=await readXlsxPairs(file);
+    if(!sid){const p=pairs.find(x=>x[0].toLowerCase().startsWith("service id"));sid=(p?p[1]:"").trim().toUpperCase();}}
+   else if(lower.endsWith(".pdf")){pdfText=await readPdfText(file);
+    if(!sid){const m=pdfText.toUpperCase().match(/\bS\d{7}\b/);if(m)sid=m[0];}}
+   else continue;
+   parsed.push({sid,pairs,pdfText});
   }
-  // auto-criar / mudar para o survey do Service ID
-  let sid="";
-  if(pairs){const p=pairs.find(x=>x[0].toLowerCase().startsWith("service id"));sid=(p?p[1]:"").trim().toUpperCase();}
-  if(!sid&&pdfText){const m=pdfText.toUpperCase().match(/\bS\d{7}\b/);if(m)sid=m[0];}
-  if(sid&&(S.f["sNumber"]||"").trim().toUpperCase()!==sid){
+  if(!parsed.length){msg.textContent="No readable XLSX/PDF files.";return;}
+  // 2) agrupar por S-number; ficheiros sem sid vao para o unico grupo existente
+  const groups=new Map();
+  for(const p of parsed){if(p.sid){const g=groups.get(p.sid)||{pairs:null,pdf:""};
+   if(p.pairs&&!g.pairs)g.pairs=p.pairs;if(p.pdfText)g.pdf+=(g.pdf?"\n":"")+p.pdfText;groups.set(p.sid,g);}}
+  let orphan=0;
+  for(const p of parsed){if(!p.sid){
+   if(groups.size===1){const g=groups.values().next().value;
+    if(p.pairs&&!g.pairs)g.pairs=p.pairs;if(p.pdfText)g.pdf+=(g.pdf?"\n":"")+p.pdfText;}
+   else{orphan++;groups.set("PACK-"+orphan,{pairs:p.pairs,pdf:p.pdfText});}}}
+  // 3) criar/preencher um survey por grupo
+  const made=[];let lastKey="";
+  for(const [sid,g] of groups){
    if(!ALL.surveys[sid])ALL.surveys[sid]=blank(sid);
    ALL.current=sid;S=ALL.surveys[sid];
-   if(!(S.f["sNumber"]||"").trim())S.f["sNumber"]=sid;
-   msg.textContent="Survey "+sid+" opened automatically…";
+   if(!(S.f["sNumber"]||"").trim()&&sid.indexOf("PACK-")!==0)S.f["sNumber"]=sid;
+   const hits=applyPackData(g.pairs,g.pdf);
+   const combined=((g.pairs?g.pairs.map(p=>p[0]+": "+p[1]).join("\n"):"")+"\n"+(g.pdf||"")).trim();
+   const ai=await aiMergeCombined(combined);
+   made.push(sid+" ("+(hits+ai)+" fields)");lastKey=sid;
   }
-  startSurveyDefaults();
-  if(pairs){hits+=applyChecklistPairs(pairs);xlsxText=pairs.map(p=>p[0]+": "+p[1]).join("\n");}
-  if(pdfText.trim())hits+=applyPdfHeuristics(pdfText);
-  save();refresh();markReview();renderAllThumbs();
-  const combined=(xlsxText+"\n"+pdfText).trim();
-  if(combined)document.getElementById("aitext").value=combined.slice(0,8000);
-  msg.textContent="Filled "+hits+" fields from the documents (amber = review). Running AI for the rest…";
-  if(combined){
-   try{const res=await aiCall({task:"jobpack",extractedText:combined.slice(0,8000),surveyTypeHint:"",images:[]});
-    const j=(res&&res.json)||{};let ai=0;
-    for(const k in AI_FIELD_MAP){const v=(j[k]||"").toString().trim();if(!v)continue;
-     const f=SCHEMA.fields.find(x=>x.n===AI_FIELD_MAP[k]);if(f&&!(S.f[f.n]||"").trim()){S.f[f.n]=v;REVIEW.add(f.n);ai++;}}
-    save();refresh();markReview();
-    msg.textContent="Done — survey "+(S.f["sNumber"]||"")+" ready: "+hits+" fields from documents + "+ai+" from AI. Amber = review (tap to accept).";
-   }catch{msg.textContent="Filled "+hits+" from documents. AI merge unavailable (offline?).";}
+  save();
+  if(groups.size===1){
+   refresh();markReview();renderAllThumbs();
+   msg.textContent="Survey "+(S.f["sNumber"]||lastKey)+" ready — "+made[0].split("(")[1].replace(")","")+" auto-filled. Amber = review.";
+  }else{
+   S=ALL.surveys[lastKey];refresh();markReview();renderAllThumbs();
+   msg.textContent=groups.size+" surveys added to the work queue: "+made.join(" · ");
+   listSurveys();dlg.showModal();
   }
  }catch(err){msg.textContent="Could not read a file: "+err;}
 });

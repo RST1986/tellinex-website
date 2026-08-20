@@ -567,10 +567,10 @@ async function pushDoneReport(key){
   const rows=q.ok?await q.json():[];
   if(rows.length){
    await fetch(SB_URL+"/rest/v1/reports?id=eq."+rows[0].id,{method:"PATCH",headers:{...sbHeaders(s),Prefer:"return=minimal"},
-    body:JSON.stringify({data:dataObj,readiness:100})});
+    body:JSON.stringify({data:dataObj,readiness:100,client:"ODP Surveys",site_area:f.siteAddress||"",report_date:f.surveyDate||new Date().toISOString().slice(0,10),engineer:f.surveyor||""})});
   }else{
    await fetch(SB_URL+"/rest/v1/reports",{method:"POST",headers:{...sbHeaders(s),Prefer:"return=minimal"},
-    body:JSON.stringify({report_type:"quick_survey",title:sn+" site survey",client:dataObj.customer.name,network_operator:"",
+    body:JSON.stringify({report_type:"quick_survey",title:sn+" site survey",client:"ODP Surveys",network_operator:"",
      job_reference:sn,site_area:f.siteAddress||"",report_date:f.surveyDate||new Date().toISOString().slice(0,10),
      engineer:f.surveyor||"",readiness:100,created_by:s.uid,data:dataObj})});
   }

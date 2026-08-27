@@ -85,16 +85,17 @@ const PATTERNS = [
 // they are scanned as text here. package.json / package-lock.json ALSO get a
 // structured dependency pass below.
 const roots = ["src", "functions", "workers", "scripts", "tests", ".github"];
-const rootFiles = [
-  "package.json",
-  "wrangler.toml", "wrangler.jsonc", "wrangler.json",
-  "vite.config.ts", "vite.config.js", "tsconfig.json",
-  "Makefile", "Dockerfile", "Procfile",
-];
-// Any shell/deploy script sitting at the repo root is a deploy-command surface too.
+// Every regular file at the repo root is a potential deploy-command / config
+// surface (deploy.js, deploy.mjs, deploy.sh, Makefile, Dockerfile, wrangler.toml,
+// .env.example, …). Enumerate them all — extension-agnostic — so no file type is
+// missed, excluding only the structured lockfile (scanned below) and prose
+// markdown (documentation, treated like docs/).
+const rootFiles = [];
 for (const name of fs.readdirSync(".")) {
   try {
-    if (/\.(sh|bash|zsh|mjs|cjs)$/.test(name) && fs.statSync(name).isFile()) rootFiles.push(name);
+    if (name === "package-lock.json") continue;   // structured dependency scan below
+    if (/\.(md|markdown)$/i.test(name)) continue;  // prose/docs, not operational capability
+    if (fs.statSync(name).isFile()) rootFiles.push(name);
   } catch { /* ignore unreadable entries */ }
 }
 

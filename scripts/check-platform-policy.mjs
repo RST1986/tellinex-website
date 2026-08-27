@@ -78,14 +78,29 @@ const PATTERNS = [
   ["FORBIDDEN DEPENDENCY (import)", /['"]@netlify\/[a-z0-9-]+['"]|require\(\s*['"]@netlify\//i],
 ];
 
-// Operational surfaces: runtime, functions, workers, build/CI scripts, CI YAML,
-// and root config. package.json / package-lock.json get a structured pass below.
-const roots = ["src", "functions", "workers", "scripts", "tests", ".github/workflows"];
-const rootFiles = ["wrangler.toml", "vite.config.ts", "vite.config.js", "tsconfig.json"];
+// Operational surfaces: runtime, functions, workers, build/CI scripts, and the
+// full .github tree (workflows AND local/composite actions). A deploy command
+// can also live in package.json "scripts", root shell/build scripts, or a
+// Makefile/Dockerfile — a functions+workflows-only scan would miss those, so
+// they are scanned as text here. package.json / package-lock.json ALSO get a
+// structured dependency pass below.
+const roots = ["src", "functions", "workers", "scripts", "tests", ".github"];
+const rootFiles = [
+  "package.json",
+  "wrangler.toml", "wrangler.jsonc", "wrangler.json",
+  "vite.config.ts", "vite.config.js", "tsconfig.json",
+  "Makefile", "Dockerfile", "Procfile",
+];
+// Any shell/deploy script sitting at the repo root is a deploy-command surface too.
+for (const name of fs.readdirSync(".")) {
+  try {
+    if (/\.(sh|bash|zsh|mjs|cjs)$/.test(name) && fs.statSync(name).isFile()) rootFiles.push(name);
+  } catch { /* ignore unreadable entries */ }
+}
 
 const operationalFiles = [
   ...roots.flatMap((r) => walk(r)),
-  ...rootFiles.filter((f) => fs.existsSync(f)).map((f) => path.resolve(f)),
+  ...[...new Set(rootFiles)].filter((f) => fs.existsSync(f)).map((f) => path.resolve(f)),
 ].filter((f) => !NEGATIVE_GUARD_ALLOWLIST.has(rel(f)));
 
 for (const file of operationalFiles) {

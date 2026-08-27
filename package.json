@@ -12,6 +12,7 @@
     "check:commercial-facts": "node scripts/check-commercial-facts.mjs",
     "check:public-control-plane": "node scripts/check-public-control-plane-boundary.mjs",
     "check:secrets-boundary": "node scripts/check-secrets-boundary.mjs",
+    "check:platform-policy": "node scripts/check-platform-policy.mjs",
     "release:check": "node scripts/release-check.mjs",
     "test:ai-chat": "node tests/sec-ai-chat-boundary.mjs",
     "test:commercial": "node tests/web-commercial-readiness.mjs",

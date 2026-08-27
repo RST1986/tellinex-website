@@ -6,6 +6,7 @@
 import { spawnSync } from "node:child_process";
 
 const steps = [
+  ["platform-policy", "node", ["scripts/check-platform-policy.mjs"]],
   ["public-control-plane", "node", ["scripts/check-public-control-plane-boundary.mjs"]],
   ["public-form-gateway", "node", ["scripts/check-public-form-gateway-contract.mjs"]],
   ["public-form-callers", "node", ["scripts/check-public-form-callers-contract.mjs"]],

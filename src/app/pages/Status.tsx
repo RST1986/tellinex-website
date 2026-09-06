@@ -112,7 +112,7 @@ export default function Status() {
         {submitted && (
           <div role="status" style={{ display: "flex", gap: "10px", alignItems: "flex-start", padding: "14px", marginBottom: "20px", borderRadius: "6px", background: "rgba(163,230,53,0.08)", border: "1px solid rgba(163,230,53,0.25)", color: "#d9ff9a" }}>
             <CheckCircle size={20} />
-            <span>Your notification request was received. Confirmation and unsubscribe controls will be sent through the address supplied.</span>
+            <span>Your notification request was recorded. Email notifications are not live yet, so no confirmation message is sent at this stage. To remove your address, email info@tellinex.com.</span>
           </div>
         )}
 

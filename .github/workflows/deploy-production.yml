@@ -47,7 +47,7 @@ jobs:
     # deployment path that never passed through main.
     if: github.ref == 'refs/heads/main'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
 
@@ -91,7 +91,7 @@ jobs:
           '
           echo "ready=yes" >> "$GITHUB_OUTPUT"
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         if: steps.guard.outputs.ready == 'yes'
         with:
           node-version-file: .nvmrc

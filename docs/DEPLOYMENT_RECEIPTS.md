@@ -87,6 +87,73 @@ source SHA is `8312dbf` and the live bytes match a clean build of it.
 
 ---
 
+## 2026-09-07 — `db90ee1` — FIRST FULLY AUTOMATED DEPLOYMENT
+
+The first production deployment produced by the pipeline itself rather than by a
+person running wrangler. This is the entry that closes deployment-mechanism drift.
+
+| | |
+|---|---|
+| Repository | `RST1986/tellinex-website` |
+| Branch | `main` |
+| Commit SHA | `db90ee1ed7d25bcd50aa2b86d65ef35eaed5236d` |
+| Workflow run | `34104153457` (`deploy-production.yml`) |
+| Pages project | `tellinex-website` |
+| Deployment ID | `b98117fd-8e14-4db9-87d3-e2f999024feb` |
+| Recorded source | `db90ee1` — equals the GitHub SHA |
+| Custom domains | `tellinex.com`, `www.tellinex.com` |
+| Mechanism | GitHub Actions, `--commit-hash $GITHUB_SHA`. **No local wrangler session.** |
+
+### Every step executed — none skipped
+
+```
+Configuration guard   success    FORM_ENDPOINT contract OK
+Install               success
+Gates                 success    release:check PASS · 30 mutants killed · AI_CHAT_SECURITY_TESTS=PASS
+Build                 success
+Deploy                success
+Post-deploy proof     success
+```
+
+The `FORM_ENDPOINT` contract validation executed in CI for the first time here; on
+every prior run the guard exited earlier on a missing value.
+
+### Artefact
+
+```
+index-GidAqxzO.js  sha256 e58e88305d1600e076066aaa99f02f6de2e35f69c1474dadfacb649b16f6ee31
+```
+
+Identical to the `8312dbf` artefact, which is correct: PR #33 changed only CI,
+toolchain pins and documentation — no application code. Cloudflare reported
+"Uploaded 0 files (13 already uploaded)", consistent with byte-identical assets.
+
+### Independent verification (not the workflow's self-report)
+
+```
+Cloudflare deployment SOURCE = db90ee1                    = GitHub SHA
+live tellinex.com bundle sha256 = e58e8830…6ee31          = candidate
+DPA disclosure LIVE · withdrawn email promise ABSENT (0)
+corrected status wording LIVE · form a11y ids LIVE
+sitemap 10 routes incl. /availability
+apex 200 · www 200 · TLS Google Trust Services WE1 → 2026-11-06
+netlify residuals in live bundle: 0
+```
+
+### Rollback
+
+`681faed0-9634-4017-b3c6-8f235a208797` (source `8312dbf`, same bundle) and
+`0e65d7e2-e61c-4f3a-82df-e86d95c8caf8` (source `967b5eb`, bundle `index-UaMDS1Hp.js`).
+
+### Still open, unrelated to drift
+
+Pages project secrets `ANTHROPIC_API_KEY` and `TURNSTILE_SECRET_KEY` remain unset, so
+`POST /api/ai-chat` returns `503 service_unavailable` and fails closed by design. The only
+Pages secret set is `VITE_TURNSTILE_SITE_KEY`, which is a build-time public value and is
+inert at the Functions runtime.
+
+---
+
 ## Superseded — 2026-08-21 — `967b5eb` (historical, for the record)
 
 Deployment `0e65d7e2`, bundle `index-UaMDS1Hp.js`

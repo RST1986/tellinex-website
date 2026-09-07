@@ -30,7 +30,10 @@ RST1986/tellinex-website@<sha> -> attributable Cloudflare Pages deployment -> te
 ### Build inputs
 
 ```
-node        22.22.2        (now pinned via .nvmrc + engines)
+node        22.22.2        (the build machine's version; .nvmrc and engines
+                           now pin exactly 22.22.2 so this is reproducible —
+                           at deploy time they said only "22", which selects
+                           the latest 22.x and does NOT pin this build)
 vite        5.4.21         (lockfile, lockfileVersion 3, npm ci)
 build       npm run build  -> dist
 env         VITE_PUBLIC_FORM_ENDPOINT, VITE_TURNSTILE_SITE_KEY,

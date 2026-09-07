@@ -12,6 +12,10 @@
 # attributable.
 #
 # Required configuration (repository settings):
+# Wrangler is pinned exactly in devDependencies and invoked from the locked
+# install (`npx --no-install`), never `npx --yes wrangler@4` — a moving release
+# must not be fetched at deploy time while holding the production token.
+#
 #   secrets: CLOUDFLARE_API_TOKEN   (scoped: Account > Cloudflare Pages > Edit)
 #            VITE_SUPABASE_ANON_KEY (publishable; inlined into a public bundle)
 #   vars:    CLOUDFLARE_ACCOUNT_ID, VITE_PUBLIC_FORM_ENDPOINT,
@@ -38,6 +42,10 @@ jobs:
     name: Build and deploy to Cloudflare Pages
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    # workflow_dispatch can select any ref. Without this, a manual run would
+    # build that ref and publish it to the Pages production branch, which is a
+    # deployment path that never passed through main.
+    if: github.ref == 'refs/heads/main'
     steps:
       - uses: actions/checkout@v4
         with:
@@ -62,9 +70,26 @@ jobs:
           if [ -n "$missing" ]; then
             echo "::warning::Deployment skipped — not configured yet. Missing:$missing"
             echo "ready=no" >> "$GITHUB_OUTPUT"
-          else
-            echo "ready=yes" >> "$GITHUB_OUTPUT"
+            exit 0
           fi
+          # Non-empty is not valid. Mirror the application's own endpoint
+          # contract (scripts/check-public-form-gateway-contract.mjs) against the
+          # configured VALUE, or a syntactically fine but wrong variable ships a
+          # site whose forms fail at runtime.
+          node -e '
+            const raw = process.env.FORM_ENDPOINT;
+            let u;
+            try { u = new URL(raw); } catch { console.error("FORM_ENDPOINT is not a URL"); process.exit(1); }
+            const bad = [];
+            if (u.protocol !== "https:") bad.push("must be https");
+            if (u.username !== "" || u.password !== "") bad.push("must not carry credentials");
+            if (u.port !== "") bad.push("must not specify a port");
+            if (u.search !== "" || u.hash !== "") bad.push("must have no query or fragment");
+            if (!u.pathname.endsWith("/functions/v1/submit-public-form")) bad.push("must end /functions/v1/submit-public-form");
+            if (bad.length) { console.error("FORM_ENDPOINT invalid: " + bad.join("; ")); process.exit(1); }
+            console.log("FORM_ENDPOINT contract OK: " + u.origin + u.pathname);
+          '
+          echo "ready=yes" >> "$GITHUB_OUTPUT"
 
       - uses: actions/setup-node@v4
         if: steps.guard.outputs.ready == 'yes'
@@ -109,7 +134,7 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
         run: |
-          npx --yes wrangler@4 pages deploy dist \
+          npx --no-install wrangler pages deploy dist \
             --project-name tellinex-website \
             --branch main \
             --commit-hash "$GITHUB_SHA" \

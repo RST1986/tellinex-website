@@ -1,0 +1,160 @@
+# Production deployment for tellinex.com — GitHub main is the only source.
+#
+# Why this exists: production was previously pushed by hand from a laptop
+# (`wrangler pages deploy` out of a local clone). That produced a live site 12
+# commits behind main, with no GitHub deployment record and no way to tie the
+# running bytes back to a commit. See docs/DEPLOYMENT_RECEIPTS.md.
+#
+# The preferred fix is Cloudflare Pages Git integration, which cannot be
+# configured from the CLI or API — it needs the dashboard's GitHub App
+# authorization. This workflow is the sanctioned fallback: it makes main the
+# trigger, and records the commit SHA on the deployment so production is always
+# attributable.
+#
+# Required configuration (repository settings):
+# Wrangler is pinned exactly in devDependencies and invoked from the locked
+# install (`npx --no-install`), never `npx --yes wrangler@4` — a moving release
+# must not be fetched at deploy time while holding the production token.
+#
+#   secrets: CLOUDFLARE_API_TOKEN   (scoped: Account > Cloudflare Pages > Edit)
+#            VITE_SUPABASE_ANON_KEY (publishable; inlined into a public bundle)
+#   vars:    CLOUDFLARE_ACCOUNT_ID, VITE_PUBLIC_FORM_ENDPOINT,
+#            VITE_TURNSTILE_SITE_KEY, VITE_SUPABASE_URL
+#
+# Server-only Pages secrets (ANTHROPIC_API_KEY, TURNSTILE_SECRET_KEY,
+# TURNSTILE_EXPECTED_HOSTNAMES) are set on the Pages project itself, never here.
+name: Deploy production
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Build and deploy to Cloudflare Pages
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    # workflow_dispatch can select any ref. Without this, a manual run would
+    # build that ref and publish it to the Pages production branch, which is a
+    # deployment path that never passed through main.
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      # Skip cleanly while the repository is not yet configured, rather than
+      # failing every push with a misleading red.
+      - name: Configuration guard
+        id: guard
+        env:
+          CF_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CF_ACCOUNT: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+          FORM_ENDPOINT: ${{ vars.VITE_PUBLIC_FORM_ENDPOINT }}
+          TURNSTILE_SITE_KEY: ${{ vars.VITE_TURNSTILE_SITE_KEY }}
+          SUPABASE_URL: ${{ vars.VITE_SUPABASE_URL }}
+          SUPABASE_ANON: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
+        run: |
+          missing=""
+          for v in CF_TOKEN CF_ACCOUNT FORM_ENDPOINT TURNSTILE_SITE_KEY SUPABASE_URL SUPABASE_ANON; do
+            [ -n "${!v}" ] || missing="$missing $v"
+          done
+          if [ -n "$missing" ]; then
+            echo "::warning::Deployment skipped — not configured yet. Missing:$missing"
+            echo "ready=no" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # Non-empty is not valid. Mirror the application's own endpoint
+          # contract (scripts/check-public-form-gateway-contract.mjs) against the
+          # configured VALUE, or a syntactically fine but wrong variable ships a
+          # site whose forms fail at runtime.
+          node -e '
+            const raw = process.env.FORM_ENDPOINT;
+            let u;
+            try { u = new URL(raw); } catch { console.error("FORM_ENDPOINT is not a URL"); process.exit(1); }
+            const bad = [];
+            if (u.protocol !== "https:") bad.push("must be https");
+            if (u.username !== "" || u.password !== "") bad.push("must not carry credentials");
+            if (u.port !== "") bad.push("must not specify a port");
+            if (u.search !== "" || u.hash !== "") bad.push("must have no query or fragment");
+            if (!u.pathname.endsWith("/functions/v1/submit-public-form")) bad.push("must end /functions/v1/submit-public-form");
+            if (bad.length) { console.error("FORM_ENDPOINT invalid: " + bad.join("; ")); process.exit(1); }
+            console.log("FORM_ENDPOINT contract OK: " + u.origin + u.pathname);
+          '
+          echo "ready=yes" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/setup-node@v4
+        if: steps.guard.outputs.ready == 'yes'
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - name: Install
+        if: steps.guard.outputs.ready == 'yes'
+        run: npm ci
+
+      # Every website gate must pass before anything reaches production.
+      - name: Gates
+        if: steps.guard.outputs.ready == 'yes'
+        run: |
+          npm run typecheck
+          npm run release:check
+
+      # VITE_* are build-time and are inlined into the bundle. Building without
+      # them yields a bundle whose form endpoint and Turnstile key are literally
+      # "undefined" — worse than a stale site, so this asserts they took effect.
+      - name: Build
+        if: steps.guard.outputs.ready == 'yes'
+        env:
+          VITE_PUBLIC_FORM_ENDPOINT: ${{ vars.VITE_PUBLIC_FORM_ENDPOINT }}
+          VITE_TURNSTILE_SITE_KEY: ${{ vars.VITE_TURNSTILE_SITE_KEY }}
+          VITE_SUPABASE_URL: ${{ vars.VITE_SUPABASE_URL }}
+          VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
+        run: |
+          npm run build
+          bundle="$(ls dist/assets/index-*.js | head -1)"
+          echo "BUNDLE=$bundle" >> "$GITHUB_ENV"
+          echo "BUNDLE_SHA256=$(sha256sum "$bundle" | cut -d' ' -f1)" >> "$GITHUB_ENV"
+          if grep -q 'undefined/functions/v1' "$bundle"; then
+            echo "::error::Build-time env did not take effect — bundle contains an undefined endpoint"
+            exit 1
+          fi
+
+      - name: Deploy
+        if: steps.guard.outputs.ready == 'yes'
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          npx --no-install wrangler pages deploy dist \
+            --project-name tellinex-website \
+            --branch main \
+            --commit-hash "$GITHUB_SHA" \
+            --commit-message "$(git log -1 --pretty=%s)"
+
+      # Cloudflare reporting success is not evidence. Prove the live bytes.
+      - name: Post-deploy proof
+        if: steps.guard.outputs.ready == 'yes'
+        run: |
+          for i in $(seq 1 30); do
+            live_js="$(curl -sf https://tellinex.com/ | grep -oE 'index-[A-Za-z0-9_-]+\.js' | head -1 || true)"
+            [ "assets/$live_js" = "${BUNDLE#dist/}" ] && break
+            sleep 10
+          done
+          curl -sf "https://tellinex.com/${BUNDLE#dist/}" -o /tmp/live.js
+          live_sha="$(sha256sum /tmp/live.js | cut -d' ' -f1)"
+          echo "expected $BUNDLE_SHA256"
+          echo "live     $live_sha"
+          [ "$live_sha" = "$BUNDLE_SHA256" ] || { echo "::error::Live bundle does not match this build"; exit 1; }
+          grep -q 'Data Protection Act' /tmp/live.js || { echo "::error::DPA disclosure missing live"; exit 1; }
+          grep -q 'will be sent through the address supplied' /tmp/live.js && { echo "::error::Unproven email promise is live"; exit 1; }
+          curl -sf https://tellinex.com/sitemap.xml | grep -q '/availability' || { echo "::error::sitemap missing /availability"; exit 1; }
+          echo "PRODUCTION_SHA=$GITHUB_SHA BUNDLE_SHA256=$BUNDLE_SHA256 verified live"

@@ -2,6 +2,9 @@
   "name": "tellinex-website",
   "private": true,
   "version": "1.0.0",
+  "engines": {
+    "node": "22.22.2"
+  },
   "type": "module",
   "scripts": {
     "build": "node scripts/check-public-form-gateway-contract.mjs && node scripts/check-chatbot-public-form-boundary.mjs && node scripts/check-public-form-callers-contract.mjs && node scripts/check-security-headers.mjs && vite build",
@@ -47,6 +50,7 @@
     "@vitejs/plugin-react": "^4.7.0",
     "tailwindcss": "4.1.12",
     "typescript": "^5.4.5",
-    "vite": "^5.4.21"
+    "vite": "^5.4.21",
+    "wrangler": "4.129.0"
   }
 }

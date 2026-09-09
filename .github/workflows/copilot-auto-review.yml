@@ -1,0 +1,35 @@
+name: Copilot Auto Review
+
+on:
+  pull_request_target:
+    types: [opened, reopened, synchronize, ready_for_review]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  request-copilot-review:
+    if: ${{ !github.event.pull_request.draft }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Request GitHub Copilot code review
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            try {
+              await github.rest.pulls.requestReviewers({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                pull_number: context.payload.pull_request.number,
+                reviewers: ['copilot-pull-request-reviewer[bot]']
+              });
+              core.info(`Requested Copilot review for PR #${context.payload.pull_request.number}`);
+            } catch (error) {
+              if (error.status === 422) {
+                core.warning(`Copilot review could not be requested: ${error.message}`);
+                return;
+              }
+              throw error;
+            }

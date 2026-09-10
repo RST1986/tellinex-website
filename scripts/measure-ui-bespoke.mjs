@@ -45,6 +45,13 @@ function relative(filePath) {
   return path.relative(root, filePath).split(path.sep).join('/')
 }
 
+function consumersFor(adoptionItem) {
+  const consumers = []
+  if (typeof adoptionItem.consumer === 'string') consumers.push(adoptionItem.consumer)
+  if (Array.isArray(adoptionItem.consumers)) consumers.push(...adoptionItem.consumers)
+  return consumers
+}
+
 function readBaseFile(baseRef, filePath) {
   try {
     return execFileSync('git', ['show', `origin/${baseRef}:${filePath}`], {
@@ -76,7 +83,7 @@ const topHotspots = [...entries]
   .sort((a, b) => b.heuristicScore - a.heuristicScore || a.file.localeCompare(b.file))
   .slice(0, 12)
 
-const governedConsumers = [...new Set((adoption.adoptions ?? []).map((item) => item.consumer).filter(Boolean))]
+const governedConsumers = [...new Set((adoption.adoptions ?? []).flatMap(consumersFor).filter(Boolean))]
 const baseRef = process.env.GITHUB_BASE_REF || null
 const governedRegressionChecks = []
 

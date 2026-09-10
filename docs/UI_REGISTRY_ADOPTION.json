@@ -56,7 +56,8 @@
     "consumers": [
       "src/app/components/Layout.tsx",
       "src/app/components/AIChatWidget.tsx",
-      "src/app/components/SpaceBackground.tsx"
+      "src/app/components/SpaceBackground.tsx",
+      "src/app/components/LegalNoticeLinks.tsx"
     ],
     "policy": "brand identity values use --tlx-* aliases; generic shadcn tokens remain independent"
   },
@@ -66,6 +67,13 @@
     "state": "CONSUMED",
     "contract": "scripts/check-space-background-tokens.mjs",
     "policy": "decorative Canvas rendering consumes resolved TXS tokens; do not force generic registry primitives onto non-interactive rendering"
+  },
+  "legalNotice": {
+    "component": "src/app/components/LegalNoticeLinks.tsx",
+    "state": "CONSUMED",
+    "contract": "scripts/check-legal-notice-ui.mjs",
+    "truth": "Draft — legal review required",
+    "policy": "legal links remain explicitly draft until separate legal approval exists; UI normalisation must not upgrade legal status"
   },
   "measurement": {
     "script": "scripts/measure-ui-bespoke.mjs",
@@ -78,8 +86,8 @@
     ]
   },
   "nextTargets": [
-    "Re-measure SpaceBackground after governed Canvas tokenisation",
-    "Normalise LegalNoticeLinks presentation if it becomes the highest actionable hotspot",
-    "Review the final low-risk Layout decorative inline styles separately from governed interaction"
+    "Re-measure LegalNoticeLinks after TXS utility normalisation",
+    "Review the final low-risk Layout decorative inline styles separately from governed interaction",
+    "Confirm whether NetworkBuildStatus remaining colour literals are intentional Tailwind arbitrary values or should use TXS aliases"
   ]
 }

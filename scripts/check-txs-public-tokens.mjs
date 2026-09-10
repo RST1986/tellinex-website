@@ -104,7 +104,7 @@ if (/rgba\(163,230,53|#[0-9a-fA-F]{3,8}\b|rgba?\(/.test(aiChat)) {
   errors.push('AIChatWidget must not contain direct colour literals after TXS token adoption')
 }
 
-if (!aiChat.includes('variant="destructive"') || !aiChat.includes('background: "var(--tlx-bg-dialog)"')) {
+if (!aiChat.includes('variant="destructive"') || !aiChat.includes('bg-[var(--tlx-bg-dialog)]')) {
   errors.push('AI error alert must retain destructive semantics on an explicit TXS dark dialog surface')
 }
 

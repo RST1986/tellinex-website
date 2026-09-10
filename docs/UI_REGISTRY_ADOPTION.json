@@ -75,6 +75,13 @@
     "truth": "Draft — legal review required",
     "policy": "legal links remain explicitly draft until separate legal approval exists; UI normalisation must not upgrade legal status"
   },
+  "layoutPresentation": {
+    "component": "src/app/components/Layout.tsx",
+    "state": "NORMALISED",
+    "inlineStylesAllowed": 0,
+    "gsapColourLiteralExceptionMaximum": 2,
+    "policy": "static presentation uses TXS/Tailwind utilities; two GSAP shadow interpolation literals remain bounded until animation equivalence is separately proven"
+  },
   "measurement": {
     "script": "scripts/measure-ui-bespoke.mjs",
     "mode": "MEASURE_AND_PREVENT_GOVERNED_REGRESSION",
@@ -86,8 +93,8 @@
     ]
   },
   "nextTargets": [
-    "Re-measure LegalNoticeLinks after TXS utility normalisation",
-    "Review the final low-risk Layout decorative inline styles separately from governed interaction",
-    "Confirm whether NetworkBuildStatus remaining colour literals are intentional Tailwind arbitrary values or should use TXS aliases"
+    "Re-measure Layout after final static utility normalisation",
+    "Replace NetworkBuildStatus arbitrary colour literals with TXS aliases if visual equivalence is exact",
+    "Keep the two bounded Layout GSAP interpolation literals unless a separate animation-equivalence test proves token substitution safe"
   ]
 }

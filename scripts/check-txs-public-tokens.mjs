@@ -30,8 +30,10 @@ for (const token of [
   '--tlx-border-medium:',
   '--tlx-border-interactive:',
   '--tlx-border-strong:',
+  '--tlx-glow-primary-soft:',
   '--tlx-glow-primary:',
   '--tlx-glow-accent:',
+  '--tlx-glow-accent-soft:',
   '--tlx-font-sans:',
   '--tlx-font-display:',
 ]) {
@@ -55,6 +57,15 @@ for (const token of [
   'var(--tlx-font-display)',
 ]) {
   if (!layout.includes(token)) errors.push(`Layout is not consuming TXS token: ${token}`)
+}
+
+for (const classToken of [
+  '[filter:drop-shadow(0_0_10px_var(--tlx-glow-primary))]',
+  '[filter:drop-shadow(0_0_8px_var(--tlx-glow-primary-soft))]',
+  '[background:linear-gradient(90deg,var(--tlx-primary),var(--tlx-accent))]',
+  '[box-shadow:0_0_8px_var(--tlx-glow-accent-soft)]',
+]) {
+  if (!layout.includes(classToken)) errors.push(`Layout utility normalisation missing: ${classToken}`)
 }
 
 for (const token of [
@@ -93,6 +104,10 @@ const forbiddenIdentityLiterals = [
 for (const literal of forbiddenIdentityLiterals) {
   if (layout.includes(literal)) errors.push(`Layout regressed to hard-coded Tellinex literal: ${literal}`)
   if (aiChat.includes(literal)) errors.push(`AIChatWidget regressed to hard-coded Tellinex literal: ${literal}`)
+}
+
+if (layout.includes('style={{')) {
+  errors.push('Layout must keep static presentation in TXS/Tailwind utilities instead of inline style objects')
 }
 
 const gsapAccentLiterals = layout.match(/rgba\(163,230,53,[^)]+\)/g) ?? []

@@ -45,8 +45,7 @@ export default function Layout() {
             <img
               src="/Logo.svg"
               alt="Tellinex"
-              className="h-[clamp(2rem,4vw,2.8rem)]"
-              style={{ filter: "drop-shadow(0 0 10px var(--tlx-glow-primary))" }}
+              className="h-[clamp(2rem,4vw,2.8rem)] [filter:drop-shadow(0_0_10px_var(--tlx-glow-primary))]"
             />
           </Link>
 
@@ -147,8 +146,7 @@ export default function Layout() {
               <img
                 src="/Logo.svg"
                 alt="Tellinex"
-                className="mb-3 h-[2.2rem]"
-                style={{ filter: "drop-shadow(0 0 8px var(--tlx-glow-primary-soft))" }}
+                className="mb-3 h-[2.2rem] [filter:drop-shadow(0_0_8px_var(--tlx-glow-primary-soft))]"
               />
               <p className="[font-family:var(--tlx-font-sans)] text-[0.8rem] leading-[1.6] text-[var(--tlx-text-faint)]">
                 Building resilient digital infrastructure in Jamaica. Network design principle: underground-first fibre. Not a live national service.
@@ -200,15 +198,7 @@ export default function Layout() {
               <Link to="/privacy" className="[font-family:var(--tlx-font-sans)] text-xs text-[var(--tlx-text-caption)] no-underline">Privacy (draft)</Link>
               <Link to="/terms" className="[font-family:var(--tlx-font-sans)] text-xs text-[var(--tlx-text-caption)] no-underline">Terms (draft)</Link>
             </div>
-            <div
-              style={{
-                height: "3px",
-                width: "3rem",
-                background: "linear-gradient(90deg, var(--tlx-primary), var(--tlx-accent))",
-                borderRadius: "2px",
-                boxShadow: "0 0 8px var(--tlx-glow-accent-soft)",
-              }}
-            />
+            <div className="h-[3px] w-12 rounded-[2px] [background:linear-gradient(90deg,var(--tlx-primary),var(--tlx-accent))] [box-shadow:0_0_8px_var(--tlx-glow-accent-soft)]" />
           </div>
         </div>
       </footer>

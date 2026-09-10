@@ -7,6 +7,7 @@ on:
       - 'scripts/check-ui-registry-boundary.mjs'
       - 'scripts/check-ui-registry-adoption.mjs'
       - 'scripts/check-ai-chat-ui-contract.mjs'
+      - 'scripts/check-txs-public-tokens.mjs'
       - 'scripts/measure-ui-bespoke.mjs'
       - 'docs/UI_REGISTRY_ABSORPTION_WAVE_01.md'
       - 'docs/UI_REGISTRY_ADOPTION.json'
@@ -18,6 +19,7 @@ on:
       - 'scripts/check-ui-registry-boundary.mjs'
       - 'scripts/check-ui-registry-adoption.mjs'
       - 'scripts/check-ai-chat-ui-contract.mjs'
+      - 'scripts/check-txs-public-tokens.mjs'
       - 'scripts/measure-ui-bespoke.mjs'
       - 'docs/UI_REGISTRY_ADOPTION.json'
       - '.github/workflows/ui-registry-boundary.yml'
@@ -41,6 +43,8 @@ jobs:
         run: node scripts/check-ui-registry-adoption.mjs
       - name: Validate governed AI chat UI
         run: node scripts/check-ai-chat-ui-contract.mjs
+      - name: Validate Tellinex TXS public tokens
+        run: node scripts/check-txs-public-tokens.mjs
       - name: Measure bespoke UI and prevent governed regression
         run: node scripts/measure-ui-bespoke.mjs
       - name: Upload bespoke UI report

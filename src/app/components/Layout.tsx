@@ -32,6 +32,7 @@ export default function Layout() {
 
       {/* ─── NAVBAR ─── */}
       <nav
+        aria-label="Primary"
         className="fixed top-0 left-0 right-0 z-50"
         style={{
           background: "rgba(4,13,20,0.75)",
@@ -60,6 +61,7 @@ export default function Layout() {
                 <Link
                   key={n.to}
                   to={n.to}
+                  aria-current={active ? "page" : undefined}
                   style={{
                     fontFamily: '"Nunito", sans-serif',
                     fontSize: "0.82rem",
@@ -115,7 +117,11 @@ export default function Layout() {
 
           {/* Mobile hamburger */}
           <button
+            type="button"
             className="md:hidden text-white"
+            aria-label={menuOpen ? "Close primary navigation" : "Open primary navigation"}
+            aria-expanded={menuOpen}
+            aria-controls="mobile-primary-navigation"
             onClick={() => setMenuOpen(!menuOpen)}
             style={{ background: "none", border: "none" }}
           >
@@ -126,6 +132,7 @@ export default function Layout() {
         {/* Mobile menu */}
         {menuOpen && (
           <div
+            id="mobile-primary-navigation"
             className="md:hidden"
             style={{
               background: "rgba(4,13,20,0.95)",
@@ -133,24 +140,28 @@ export default function Layout() {
               padding: "16px",
             }}
           >
-            {NAV.map((n) => (
-              <Link
-                key={n.to}
-                to={n.to}
-                style={{
-                  display: "block",
-                  padding: "12px 16px",
-                  fontFamily: '"Nunito", sans-serif',
-                  fontSize: "0.95rem",
-                  color: location.pathname === n.to ? "#00C7B1" : "rgba(255,255,255,0.7)",
-                  textDecoration: "none",
-                  borderRadius: "6px",
-                  background: location.pathname === n.to ? "rgba(0,199,177,0.08)" : "transparent",
-                }}
-              >
-                {n.label}
-              </Link>
-            ))}
+            {NAV.map((n) => {
+              const active = location.pathname === n.to;
+              return (
+                <Link
+                  key={n.to}
+                  to={n.to}
+                  aria-current={active ? "page" : undefined}
+                  style={{
+                    display: "block",
+                    padding: "12px 16px",
+                    fontFamily: '"Nunito", sans-serif',
+                    fontSize: "0.95rem",
+                    color: active ? "#00C7B1" : "rgba(255,255,255,0.7)",
+                    textDecoration: "none",
+                    borderRadius: "6px",
+                    background: active ? "rgba(0,199,177,0.08)" : "transparent",
+                  }}
+                >
+                  {n.label}
+                </Link>
+              );
+            })}
             <Link
               to="/register"
               style={{
@@ -198,12 +209,13 @@ export default function Layout() {
             </div>
 
             {/* Quick links */}
-            <div>
+            <nav aria-label="Footer navigation">
               <h4 style={{ fontFamily: '"Poppins", sans-serif', fontWeight: 600, fontSize: "0.8rem", color: "#00C7B1", letterSpacing: "0.12em", textTransform: "uppercase", marginBottom: "12px" }}>Navigation</h4>
               {NAV.map((n) => (
                 <Link
                   key={n.to}
                   to={n.to}
+                  aria-current={location.pathname === n.to ? "page" : undefined}
                   style={{ display: "block", fontFamily: '"Nunito", sans-serif', fontSize: "0.8rem", color: "rgba(255,255,255,0.5)", textDecoration: "none", padding: "3px 0", transition: "color 0.2s" }}
                   onMouseEnter={(e) => (e.currentTarget.style.color = "#fff")}
                   onMouseLeave={(e) => (e.currentTarget.style.color = "rgba(255,255,255,0.5)")}
@@ -211,7 +223,7 @@ export default function Layout() {
                   {n.label}
                 </Link>
               ))}
-            </div>
+            </nav>
 
             {/* Services */}
             <div>

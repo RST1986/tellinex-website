@@ -1,0 +1,29 @@
+{
+  "authority": "TXS / Quiet Instrument",
+  "sourceRepository": "RST1986/tellinex-frontend",
+  "sourcePath": "ui-registry",
+  "mode": "NORMALIZE_EXISTING",
+  "direct21stImportsAllowed": false,
+  "productionDeploymentChanged": false,
+  "adoptions": [
+    {
+      "registryComponent": "tlx-surface-card",
+      "registrySourceBlob": "3e563423718ccc5158efb34ed8a4bc503c969b9f",
+      "localEquivalent": "src/app/components/ui/card.tsx",
+      "consumer": "src/app/components/NetworkBuildStatus.tsx",
+      "state": "CONSUMED"
+    },
+    {
+      "registryComponent": "tlx-status-badge",
+      "registrySourceBlob": "6e5d838766d4316d2b04e3fd955d326fa40b0c44",
+      "localEquivalent": "src/app/components/ui/badge.tsx",
+      "consumer": "src/app/components/NetworkBuildStatus.tsx",
+      "state": "CONSUMED"
+    }
+  ],
+  "nextTargets": [
+    "Public navigation semantic normalisation",
+    "AI chat status and surface normalisation",
+    "Tellinex TXS token aliases for public web"
+  ]
+}

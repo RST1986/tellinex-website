@@ -25,6 +25,7 @@
   --tlx-border-medium: rgba(0, 199, 177, 0.15);
   --tlx-border-strong: rgba(0, 199, 177, 0.25);
 
+  --tlx-glow-primary-soft: rgba(0, 199, 177, 0.3);
   --tlx-glow-primary: rgba(0, 199, 177, 0.35);
   --tlx-glow-accent: rgba(163, 230, 53, 0.3);
   --tlx-glow-accent-soft: rgba(163, 230, 53, 0.4);

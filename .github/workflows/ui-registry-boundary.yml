@@ -1,0 +1,29 @@
+name: UI Registry Boundary
+
+on:
+  pull_request:
+    paths:
+      - 'src/**'
+      - 'scripts/check-ui-registry-boundary.mjs'
+      - 'docs/UI_REGISTRY_ABSORPTION_WAVE_01.md'
+      - '.github/workflows/ui-registry-boundary.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'src/**'
+      - 'scripts/check-ui-registry-boundary.mjs'
+      - '.github/workflows/ui-registry-boundary.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  boundary:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Reject direct 21st.dev product imports
+        run: node scripts/check-ui-registry-boundary.mjs

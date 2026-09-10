@@ -70,8 +70,8 @@
     ]
   },
   "nextTargets": [
-    "Re-measure Layout after utility and Button normalisation",
-    "Use hotspot ranking to choose between SpaceBackground tokenisation and remaining AI/Layout inline styles",
-    "Continue reducing bespoke UI without changing commercial truth or AI authority"
+    "Re-measure AIChatWidget after utility normalisation and keep inlineStyles at zero",
+    "Evaluate SpaceBackground separately because decorative rendering must not be forced into generic UI primitives",
+    "Reduce remaining low-risk Website bespoke presentation without changing commercial truth or AI authority"
   ]
 }

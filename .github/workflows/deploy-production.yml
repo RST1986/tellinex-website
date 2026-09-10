@@ -158,3 +158,11 @@ jobs:
           grep -q 'will be sent through the address supplied' /tmp/live.js && { echo "::error::Unproven email promise is live"; exit 1; }
           curl -sf https://tellinex.com/sitemap.xml | grep -q '/availability' || { echo "::error::sitemap missing /availability"; exit 1; }
           echo "PRODUCTION_SHA=$GITHUB_SHA BUNDLE_SHA256=$BUNDLE_SHA256 verified live"
+
+      # Prove the AI Pages Function is mounted and that its two required
+      # server-side bindings reach the Turnstile boundary. This is deliberately
+      # a negative-path probe: no valid Turnstile token is sent, so siteverify
+      # and the paid Anthropic upstream are never called.
+      - name: AI runtime configuration proof
+        if: steps.guard.outputs.ready == 'yes'
+        run: node scripts/probe-production-ai-runtime.mjs

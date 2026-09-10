@@ -100,14 +100,24 @@
     "scope": "src/app/components excluding src/app/components/ui",
     "targetActionableScore": 0,
     "exceptionPolicy": "raw heuristic debt remains visible; only explicit contract-backed technical exceptions are subtracted from actionableScore",
+    "baseline": {
+      "state": "CONVERGED_WITH_DOCUMENTED_EXCEPTIONS",
+      "inlineStyles": 0,
+      "rawButtons": 0,
+      "hardcodedColors": 2,
+      "documentedHardcodedColorExceptions": 2,
+      "actionableHardcodedColors": 0,
+      "heuristicScore": 2,
+      "actionableScore": 0
+    },
     "governedRegressionPolicy": [
       "inlineStyles must not increase in governed consumers",
       "rawButtons must not increase in governed consumers"
     ]
   },
   "nextTargets": [
-    "Confirm actionableScore=0 through the Wave 14 CI artifact",
+    "Use future bespoke-UI reports to detect new actionable debt rather than reopening converged surfaces",
     "Keep the two bounded Layout GSAP interpolation literals visible as documented exceptions unless animation-equivalence testing justifies removal",
-    "Use future bespoke-UI reports to detect new actionable debt rather than reopening converged surfaces"
+    "Do not expand 21st.dev or generic-registry adoption into non-interactive rendering or richer product semantics without a separate review"
   ]
 }

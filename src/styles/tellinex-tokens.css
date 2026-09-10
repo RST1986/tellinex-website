@@ -6,8 +6,10 @@
   --tlx-bg-dialog: rgba(4, 13, 20, 0.97);
 
   --tlx-text: #ffffff;
+  --tlx-text-high: rgba(255, 255, 255, 0.85);
   --tlx-text-emphasis-muted: rgba(255, 255, 255, 0.7);
   --tlx-text-muted: rgba(255, 255, 255, 0.6);
+  --tlx-text-subtle: rgba(255, 255, 255, 0.55);
   --tlx-text-soft: rgba(255, 255, 255, 0.5);
   --tlx-text-caption: rgba(255, 255, 255, 0.45);
   --tlx-text-faint: rgba(255, 255, 255, 0.4);
@@ -19,10 +21,14 @@
   --tlx-accent: #a3e635;
 
   --tlx-surface: rgba(0, 199, 177, 0.04);
+  --tlx-surface-message: rgba(0, 199, 177, 0.07);
   --tlx-surface-2: rgba(0, 199, 177, 0.08);
+  --tlx-accent-surface: rgba(163, 230, 53, 0.12);
+  --tlx-input-surface: rgba(255, 255, 255, 0.04);
   --tlx-border-soft: rgba(0, 199, 177, 0.1);
   --tlx-border: rgba(0, 199, 177, 0.12);
   --tlx-border-medium: rgba(0, 199, 177, 0.15);
+  --tlx-border-interactive: rgba(0, 199, 177, 0.2);
   --tlx-border-strong: rgba(0, 199, 177, 0.25);
 
   --tlx-glow-primary-soft: rgba(0, 199, 177, 0.3);

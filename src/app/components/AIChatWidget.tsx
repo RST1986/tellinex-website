@@ -103,8 +103,8 @@ export default function AIChatWidget() {
             right: "20px",
             width: "min(380px, calc(100vw - 40px))",
             maxHeight: "min(560px, calc(100vh - 120px))",
-            background: "rgba(4,13,20,0.97)",
-            border: "1px solid rgba(0,199,177,0.25)",
+            background: "var(--tlx-bg-dialog)",
+            border: "1px solid var(--tlx-border-strong)",
             borderRadius: "16px",
             overflow: "hidden",
             zIndex: 9999,
@@ -112,10 +112,10 @@ export default function AIChatWidget() {
             flexDirection: "column",
           }}
         >
-          <div style={{ padding: "14px 16px", borderBottom: "1px solid rgba(0,199,177,0.12)", display: "flex", justifyContent: "space-between" }}>
+          <div style={{ padding: "14px 16px", borderBottom: "1px solid var(--tlx-border)", display: "flex", justifyContent: "space-between" }}>
             <div>
-              <div style={{ fontFamily: '"Poppins", sans-serif', fontSize: "13px", fontWeight: 600, color: "#fff" }}>Tellinex assistant</div>
-              <div style={{ fontSize: "10px", color: "rgba(255,255,255,0.45)" }}>AI is not commercial authority</div>
+              <div style={{ fontFamily: "var(--tlx-font-display)", fontSize: "13px", fontWeight: 600, color: "var(--tlx-text)" }}>Tellinex assistant</div>
+              <div style={{ fontSize: "10px", color: "var(--tlx-text-caption)" }}>AI is not commercial authority</div>
             </div>
             <Button
               type="button"
@@ -123,7 +123,7 @@ export default function AIChatWidget() {
               size="icon"
               onClick={() => setIsOpen(false)}
               aria-label="Close assistant"
-              style={{ background: "transparent", color: "#fff", cursor: "pointer" }}
+              style={{ background: "transparent", color: "var(--tlx-text)", cursor: "pointer" }}
             >
               ✕
             </Button>
@@ -141,14 +141,14 @@ export default function AIChatWidget() {
               <p
                 key={`${message.role}-${index}`}
                 style={{
-                  fontFamily: '"Nunito", sans-serif',
+                  fontFamily: "var(--tlx-font-sans)",
                   fontSize: "13px",
-                  color: "rgba(255,255,255,0.85)",
+                  color: "var(--tlx-text-high)",
                   margin: 0,
                   lineHeight: 1.55,
                   alignSelf: message.role === "user" ? "flex-end" : "flex-start",
                   maxWidth: "88%",
-                  background: message.role === "user" ? "rgba(163,230,53,0.12)" : "rgba(0,199,177,0.07)",
+                  background: message.role === "user" ? "var(--tlx-accent-surface)" : "var(--tlx-surface-message)",
                   borderRadius: "12px",
                   padding: "10px 14px",
                 }}
@@ -156,7 +156,7 @@ export default function AIChatWidget() {
                 {message.content}
               </p>
             ))}
-            {isTyping && <p role="status" style={{ color: "rgba(255,255,255,0.4)", fontSize: "12px" }}>Thinking…</p>}
+            {isTyping && <p role="status" style={{ color: "var(--tlx-text-faint)", fontSize: "12px" }}>Thinking…</p>}
             {messages.length === 1 && !isTyping && privacyAccepted && (
               <div style={{ display: "flex", flexWrap: "wrap", gap: "6px" }}>
                 {QUICK_REPLIES.map((reply) => (
@@ -167,7 +167,7 @@ export default function AIChatWidget() {
                     size="sm"
                     disabled={!turnstileToken}
                     onClick={() => void sendMessage(reply)}
-                    style={{ fontFamily: '"Nunito", sans-serif', fontSize: "11px", color: "#00C7B1", border: "1px solid rgba(0,199,177,0.2)", padding: "6px 12px", borderRadius: "14px", cursor: turnstileToken ? "pointer" : "default", background: "rgba(0,199,177,0.04)" }}
+                    style={{ fontFamily: "var(--tlx-font-sans)", fontSize: "11px", color: "var(--tlx-primary)", border: "1px solid var(--tlx-border-interactive)", padding: "6px 12px", borderRadius: "14px", cursor: turnstileToken ? "pointer" : "default", background: "var(--tlx-surface)" }}
                   >
                     {reply}
                   </Button>
@@ -177,8 +177,8 @@ export default function AIChatWidget() {
             <div ref={messagesEndRef} />
           </div>
 
-          <div style={{ padding: "10px 12px", borderTop: "1px solid rgba(0,199,177,0.1)" }}>
-            <label style={{ display: "flex", gap: "8px", alignItems: "flex-start", fontFamily: '"Nunito", sans-serif', fontSize: "11px", color: "rgba(255,255,255,0.55)", marginBottom: "10px" }}>
+          <div style={{ padding: "10px 12px", borderTop: "1px solid var(--tlx-border-soft)" }}>
+            <label style={{ display: "flex", gap: "8px", alignItems: "flex-start", fontFamily: "var(--tlx-font-sans)", fontSize: "11px", color: "var(--tlx-text-subtle)", marginBottom: "10px" }}>
               <input type="checkbox" checked={privacyAccepted} onChange={(event) => setPrivacyAccepted(event.target.checked)} />
               I understand this conversation may be processed by an AI assistant and that I should not send unnecessary personal data.
             </label>
@@ -192,7 +192,10 @@ export default function AIChatWidget() {
               }}
             />
             {error && (
-              <Alert variant="destructive" style={{ margin: "10px 0" }}>
+              <Alert
+                variant="destructive"
+                style={{ margin: "10px 0", background: "var(--tlx-bg-dialog)", borderColor: "var(--tlx-border-strong)" }}
+              >
                 <AlertTitle>Assistant unavailable</AlertTitle>
                 <AlertDescription>{error}</AlertDescription>
               </Alert>
@@ -214,13 +217,13 @@ export default function AIChatWidget() {
                 placeholder={privacyAccepted ? "Ask about Tellinex…" : "Accept the privacy notice first"}
                 disabled={isTyping || !privacyAccepted}
                 maxLength={4000}
-                style={{ flex: 1, background: "rgba(255,255,255,0.04)", border: "1px solid rgba(0,199,177,0.12)", borderRadius: "20px", padding: "10px 16px", color: "#fff", fontFamily: '"Nunito", sans-serif', fontSize: "13px" }}
+                style={{ flex: 1, background: "var(--tlx-input-surface)", border: "1px solid var(--tlx-border)", borderRadius: "20px", padding: "10px 16px", color: "var(--tlx-text)", fontFamily: "var(--tlx-font-sans)", fontSize: "13px" }}
               />
               <Button
                 type="submit"
                 size="sm"
                 disabled={isTyping || !input.trim() || !privacyAccepted || !turnstileToken}
-                style={{ border: "none", borderRadius: "20px", padding: "0 12px", background: "#A3E635", color: "#040d14", cursor: isTyping || !input.trim() || !privacyAccepted || !turnstileToken ? "default" : "pointer" }}
+                style={{ border: "none", borderRadius: "20px", padding: "0 12px", background: "var(--tlx-accent)", color: "var(--tlx-primary-contrast)", cursor: isTyping || !input.trim() || !privacyAccepted || !turnstileToken ? "default" : "pointer" }}
               >
                 Send
               </Button>
@@ -241,13 +244,13 @@ export default function AIChatWidget() {
           bottom: "20px",
           right: "20px",
           zIndex: 9999,
-          background: "rgba(0,199,177,0.08)",
-          border: "1px solid rgba(0,199,177,0.25)",
+          background: "var(--tlx-surface-2)",
+          border: "1px solid var(--tlx-border-strong)",
           borderRadius: "28px",
           padding: "10px 16px",
-          color: "#fff",
+          color: "var(--tlx-text)",
           cursor: "pointer",
-          fontFamily: '"Poppins", sans-serif',
+          fontFamily: "var(--tlx-font-display)",
           fontSize: "12px",
         }}
       >

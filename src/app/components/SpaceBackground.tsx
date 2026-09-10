@@ -9,18 +9,17 @@ import { useEffect, useRef } from 'react';
 ───────────────────────────────────────────── */
 
 interface StreamLine {
-  // Control points for a cubic bezier
-  x0: number; y0: number; // start
-  cx1: number; cy1: number; // ctrl 1
-  cx2: number; cy2: number; // ctrl 2
-  x1: number; y1: number; // end
+  x0: number; y0: number;
+  cx1: number; cy1: number;
+  cx2: number; cy2: number;
+  x1: number; y1: number;
   color1: string;
   color2: string;
-  width: number;     // stroke width
-  speed: number;     // how fast the glow dot travels
-  progress: number;  // 0 → 1 along the curve
-  glowLen: number;   // tail length (0..1)
-  delay: number;     // initial offset
+  width: number;
+  speed: number;
+  progress: number;
+  glowLen: number;
+  delay: number;
   opacity: number;
 }
 
@@ -29,7 +28,60 @@ interface Star {
   op: number; phase: number; speed: number;
 }
 
-// Evaluate cubic bezier at t → {x, y}
+interface CanvasPalette {
+  streamPrimary: string;
+  streamAccent: string;
+  streamPrimaryLight: string;
+  streamAccentLight: string;
+  streamAccentDark: string;
+  bgNear: string;
+  bgMid: string;
+  bgFar: string;
+  transparent: string;
+  primaryGlow: string;
+  primaryGlowSoft: string;
+  accentGlow: string;
+  accentGlowSoft: string;
+  star: string;
+  atmosphereInner: string;
+  atmosphereEdge: string;
+  globeRim: string;
+  globeBody: string;
+  globeCore: string;
+  wireframe: string;
+  grid: string;
+}
+
+function readCanvasPalette(): CanvasPalette | null {
+  const styles = getComputedStyle(document.documentElement);
+  const token = (name: string) => styles.getPropertyValue(name).trim();
+  const palette: CanvasPalette = {
+    streamPrimary: token('--tlx-canvas-stream-primary'),
+    streamAccent: token('--tlx-canvas-stream-accent'),
+    streamPrimaryLight: token('--tlx-canvas-stream-primary-light'),
+    streamAccentLight: token('--tlx-canvas-stream-accent-light'),
+    streamAccentDark: token('--tlx-canvas-stream-accent-dark'),
+    bgNear: token('--tlx-canvas-bg-near'),
+    bgMid: token('--tlx-canvas-bg-mid'),
+    bgFar: token('--tlx-canvas-bg-far'),
+    transparent: token('--tlx-canvas-transparent'),
+    primaryGlow: token('--tlx-canvas-primary-glow'),
+    primaryGlowSoft: token('--tlx-canvas-primary-glow-soft'),
+    accentGlow: token('--tlx-canvas-accent-glow'),
+    accentGlowSoft: token('--tlx-canvas-accent-glow-soft'),
+    star: token('--tlx-canvas-star'),
+    atmosphereInner: token('--tlx-canvas-atmosphere-inner'),
+    atmosphereEdge: token('--tlx-canvas-atmosphere-edge'),
+    globeRim: token('--tlx-canvas-globe-rim'),
+    globeBody: token('--tlx-canvas-globe-body'),
+    globeCore: token('--tlx-canvas-globe-core'),
+    wireframe: token('--tlx-canvas-wireframe'),
+    grid: token('--tlx-canvas-grid'),
+  };
+
+  return Object.values(palette).every(Boolean) ? palette : null;
+}
+
 function bezierPt(t: number, x0: number, y0: number, cx1: number, cy1: number,
   cx2: number, cy2: number, x1: number, y1: number) {
   const mt = 1 - t;
@@ -40,7 +92,6 @@ function bezierPt(t: number, x0: number, y0: number, cx1: number, cy1: number,
   };
 }
 
-// Draw one static bezier line with a gradient stroke
 function drawStaticLine(
   ctx: CanvasRenderingContext2D,
   line: StreamLine,
@@ -65,7 +116,6 @@ function drawStaticLine(
   ctx.restore();
 }
 
-// Draw the traveling glow dot + tail along a bezier
 function drawTravelingGlow(
   ctx: CanvasRenderingContext2D,
   line: StreamLine
@@ -73,7 +123,6 @@ function drawTravelingGlow(
   const { x0, y0, cx1, cy1, cx2, cy2, x1, y1,
     color1, color2, width, progress, glowLen, opacity } = line;
 
-  // Tail: draw segments from (progress-glowLen) → progress
   const STEPS = 40;
   const tStart = Math.max(0, progress - glowLen);
 
@@ -85,12 +134,9 @@ function drawTravelingGlow(
 
     const pa = bezierPt(ta, x0, y0, cx1, cy1, cx2, cy2, x1, y1);
     const pb = bezierPt(tb, x0, y0, cx1, cy1, cx2, cy2, x1, y1);
-
-    // Blend color1→color2 along the tail
     const frac = i / STEPS;
-    const fadeAlpha = (frac * frac) * opacity; // bright at head, fade at tail
+    const fadeAlpha = (frac * frac) * opacity;
 
-    // Interpolate hue between color1 and color2
     const grad = ctx.createLinearGradient(pa.x, pa.y, pb.x, pb.y);
     grad.addColorStop(0, color1 + hexAlpha(fadeAlpha * 0.6));
     grad.addColorStop(1, color2 + hexAlpha(fadeAlpha));
@@ -105,7 +151,6 @@ function drawTravelingGlow(
     ctx.stroke();
   }
 
-  // Head bright dot glow
   if (progress > 0 && progress <= 1) {
     const head = bezierPt(progress, x0, y0, cx1, cy1, cx2, cy2, x1, y1);
     const glowR = width * 4;
@@ -127,40 +172,32 @@ function hexAlpha(a: number): string {
     .toString(16).padStart(2, '0');
 }
 
-// Build a set of stream lines for a given canvas size
-function buildStreams(W: number, H: number): StreamLine[] {
+function buildStreams(W: number, H: number, palette: CanvasPalette): StreamLine[] {
   const lines: StreamLine[] = [];
-
-  // Brand palette: teal (#00C7B1) + lime (#A3E635) only
   const palettes = [
-    ['#00c7b1', '#a3e635'],  // teal → lime
-    ['#a3e635', '#00c7b1'],  // lime → teal
-    ['#00e8cf', '#a3e635'],  // light teal → lime
-    ['#00c7b1', '#c8f564'],  // teal → light lime
-    ['#a3e635', '#00e8cf'],  // lime → light teal
-    ['#7ed320', '#00c7b1'],  // dark lime → teal
+    [palette.streamPrimary, palette.streamAccent],
+    [palette.streamAccent, palette.streamPrimary],
+    [palette.streamPrimaryLight, palette.streamAccent],
+    [palette.streamPrimary, palette.streamAccentLight],
+    [palette.streamAccent, palette.streamPrimaryLight],
+    [palette.streamAccentDark, palette.streamPrimary],
   ];
 
-  // ── Bundle 1: Connecting Globe to Globe (Left to Right High Arc)
   const BUNDLE1 = 8;
   for (let i = 0; i < BUNDLE1; i++) {
     const spread = (i - BUNDLE1 / 2) * (H * 0.04);
     const pal = palettes[i % palettes.length];
-    
-    // Start from left side of globe
     const startX = W * 0.2 + spread * 1.5;
-    const startY = H; 
-    
-    // Land on right side of globe
+    const startY = H;
     const endX = W * 0.85 + spread * 2;
     const endY = H;
 
     lines.push({
       x0: startX,
-      y0: startY, 
-      cx1: startX - W * 0.1,  // arc up and left
+      y0: startY,
+      cx1: startX - W * 0.1,
       cy1: H * 0.3,
-      cx2: endX + W * 0.1,    // curve back down
+      cx2: endX + W * 0.1,
       cy2: H * 0.2 + spread,
       x1: endX,
       y1: endY,
@@ -175,26 +212,21 @@ function buildStreams(W: number, H: number): StreamLine[] {
     });
   }
 
-  // ── Bundle 2: Connecting Globe to Globe (Right to Left Mid Arc)
   const BUNDLE2 = 5;
   for (let i = 0; i < BUNDLE2; i++) {
     const spread = (i - BUNDLE2 / 2) * (H * 0.05);
     const pal = palettes[(i + 2) % palettes.length];
-    
-    // Start from right side of globe
     const startX = W * 0.7 + spread;
     const startY = H;
-    
-    // Land on mid-left
     const endX = W * 0.3 - spread * 2;
     const endY = H;
 
     lines.push({
       x0: startX,
       y0: startY,
-      cx1: startX + W * 0.15, // push right
+      cx1: startX + W * 0.15,
       cy1: H * 0.45,
-      cx2: endX - W * 0.05,   // curl in
+      cx2: endX - W * 0.05,
       cy2: H * 0.4 + spread,
       x1: endX,
       y1: endY,
@@ -209,17 +241,12 @@ function buildStreams(W: number, H: number): StreamLine[] {
     });
   }
 
-  // ── Bundle 3: Globe equator wrapping tightly
   const BUNDLE3 = 4;
   for (let i = 0; i < BUNDLE3; i++) {
     const spread = (i - BUNDLE3 / 2) * (H * 0.03);
     const pal = palettes[(i + 1) % palettes.length];
-    
-    // Start bottom left curve
     const startX = W * 0.15;
     const startY = H;
-    
-    // End bottom right curve
     const endX = W * 0.95;
     const endY = H;
 
@@ -227,7 +254,7 @@ function buildStreams(W: number, H: number): StreamLine[] {
       x0: startX,
       y0: startY,
       cx1: W * 0.25,
-      cy1: H * 0.7 + spread, // low arc
+      cy1: H * 0.7 + spread,
       cx2: W * 0.75,
       cy2: H * 0.7 + spread,
       x1: endX,
@@ -255,13 +282,15 @@ export default function SpaceBackground() {
     if (!canvas) return;
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
+    const palette = readCanvasPalette();
+    if (!palette) return;
+    const canvasPalette: CanvasPalette = palette;
 
     let W = window.innerWidth;
     let H = window.innerHeight;
     canvas.width = W;
     canvas.height = H;
 
-    // Stars
     const STARS: Star[] = Array.from({ length: 160 }, () => ({
       x: Math.random() * W,
       y: Math.random() * H,
@@ -271,99 +300,86 @@ export default function SpaceBackground() {
       speed: Math.random() * 0.018 + 0.005,
     }));
 
-    let streams = buildStreams(W, H);
+    let streams = buildStreams(W, H, canvasPalette);
 
     function draw() {
       if (!ctx) return;
-      // ── Background gradient
       ctx.clearRect(0, 0, W, H);
       const bg = ctx.createRadialGradient(W * 0.4, H * 0.4, 0, W * 0.5, H * 0.5, Math.hypot(W, H) * 0.7);
-      bg.addColorStop(0, '#0d1f35');
-      bg.addColorStop(0.55, '#070f1c');
-      bg.addColorStop(1, '#030710');
+      bg.addColorStop(0, canvasPalette.bgNear);
+      bg.addColorStop(0.55, canvasPalette.bgMid);
+      bg.addColorStop(1, canvasPalette.bgFar);
       ctx.fillStyle = bg;
       ctx.fillRect(0, 0, W, H);
 
-      // Brand glow — teal pool bottom-left
       const glow = ctx.createRadialGradient(W * 0.05, H * 0.85, 0, W * 0.05, H * 0.85, W * 0.55);
-      glow.addColorStop(0, 'rgba(0,199,177,0.12)');
-      glow.addColorStop(0.5, 'rgba(0,199,177,0.05)');
-      glow.addColorStop(1, 'rgba(0,0,0,0)');
+      glow.addColorStop(0, canvasPalette.primaryGlow);
+      glow.addColorStop(0.5, canvasPalette.primaryGlowSoft);
+      glow.addColorStop(1, canvasPalette.transparent);
       ctx.fillStyle = glow;
       ctx.fillRect(0, 0, W, H);
 
-      // Brand glow — lime pool top-right
       const glow2 = ctx.createRadialGradient(W * 0.92, H * 0.08, 0, W * 0.92, H * 0.08, W * 0.4);
-      glow2.addColorStop(0, 'rgba(163,230,53,0.09)');
-      glow2.addColorStop(0.5, 'rgba(163,230,53,0.03)');
-      glow2.addColorStop(1, 'rgba(0,0,0,0)');
+      glow2.addColorStop(0, canvasPalette.accentGlow);
+      glow2.addColorStop(0.5, canvasPalette.accentGlowSoft);
+      glow2.addColorStop(1, canvasPalette.transparent);
       ctx.fillStyle = glow2;
       ctx.fillRect(0, 0, W, H);
 
-      // ── Stars
       for (const s of STARS) {
         s.phase += s.speed;
         const alpha = s.op * (0.5 + 0.5 * Math.sin(s.phase));
         ctx.save();
         ctx.globalAlpha = alpha;
-        ctx.fillStyle = '#cfe8ff';
+        ctx.fillStyle = canvasPalette.star;
         ctx.beginPath();
         ctx.arc(s.x, s.y, s.r, 0, Math.PI * 2);
         ctx.fill();
         ctx.restore();
       }
 
-      // ── Globe (Bottom Center)
       const globeX = W * 0.5;
-      const globeY = H + (W > 768 ? W * 0.4 : W * 0.6); // Center of globe is off-screen below
-      const globeR = W > 768 ? W * 0.55 : W * 0.8;      // Radius to make top peek up
+      const globeY = H + (W > 768 ? W * 0.4 : W * 0.6);
+      const globeR = W > 768 ? W * 0.55 : W * 0.8;
 
-      // Inner globe atmosphere glow
       const atmosGrad = ctx.createRadialGradient(globeX, globeY, globeR * 0.8, globeX, globeY, globeR * 1.05);
-      atmosGrad.addColorStop(0, 'rgba(0,199,177,0.15)');
-      atmosGrad.addColorStop(0.7, 'rgba(0,199,177,0.4)');
-      atmosGrad.addColorStop(1, 'rgba(0,0,0,0)');
-      
+      atmosGrad.addColorStop(0, canvasPalette.atmosphereInner);
+      atmosGrad.addColorStop(0.7, canvasPalette.atmosphereEdge);
+      atmosGrad.addColorStop(1, canvasPalette.transparent);
+
       ctx.save();
       ctx.beginPath();
       ctx.arc(globeX, globeY, globeR * 1.05, 0, Math.PI * 2);
       ctx.fillStyle = atmosGrad;
       ctx.fill();
-      
-      // Solid globe body (Very dark space blue, blends mostly with background)
+
       const globeGrad = ctx.createRadialGradient(globeX, globeY - globeR, 0, globeX, globeY, globeR);
-      globeGrad.addColorStop(0, '#041021'); // Top rim edge
-      globeGrad.addColorStop(0.4, '#030710');  // Body
-      globeGrad.addColorStop(1, '#000000');
-      
+      globeGrad.addColorStop(0, canvasPalette.globeRim);
+      globeGrad.addColorStop(0.4, canvasPalette.globeBody);
+      globeGrad.addColorStop(1, canvasPalette.globeCore);
+
       ctx.beginPath();
       ctx.arc(globeX, globeY, globeR, 0, Math.PI * 2);
       ctx.fillStyle = globeGrad;
       ctx.fill();
 
-      // Globe wireframe outline/grid hint at top edge
       ctx.beginPath();
       ctx.arc(globeX, globeY, globeR, Math.PI, Math.PI * 2);
       ctx.lineWidth = 1;
-      ctx.strokeStyle = 'rgba(0,199,177,0.3)';
+      ctx.strokeStyle = canvasPalette.wireframe;
       ctx.stroke();
 
-      // Horizontal equators curving down the globe
-      for(let i=0; i<3; i++) {
-        const offset = globeR * 0.2 * (i+1);
+      for (let i = 0; i < 3; i++) {
+        const offset = globeR * 0.2 * (i + 1);
         ctx.beginPath();
         ctx.ellipse(globeX, globeY + offset, globeR * 0.95, globeR * 0.2, 0, Math.PI, Math.PI * 2);
-        ctx.strokeStyle = 'rgba(0,199,177,0.06)';
+        ctx.strokeStyle = canvasPalette.grid;
         ctx.stroke();
       }
       ctx.restore();
 
-      // ── Fiber-optic stream lines
       for (const line of streams) {
-        // Draw the faint static base trail
         drawStaticLine(ctx, line, line.opacity * 0.4);
-
-        // Advance and draw the traveling glow
         line.progress += line.speed;
         if (line.progress > 1 + line.glowLen) {
           line.progress = -line.glowLen * 0.5;
@@ -381,7 +397,7 @@ export default function SpaceBackground() {
       H = window.innerHeight;
       canvas.width = W;
       canvas.height = H;
-      streams = buildStreams(W, H);
+      streams = buildStreams(W, H, canvasPalette);
       for (const s of STARS) {
         s.x = Math.random() * W;
         s.y = Math.random() * H;
@@ -394,17 +410,5 @@ export default function SpaceBackground() {
     };
   }, []);
 
-  return (
-    <canvas
-      ref={canvasRef}
-      style={{
-        position: 'fixed',
-        inset: 0,
-        width: '100%',
-        height: '100%',
-        zIndex: 0,
-        pointerEvents: 'none',
-      }}
-    />
-  );
+  return <canvas ref={canvasRef} className="pointer-events-none fixed inset-0 z-0 h-full w-full" />;
 }

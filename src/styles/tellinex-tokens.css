@@ -37,6 +37,28 @@
   --tlx-glow-accent-soft: rgba(163, 230, 53, 0.4);
   --tlx-glow-accent-strong: rgba(163, 230, 53, 0.5);
 
+  --tlx-canvas-stream-primary: #00c7b1;
+  --tlx-canvas-stream-accent: #a3e635;
+  --tlx-canvas-stream-primary-light: #00e8cf;
+  --tlx-canvas-stream-accent-light: #c8f564;
+  --tlx-canvas-stream-accent-dark: #7ed320;
+  --tlx-canvas-bg-near: #0d1f35;
+  --tlx-canvas-bg-mid: #070f1c;
+  --tlx-canvas-bg-far: #030710;
+  --tlx-canvas-transparent: rgba(0, 0, 0, 0);
+  --tlx-canvas-primary-glow: rgba(0, 199, 177, 0.12);
+  --tlx-canvas-primary-glow-soft: rgba(0, 199, 177, 0.05);
+  --tlx-canvas-accent-glow: rgba(163, 230, 53, 0.09);
+  --tlx-canvas-accent-glow-soft: rgba(163, 230, 53, 0.03);
+  --tlx-canvas-star: #cfe8ff;
+  --tlx-canvas-atmosphere-inner: rgba(0, 199, 177, 0.15);
+  --tlx-canvas-atmosphere-edge: rgba(0, 199, 177, 0.4);
+  --tlx-canvas-globe-rim: #041021;
+  --tlx-canvas-globe-body: #030710;
+  --tlx-canvas-globe-core: #000000;
+  --tlx-canvas-wireframe: rgba(0, 199, 177, 0.3);
+  --tlx-canvas-grid: rgba(0, 199, 177, 0.06);
+
   --tlx-font-sans: "Nunito", sans-serif;
   --tlx-font-display: "Poppins", sans-serif;
 }

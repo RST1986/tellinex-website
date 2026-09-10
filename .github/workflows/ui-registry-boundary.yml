@@ -2,31 +2,9 @@ name: UI Registry Boundary
 
 on:
   pull_request:
-    paths:
-      - 'src/**'
-      - 'scripts/check-ui-registry-boundary.mjs'
-      - 'scripts/check-ui-registry-adoption.mjs'
-      - 'scripts/check-ai-chat-ui-contract.mjs'
-      - 'scripts/check-txs-public-tokens.mjs'
-      - 'scripts/check-space-background-tokens.mjs'
-      - 'scripts/check-legal-notice-ui.mjs'
-      - 'scripts/measure-ui-bespoke.mjs'
-      - 'docs/UI_REGISTRY_ABSORPTION_WAVE_01.md'
-      - 'docs/UI_REGISTRY_ADOPTION.json'
-      - '.github/workflows/ui-registry-boundary.yml'
+    branches: [main]
   push:
     branches: [main]
-    paths:
-      - 'src/**'
-      - 'scripts/check-ui-registry-boundary.mjs'
-      - 'scripts/check-ui-registry-adoption.mjs'
-      - 'scripts/check-ai-chat-ui-contract.mjs'
-      - 'scripts/check-txs-public-tokens.mjs'
-      - 'scripts/check-space-background-tokens.mjs'
-      - 'scripts/check-legal-notice-ui.mjs'
-      - 'scripts/measure-ui-bespoke.mjs'
-      - 'docs/UI_REGISTRY_ADOPTION.json'
-      - '.github/workflows/ui-registry-boundary.yml'
 
 permissions:
   contents: read

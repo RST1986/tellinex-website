@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import TurnstileWidget, { type TurnstileWidgetHandle } from "./TurnstileWidget";
+import { Alert, AlertDescription, AlertTitle } from "./ui/alert";
+import { Button } from "./ui/button";
 import { POSITIONING, RESILIENCE_PUBLIC_WORDING } from "../content/commercialFacts";
 
 const QUICK_REPLIES = [
@@ -32,17 +34,27 @@ export default function AIChatWidget() {
   }, [messages, isTyping]);
 
   useEffect(() => {
-    if (isOpen && inputRef.current) inputRef.current.focus();
-  }, [isOpen]);
+    if (isOpen && privacyAccepted && inputRef.current) inputRef.current.focus();
+  }, [isOpen, privacyAccepted]);
 
   const handleTurnstileToken = useCallback((token: string | null) => {
     setTurnstileToken(token);
     if (token) setError(null);
   }, []);
 
+  const resetSecurityChallenge = useCallback(() => {
+    setTurnstileToken(null);
+    turnstileRef.current?.reset();
+  }, []);
+
   const sendMessage = async (text: string) => {
-    if (!text.trim() || !privacyAccepted || !turnstileToken) return;
-    const userMsg: Message = { role: "user", content: text.trim() };
+    const normalized = text.trim();
+    if (!normalized || isTyping || !privacyAccepted || !turnstileToken) return;
+
+    const securityToken = turnstileToken;
+    setTurnstileToken(null);
+
+    const userMsg: Message = { role: "user", content: normalized };
     const updatedMessages = [...messages, userMsg];
     setMessages(updatedMessages);
     setInput("");
@@ -55,7 +67,7 @@ export default function AIChatWidget() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           messages: updatedMessages.map((message) => ({ role: message.role, content: message.content })),
-          turnstile_token: turnstileToken,
+          turnstile_token: securityToken,
           privacy_acknowledged: true,
         }),
       });
@@ -63,13 +75,17 @@ export default function AIChatWidget() {
       if (!response.ok) {
         throw new Error(typeof data.message === "string" ? data.message : "Chat is temporarily unavailable.");
       }
-      const reply = data.content?.[0]?.text || "Chat is temporarily unavailable. Email info@tellinex.com.";
-      setMessages((current) => [...current, { role: "assistant", content: reply }]);
-      turnstileRef.current?.reset();
+
+      const reply = data.content?.[0]?.text;
+      if (typeof reply !== "string" || !reply.trim()) {
+        throw new Error("Chat is temporarily unavailable. Email info@tellinex.com.");
+      }
+
+      setMessages((current) => [...current, { role: "assistant", content: reply.trim() }]);
     } catch (sendError) {
       setError(sendError instanceof Error ? sendError.message : "Chat is temporarily unavailable.");
-      turnstileRef.current?.reset();
     } finally {
+      resetSecurityChallenge();
       setIsTyping(false);
     }
   };
@@ -78,6 +94,7 @@ export default function AIChatWidget() {
     <>
       {isOpen && (
         <div
+          id="tellinex-assistant-dialog"
           role="dialog"
           aria-label="Tellinex assistant"
           style={{
@@ -100,12 +117,26 @@ export default function AIChatWidget() {
               <div style={{ fontFamily: '"Poppins", sans-serif', fontSize: "13px", fontWeight: 600, color: "#fff" }}>Tellinex assistant</div>
               <div style={{ fontSize: "10px", color: "rgba(255,255,255,0.45)" }}>AI is not commercial authority</div>
             </div>
-            <button type="button" onClick={() => setIsOpen(false)} aria-label="Close assistant" style={{ background: "transparent", border: "none", color: "#fff", cursor: "pointer" }}>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              onClick={() => setIsOpen(false)}
+              aria-label="Close assistant"
+              style={{ background: "transparent", color: "#fff", cursor: "pointer" }}
+            >
               ✕
-            </button>
+            </Button>
           </div>
 
-          <div style={{ flex: 1, overflowY: "auto", padding: "14px", display: "flex", flexDirection: "column", gap: "12px", minHeight: "240px" }}>
+          <div
+            role="log"
+            aria-label="Tellinex assistant conversation"
+            aria-live="polite"
+            aria-relevant="additions text"
+            aria-busy={isTyping}
+            style={{ flex: 1, overflowY: "auto", padding: "14px", display: "flex", flexDirection: "column", gap: "12px", minHeight: "240px" }}
+          >
             {messages.map((message, index) => (
               <p
                 key={`${message.role}-${index}`}
@@ -125,18 +156,21 @@ export default function AIChatWidget() {
                 {message.content}
               </p>
             ))}
-            {isTyping && <p style={{ color: "rgba(255,255,255,0.4)", fontSize: "12px" }}>Thinking…</p>}
+            {isTyping && <p role="status" style={{ color: "rgba(255,255,255,0.4)", fontSize: "12px" }}>Thinking…</p>}
             {messages.length === 1 && !isTyping && privacyAccepted && (
               <div style={{ display: "flex", flexWrap: "wrap", gap: "6px" }}>
                 {QUICK_REPLIES.map((reply) => (
-                  <button
+                  <Button
                     key={reply}
                     type="button"
+                    variant="outline"
+                    size="sm"
+                    disabled={!turnstileToken}
                     onClick={() => void sendMessage(reply)}
-                    style={{ fontFamily: '"Nunito", sans-serif', fontSize: "11px", color: "#00C7B1", border: "1px solid rgba(0,199,177,0.2)", padding: "6px 12px", borderRadius: "14px", cursor: "pointer", background: "rgba(0,199,177,0.04)" }}
+                    style={{ fontFamily: '"Nunito", sans-serif', fontSize: "11px", color: "#00C7B1", border: "1px solid rgba(0,199,177,0.2)", padding: "6px 12px", borderRadius: "14px", cursor: turnstileToken ? "pointer" : "default", background: "rgba(0,199,177,0.04)" }}
                   >
                     {reply}
-                  </button>
+                  </Button>
                 ))}
               </div>
             )}
@@ -152,10 +186,19 @@ export default function AIChatWidget() {
               ref={turnstileRef}
               action="tellinex_ai_chat"
               onTokenChange={handleTurnstileToken}
-              onUnavailable={() => setError("Security check unavailable. Chat is closed.")}
+              onUnavailable={() => {
+                setTurnstileToken(null);
+                setError("Security check unavailable. Chat is closed.");
+              }}
             />
-            {error && <p role="alert" style={{ color: "#fca5a5", fontSize: "12px" }}>{error}</p>}
+            {error && (
+              <Alert variant="destructive" style={{ margin: "10px 0" }}>
+                <AlertTitle>Assistant unavailable</AlertTitle>
+                <AlertDescription>{error}</AlertDescription>
+              </Alert>
+            )}
             <form
+              aria-label="Send a message to Tellinex assistant"
               onSubmit={(event) => {
                 event.preventDefault();
                 void sendMessage(input);
@@ -165,6 +208,7 @@ export default function AIChatWidget() {
               <input
                 ref={inputRef}
                 type="text"
+                aria-label="Message"
                 value={input}
                 onChange={(event) => setInput(event.target.value)}
                 placeholder={privacyAccepted ? "Ask about Tellinex…" : "Accept the privacy notice first"}
@@ -172,19 +216,26 @@ export default function AIChatWidget() {
                 maxLength={4000}
                 style={{ flex: 1, background: "rgba(255,255,255,0.04)", border: "1px solid rgba(0,199,177,0.12)", borderRadius: "20px", padding: "10px 16px", color: "#fff", fontFamily: '"Nunito", sans-serif', fontSize: "13px" }}
               />
-              <button type="submit" disabled={isTyping || !input.trim() || !privacyAccepted || !turnstileToken} style={{ border: "none", borderRadius: "20px", padding: "0 12px", background: "#A3E635", color: "#040d14", cursor: "pointer" }}>
+              <Button
+                type="submit"
+                size="sm"
+                disabled={isTyping || !input.trim() || !privacyAccepted || !turnstileToken}
+                style={{ border: "none", borderRadius: "20px", padding: "0 12px", background: "#A3E635", color: "#040d14", cursor: isTyping || !input.trim() || !privacyAccepted || !turnstileToken ? "default" : "pointer" }}
+              >
                 Send
-              </button>
+              </Button>
             </form>
           </div>
         </div>
       )}
 
-      <button
+      <Button
         type="button"
+        variant="outline"
         onClick={() => setIsOpen((current) => !current)}
         aria-expanded={isOpen}
-        aria-label="Open Tellinex assistant"
+        aria-controls="tellinex-assistant-dialog"
+        aria-label={isOpen ? "Close Tellinex assistant" : "Open Tellinex assistant"}
         style={{
           position: "fixed",
           bottom: "20px",
@@ -201,7 +252,7 @@ export default function AIChatWidget() {
         }}
       >
         Assistant
-      </button>
+      </Button>
     </>
   );
 }

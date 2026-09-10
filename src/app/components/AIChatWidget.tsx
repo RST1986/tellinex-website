@@ -97,25 +97,12 @@ export default function AIChatWidget() {
           id="tellinex-assistant-dialog"
           role="dialog"
           aria-label="Tellinex assistant"
-          style={{
-            position: "fixed",
-            bottom: "90px",
-            right: "20px",
-            width: "min(380px, calc(100vw - 40px))",
-            maxHeight: "min(560px, calc(100vh - 120px))",
-            background: "var(--tlx-bg-dialog)",
-            border: "1px solid var(--tlx-border-strong)",
-            borderRadius: "16px",
-            overflow: "hidden",
-            zIndex: 9999,
-            display: "flex",
-            flexDirection: "column",
-          }}
+          className="fixed bottom-[90px] right-5 z-[9999] flex max-h-[min(560px,calc(100vh-120px))] w-[min(380px,calc(100vw-40px))] flex-col overflow-hidden rounded-2xl border border-[var(--tlx-border-strong)] bg-[var(--tlx-bg-dialog)]"
         >
-          <div style={{ padding: "14px 16px", borderBottom: "1px solid var(--tlx-border)", display: "flex", justifyContent: "space-between" }}>
+          <div className="flex justify-between border-b border-[var(--tlx-border)] px-4 py-[14px]">
             <div>
-              <div style={{ fontFamily: "var(--tlx-font-display)", fontSize: "13px", fontWeight: 600, color: "var(--tlx-text)" }}>Tellinex assistant</div>
-              <div style={{ fontSize: "10px", color: "var(--tlx-text-caption)" }}>AI is not commercial authority</div>
+              <div className="[font-family:var(--tlx-font-display)] text-[13px] font-semibold text-[var(--tlx-text)]">Tellinex assistant</div>
+              <div className="text-[10px] text-[var(--tlx-text-caption)]">AI is not commercial authority</div>
             </div>
             <Button
               type="button"
@@ -123,7 +110,7 @@ export default function AIChatWidget() {
               size="icon"
               onClick={() => setIsOpen(false)}
               aria-label="Close assistant"
-              style={{ background: "transparent", color: "var(--tlx-text)", cursor: "pointer" }}
+              className="cursor-pointer bg-transparent text-[var(--tlx-text)] hover:bg-transparent hover:text-[var(--tlx-text)]"
             >
               ✕
             </Button>
@@ -135,30 +122,23 @@ export default function AIChatWidget() {
             aria-live="polite"
             aria-relevant="additions text"
             aria-busy={isTyping}
-            style={{ flex: 1, overflowY: "auto", padding: "14px", display: "flex", flexDirection: "column", gap: "12px", minHeight: "240px" }}
+            className="flex min-h-[240px] flex-1 flex-col gap-3 overflow-y-auto p-[14px]"
           >
             {messages.map((message, index) => (
               <p
                 key={`${message.role}-${index}`}
-                style={{
-                  fontFamily: "var(--tlx-font-sans)",
-                  fontSize: "13px",
-                  color: "var(--tlx-text-high)",
-                  margin: 0,
-                  lineHeight: 1.55,
-                  alignSelf: message.role === "user" ? "flex-end" : "flex-start",
-                  maxWidth: "88%",
-                  background: message.role === "user" ? "var(--tlx-accent-surface)" : "var(--tlx-surface-message)",
-                  borderRadius: "12px",
-                  padding: "10px 14px",
-                }}
+                className={`m-0 max-w-[88%] rounded-xl px-[14px] py-[10px] [font-family:var(--tlx-font-sans)] text-[13px] leading-[1.55] text-[var(--tlx-text-high)] ${
+                  message.role === "user"
+                    ? "self-end bg-[var(--tlx-accent-surface)]"
+                    : "self-start bg-[var(--tlx-surface-message)]"
+                }`}
               >
                 {message.content}
               </p>
             ))}
-            {isTyping && <p role="status" style={{ color: "var(--tlx-text-faint)", fontSize: "12px" }}>Thinking…</p>}
+            {isTyping && <p role="status" className="m-0 text-xs text-[var(--tlx-text-faint)]">Thinking…</p>}
             {messages.length === 1 && !isTyping && privacyAccepted && (
-              <div style={{ display: "flex", flexWrap: "wrap", gap: "6px" }}>
+              <div className="flex flex-wrap gap-1.5">
                 {QUICK_REPLIES.map((reply) => (
                   <Button
                     key={reply}
@@ -167,7 +147,7 @@ export default function AIChatWidget() {
                     size="sm"
                     disabled={!turnstileToken}
                     onClick={() => void sendMessage(reply)}
-                    style={{ fontFamily: "var(--tlx-font-sans)", fontSize: "11px", color: "var(--tlx-primary)", border: "1px solid var(--tlx-border-interactive)", padding: "6px 12px", borderRadius: "14px", cursor: turnstileToken ? "pointer" : "default", background: "var(--tlx-surface)" }}
+                    className="rounded-[14px] border-[var(--tlx-border-interactive)] bg-[var(--tlx-surface)] px-3 py-1.5 [font-family:var(--tlx-font-sans)] text-[11px] text-[var(--tlx-primary)] enabled:cursor-pointer hover:bg-[var(--tlx-surface)] hover:text-[var(--tlx-primary)]"
                   >
                     {reply}
                   </Button>
@@ -177,8 +157,8 @@ export default function AIChatWidget() {
             <div ref={messagesEndRef} />
           </div>
 
-          <div style={{ padding: "10px 12px", borderTop: "1px solid var(--tlx-border-soft)" }}>
-            <label style={{ display: "flex", gap: "8px", alignItems: "flex-start", fontFamily: "var(--tlx-font-sans)", fontSize: "11px", color: "var(--tlx-text-subtle)", marginBottom: "10px" }}>
+          <div className="border-t border-[var(--tlx-border-soft)] px-3 py-2.5">
+            <label className="mb-2.5 flex items-start gap-2 [font-family:var(--tlx-font-sans)] text-[11px] text-[var(--tlx-text-subtle)]">
               <input type="checkbox" checked={privacyAccepted} onChange={(event) => setPrivacyAccepted(event.target.checked)} />
               I understand this conversation may be processed by an AI assistant and that I should not send unnecessary personal data.
             </label>
@@ -192,10 +172,7 @@ export default function AIChatWidget() {
               }}
             />
             {error && (
-              <Alert
-                variant="destructive"
-                style={{ margin: "10px 0", background: "var(--tlx-bg-dialog)", borderColor: "var(--tlx-border-strong)" }}
-              >
+              <Alert variant="destructive" className="my-2.5 border-[var(--tlx-border-strong)] bg-[var(--tlx-bg-dialog)]">
                 <AlertTitle>Assistant unavailable</AlertTitle>
                 <AlertDescription>{error}</AlertDescription>
               </Alert>
@@ -206,7 +183,7 @@ export default function AIChatWidget() {
                 event.preventDefault();
                 void sendMessage(input);
               }}
-              style={{ display: "flex", gap: "8px" }}
+              className="flex gap-2"
             >
               <input
                 ref={inputRef}
@@ -217,13 +194,13 @@ export default function AIChatWidget() {
                 placeholder={privacyAccepted ? "Ask about Tellinex…" : "Accept the privacy notice first"}
                 disabled={isTyping || !privacyAccepted}
                 maxLength={4000}
-                style={{ flex: 1, background: "var(--tlx-input-surface)", border: "1px solid var(--tlx-border)", borderRadius: "20px", padding: "10px 16px", color: "var(--tlx-text)", fontFamily: "var(--tlx-font-sans)", fontSize: "13px" }}
+                className="min-w-0 flex-1 rounded-[20px] border border-[var(--tlx-border)] bg-[var(--tlx-input-surface)] px-4 py-2.5 [font-family:var(--tlx-font-sans)] text-[13px] text-[var(--tlx-text)] outline-none"
               />
               <Button
                 type="submit"
                 size="sm"
                 disabled={isTyping || !input.trim() || !privacyAccepted || !turnstileToken}
-                style={{ border: "none", borderRadius: "20px", padding: "0 12px", background: "var(--tlx-accent)", color: "var(--tlx-primary-contrast)", cursor: isTyping || !input.trim() || !privacyAccepted || !turnstileToken ? "default" : "pointer" }}
+                className="rounded-[20px] border-0 bg-[var(--tlx-accent)] px-3 text-[var(--tlx-primary-contrast)] enabled:cursor-pointer hover:bg-[var(--tlx-accent)]"
               >
                 Send
               </Button>
@@ -239,20 +216,7 @@ export default function AIChatWidget() {
         aria-expanded={isOpen}
         aria-controls="tellinex-assistant-dialog"
         aria-label={isOpen ? "Close Tellinex assistant" : "Open Tellinex assistant"}
-        style={{
-          position: "fixed",
-          bottom: "20px",
-          right: "20px",
-          zIndex: 9999,
-          background: "var(--tlx-surface-2)",
-          border: "1px solid var(--tlx-border-strong)",
-          borderRadius: "28px",
-          padding: "10px 16px",
-          color: "var(--tlx-text)",
-          cursor: "pointer",
-          fontFamily: "var(--tlx-font-display)",
-          fontSize: "12px",
-        }}
+        className="fixed bottom-5 right-5 z-[9999] cursor-pointer rounded-[28px] border-[var(--tlx-border-strong)] bg-[var(--tlx-surface-2)] px-4 py-2.5 [font-family:var(--tlx-font-display)] text-xs text-[var(--tlx-text)] hover:bg-[var(--tlx-surface-2)] hover:text-[var(--tlx-text)]"
       >
         Assistant
       </Button>

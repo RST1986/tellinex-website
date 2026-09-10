@@ -7,6 +7,7 @@ on:
       - 'scripts/check-ui-registry-boundary.mjs'
       - 'scripts/check-ui-registry-adoption.mjs'
       - 'scripts/check-ai-chat-ui-contract.mjs'
+      - 'scripts/measure-ui-bespoke.mjs'
       - 'docs/UI_REGISTRY_ABSORPTION_WAVE_01.md'
       - 'docs/UI_REGISTRY_ADOPTION.json'
       - '.github/workflows/ui-registry-boundary.yml'
@@ -17,6 +18,7 @@ on:
       - 'scripts/check-ui-registry-boundary.mjs'
       - 'scripts/check-ui-registry-adoption.mjs'
       - 'scripts/check-ai-chat-ui-contract.mjs'
+      - 'scripts/measure-ui-bespoke.mjs'
       - 'docs/UI_REGISTRY_ADOPTION.json'
       - '.github/workflows/ui-registry-boundary.yml'
 
@@ -28,6 +30,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
@@ -37,3 +41,13 @@ jobs:
         run: node scripts/check-ui-registry-adoption.mjs
       - name: Validate governed AI chat UI
         run: node scripts/check-ai-chat-ui-contract.mjs
+      - name: Measure bespoke UI and prevent governed regression
+        run: node scripts/measure-ui-bespoke.mjs
+      - name: Upload bespoke UI report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: website-ui-bespoke-report
+          path: reports/ui-bespoke-report.json
+          if-no-files-found: warn
+          retention-days: 14

@@ -284,6 +284,7 @@ export default function SpaceBackground() {
     if (!ctx) return;
     const palette = readCanvasPalette();
     if (!palette) return;
+    const canvasPalette: CanvasPalette = palette;
 
     let W = window.innerWidth;
     let H = window.innerHeight;
@@ -299,29 +300,29 @@ export default function SpaceBackground() {
       speed: Math.random() * 0.018 + 0.005,
     }));
 
-    let streams = buildStreams(W, H, palette);
+    let streams = buildStreams(W, H, canvasPalette);
 
     function draw() {
       if (!ctx) return;
       ctx.clearRect(0, 0, W, H);
       const bg = ctx.createRadialGradient(W * 0.4, H * 0.4, 0, W * 0.5, H * 0.5, Math.hypot(W, H) * 0.7);
-      bg.addColorStop(0, palette.bgNear);
-      bg.addColorStop(0.55, palette.bgMid);
-      bg.addColorStop(1, palette.bgFar);
+      bg.addColorStop(0, canvasPalette.bgNear);
+      bg.addColorStop(0.55, canvasPalette.bgMid);
+      bg.addColorStop(1, canvasPalette.bgFar);
       ctx.fillStyle = bg;
       ctx.fillRect(0, 0, W, H);
 
       const glow = ctx.createRadialGradient(W * 0.05, H * 0.85, 0, W * 0.05, H * 0.85, W * 0.55);
-      glow.addColorStop(0, palette.primaryGlow);
-      glow.addColorStop(0.5, palette.primaryGlowSoft);
-      glow.addColorStop(1, palette.transparent);
+      glow.addColorStop(0, canvasPalette.primaryGlow);
+      glow.addColorStop(0.5, canvasPalette.primaryGlowSoft);
+      glow.addColorStop(1, canvasPalette.transparent);
       ctx.fillStyle = glow;
       ctx.fillRect(0, 0, W, H);
 
       const glow2 = ctx.createRadialGradient(W * 0.92, H * 0.08, 0, W * 0.92, H * 0.08, W * 0.4);
-      glow2.addColorStop(0, palette.accentGlow);
-      glow2.addColorStop(0.5, palette.accentGlowSoft);
-      glow2.addColorStop(1, palette.transparent);
+      glow2.addColorStop(0, canvasPalette.accentGlow);
+      glow2.addColorStop(0.5, canvasPalette.accentGlowSoft);
+      glow2.addColorStop(1, canvasPalette.transparent);
       ctx.fillStyle = glow2;
       ctx.fillRect(0, 0, W, H);
 
@@ -330,7 +331,7 @@ export default function SpaceBackground() {
         const alpha = s.op * (0.5 + 0.5 * Math.sin(s.phase));
         ctx.save();
         ctx.globalAlpha = alpha;
-        ctx.fillStyle = palette.star;
+        ctx.fillStyle = canvasPalette.star;
         ctx.beginPath();
         ctx.arc(s.x, s.y, s.r, 0, Math.PI * 2);
         ctx.fill();
@@ -342,9 +343,9 @@ export default function SpaceBackground() {
       const globeR = W > 768 ? W * 0.55 : W * 0.8;
 
       const atmosGrad = ctx.createRadialGradient(globeX, globeY, globeR * 0.8, globeX, globeY, globeR * 1.05);
-      atmosGrad.addColorStop(0, palette.atmosphereInner);
-      atmosGrad.addColorStop(0.7, palette.atmosphereEdge);
-      atmosGrad.addColorStop(1, palette.transparent);
+      atmosGrad.addColorStop(0, canvasPalette.atmosphereInner);
+      atmosGrad.addColorStop(0.7, canvasPalette.atmosphereEdge);
+      atmosGrad.addColorStop(1, canvasPalette.transparent);
 
       ctx.save();
       ctx.beginPath();
@@ -353,9 +354,9 @@ export default function SpaceBackground() {
       ctx.fill();
 
       const globeGrad = ctx.createRadialGradient(globeX, globeY - globeR, 0, globeX, globeY, globeR);
-      globeGrad.addColorStop(0, palette.globeRim);
-      globeGrad.addColorStop(0.4, palette.globeBody);
-      globeGrad.addColorStop(1, palette.globeCore);
+      globeGrad.addColorStop(0, canvasPalette.globeRim);
+      globeGrad.addColorStop(0.4, canvasPalette.globeBody);
+      globeGrad.addColorStop(1, canvasPalette.globeCore);
 
       ctx.beginPath();
       ctx.arc(globeX, globeY, globeR, 0, Math.PI * 2);
@@ -365,14 +366,14 @@ export default function SpaceBackground() {
       ctx.beginPath();
       ctx.arc(globeX, globeY, globeR, Math.PI, Math.PI * 2);
       ctx.lineWidth = 1;
-      ctx.strokeStyle = palette.wireframe;
+      ctx.strokeStyle = canvasPalette.wireframe;
       ctx.stroke();
 
       for (let i = 0; i < 3; i++) {
         const offset = globeR * 0.2 * (i + 1);
         ctx.beginPath();
         ctx.ellipse(globeX, globeY + offset, globeR * 0.95, globeR * 0.2, 0, Math.PI, Math.PI * 2);
-        ctx.strokeStyle = palette.grid;
+        ctx.strokeStyle = canvasPalette.grid;
         ctx.stroke();
       }
       ctx.restore();
@@ -396,7 +397,7 @@ export default function SpaceBackground() {
       H = window.innerHeight;
       canvas.width = W;
       canvas.height = H;
-      streams = buildStreams(W, H, palette);
+      streams = buildStreams(W, H, canvasPalette);
       for (const s of STARS) {
         s.x = Math.random() * W;
         s.y = Math.random() * H;

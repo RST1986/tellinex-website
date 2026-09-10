@@ -1,0 +1,35 @@
+:root {
+  --tlx-bg: #040d14;
+  --tlx-bg-nav: rgba(4, 13, 20, 0.75);
+  --tlx-bg-elevated: rgba(4, 13, 20, 0.85);
+  --tlx-bg-overlay: rgba(4, 13, 20, 0.95);
+  --tlx-bg-dialog: rgba(4, 13, 20, 0.97);
+
+  --tlx-text: #ffffff;
+  --tlx-text-emphasis-muted: rgba(255, 255, 255, 0.7);
+  --tlx-text-muted: rgba(255, 255, 255, 0.6);
+  --tlx-text-soft: rgba(255, 255, 255, 0.5);
+  --tlx-text-caption: rgba(255, 255, 255, 0.45);
+  --tlx-text-faint: rgba(255, 255, 255, 0.4);
+  --tlx-text-low: rgba(255, 255, 255, 0.35);
+  --tlx-text-ghost: rgba(255, 255, 255, 0.2);
+
+  --tlx-primary: #00c7b1;
+  --tlx-primary-contrast: #040d14;
+  --tlx-accent: #a3e635;
+
+  --tlx-surface: rgba(0, 199, 177, 0.04);
+  --tlx-surface-2: rgba(0, 199, 177, 0.08);
+  --tlx-border-soft: rgba(0, 199, 177, 0.1);
+  --tlx-border: rgba(0, 199, 177, 0.12);
+  --tlx-border-medium: rgba(0, 199, 177, 0.15);
+  --tlx-border-strong: rgba(0, 199, 177, 0.25);
+
+  --tlx-glow-primary: rgba(0, 199, 177, 0.35);
+  --tlx-glow-accent: rgba(163, 230, 53, 0.3);
+  --tlx-glow-accent-soft: rgba(163, 230, 53, 0.4);
+  --tlx-glow-accent-strong: rgba(163, 230, 53, 0.5);
+
+  --tlx-font-sans: "Nunito", sans-serif;
+  --tlx-font-display: "Poppins", sans-serif;
+}

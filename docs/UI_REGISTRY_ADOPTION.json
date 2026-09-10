@@ -45,6 +45,14 @@
       "state": "CONSUMED"
     }
   ],
+  "tokens": {
+    "source": "src/styles/tellinex-tokens.css",
+    "loader": "src/styles/index.css",
+    "state": "ACTIVE",
+    "authority": "TXS / Quiet Instrument",
+    "initialConsumer": "src/app/components/Layout.tsx",
+    "policy": "brand identity values use --tlx-* aliases; generic shadcn tokens remain independent"
+  },
   "measurement": {
     "script": "scripts/measure-ui-bespoke.mjs",
     "mode": "MEASURE_AND_PREVENT_GOVERNED_REGRESSION",
@@ -56,8 +64,8 @@
     ]
   },
   "nextTargets": [
-    "Use bespoke UI hotspot ranking to select the next absorption slice",
-    "Tellinex TXS token aliases for public web",
-    "AI chat loading-state normalisation without inflating the conversation surface"
+    "Re-measure Layout hotspot after TXS tokenisation",
+    "Apply TXS aliases to AIChatWidget without changing AI authority or security semantics",
+    "Reduce the final raw navigation control with the existing Button primitive"
   ]
 }

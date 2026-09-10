@@ -32,8 +32,11 @@
       "registryComponent": "tlx-button",
       "registrySourceBlob": "6482e2f7db8e1d62ca6172bee1b344bef0929605",
       "localEquivalent": "src/app/components/ui/button.tsx",
-      "consumer": "src/app/components/AIChatWidget.tsx",
-      "semanticScope": "ai-chat-controls",
+      "consumers": [
+        "src/app/components/AIChatWidget.tsx",
+        "src/app/components/Layout.tsx"
+      ],
+      "semanticScope": "shared-public-controls",
       "state": "CONSUMED"
     },
     {
@@ -67,8 +70,8 @@
     ]
   },
   "nextTargets": [
-    "Re-measure AIChatWidget after TXS tokenisation",
-    "Reduce the final raw navigation control with the existing Button primitive",
-    "Use hotspot ranking to choose between Layout utility normalisation and SpaceBackground tokenisation"
+    "Re-measure Layout after utility and Button normalisation",
+    "Use hotspot ranking to choose between SpaceBackground tokenisation and remaining AI/Layout inline styles",
+    "Continue reducing bespoke UI without changing commercial truth or AI authority"
   ]
 }

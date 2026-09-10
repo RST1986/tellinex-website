@@ -4,6 +4,7 @@ import { Menu, X } from "lucide-react";
 import { gsap } from "gsap";
 import SpaceBackground from "./SpaceBackground";
 import AIChatWidget from "./AIChatWidget";
+import { Button } from "./ui/button";
 
 const NAV = [
   { to: "/", label: "Home" },
@@ -16,6 +17,9 @@ const NAV = [
   { to: "/reviews", label: "Reviews" },
 ];
 
+const FOOTER_HEADING_CLASS = "mb-3 [font-family:var(--tlx-font-display)] text-[0.8rem] font-semibold uppercase tracking-[0.12em] text-[var(--tlx-primary)]";
+const FOOTER_LINK_CLASS = "block py-[3px] [font-family:var(--tlx-font-sans)] text-[0.8rem] text-[var(--tlx-text-soft)] no-underline transition-colors hover:text-[var(--tlx-text)]";
+
 export default function Layout() {
   const [menuOpen, setMenuOpen] = useState(false);
   const location = useLocation();
@@ -27,18 +31,13 @@ export default function Layout() {
   }, [location.pathname]);
 
   return (
-    <div className="relative min-h-screen w-full" style={{ background: "var(--tlx-bg)" }}>
+    <div className="relative min-h-screen w-full bg-[var(--tlx-bg)]">
       <SpaceBackground />
 
       {/* ─── NAVBAR ─── */}
       <nav
         aria-label="Primary"
-        className="fixed top-0 left-0 right-0 z-50"
-        style={{
-          background: "var(--tlx-bg-nav)",
-          backdropFilter: "blur(16px)",
-          borderBottom: "1px solid var(--tlx-border)",
-        }}
+        className="fixed top-0 left-0 right-0 z-50 border-b border-[var(--tlx-border)] bg-[var(--tlx-bg-nav)] [backdrop-filter:blur(16px)]"
       >
         <div className="max-w-7xl mx-auto px-4 sm:px-6 flex items-center justify-between h-16">
           {/* Logo */}
@@ -46,10 +45,8 @@ export default function Layout() {
             <img
               src="/Logo.svg"
               alt="Tellinex"
-              style={{
-                height: "clamp(2rem, 4vw, 2.8rem)",
-                filter: "drop-shadow(0 0 10px var(--tlx-glow-primary))",
-              }}
+              className="h-[clamp(2rem,4vw,2.8rem)]"
+              style={{ filter: "drop-shadow(0 0 10px var(--tlx-glow-primary))" }}
             />
           </Link>
 
@@ -62,24 +59,11 @@ export default function Layout() {
                   key={n.to}
                   to={n.to}
                   aria-current={active ? "page" : undefined}
-                  style={{
-                    fontFamily: "var(--tlx-font-sans)",
-                    fontSize: "0.82rem",
-                    letterSpacing: "0.05em",
-                    padding: "6px 14px",
-                    borderRadius: "4px",
-                    color: active ? "var(--tlx-primary)" : "var(--tlx-text-muted)",
-                    background: active ? "var(--tlx-surface-2)" : "transparent",
-                    borderBottom: active ? "2px solid var(--tlx-primary)" : "2px solid transparent",
-                    transition: "all 0.2s",
-                    textDecoration: "none",
-                  }}
-                  onMouseEnter={(e) => {
-                    if (!active) e.currentTarget.style.color = "var(--tlx-text)";
-                  }}
-                  onMouseLeave={(e) => {
-                    if (!active) e.currentTarget.style.color = "var(--tlx-text-muted)";
-                  }}
+                  className={`rounded-[4px] border-b-2 px-[14px] py-[6px] [font-family:var(--tlx-font-sans)] text-[0.82rem] tracking-[0.05em] no-underline transition-all ${
+                    active
+                      ? "border-[var(--tlx-primary)] bg-[var(--tlx-surface-2)] text-[var(--tlx-primary)]"
+                      : "border-transparent text-[var(--tlx-text-muted)] hover:text-[var(--tlx-text)]"
+                  }`}
                 >
                   {n.label}
                 </Link>
@@ -90,21 +74,7 @@ export default function Layout() {
           {/* CTA button desktop */}
           <Link
             to="/register"
-            className="hidden md:block"
-            style={{
-              padding: "8px 20px",
-              background: "var(--tlx-accent)",
-              color: "var(--tlx-primary-contrast)",
-              fontFamily: "var(--tlx-font-display)",
-              fontWeight: 700,
-              fontSize: "0.75rem",
-              letterSpacing: "0.1em",
-              textTransform: "uppercase",
-              borderRadius: "5px",
-              textDecoration: "none",
-              boxShadow: "0 0 14px var(--tlx-glow-accent)",
-              transition: "transform 0.15s, box-shadow 0.15s",
-            }}
+            className="hidden rounded-[5px] bg-[var(--tlx-accent)] px-5 py-2 [font-family:var(--tlx-font-display)] text-xs font-bold uppercase tracking-[0.1em] text-[var(--tlx-primary-contrast)] no-underline shadow-[0_0_14px_var(--tlx-glow-accent)] transition-[transform,box-shadow] md:block"
             onMouseEnter={(e) => {
               gsap.to(e.currentTarget, { scale: 1.05, boxShadow: "0 0 24px rgba(163,230,53,0.5)", duration: 0.2 });
             }}
@@ -116,29 +86,25 @@ export default function Layout() {
           </Link>
 
           {/* Mobile hamburger */}
-          <button
+          <Button
             type="button"
-            className="md:hidden text-white"
+            variant="ghost"
+            size="icon"
+            className="md:hidden text-[var(--tlx-text)] hover:bg-transparent hover:text-[var(--tlx-text)]"
             aria-label={menuOpen ? "Close primary navigation" : "Open primary navigation"}
             aria-expanded={menuOpen}
             aria-controls="mobile-primary-navigation"
             onClick={() => setMenuOpen(!menuOpen)}
-            style={{ background: "none", border: "none" }}
           >
             {menuOpen ? <X size={24} /> : <Menu size={24} />}
-          </button>
+          </Button>
         </div>
 
         {/* Mobile menu */}
         {menuOpen && (
           <div
             id="mobile-primary-navigation"
-            className="md:hidden"
-            style={{
-              background: "var(--tlx-bg-overlay)",
-              borderTop: "1px solid var(--tlx-border-medium)",
-              padding: "16px",
-            }}
+            className="border-t border-[var(--tlx-border-medium)] bg-[var(--tlx-bg-overlay)] p-4 md:hidden"
           >
             {NAV.map((n) => {
               const active = location.pathname === n.to;
@@ -147,16 +113,11 @@ export default function Layout() {
                   key={n.to}
                   to={n.to}
                   aria-current={active ? "page" : undefined}
-                  style={{
-                    display: "block",
-                    padding: "12px 16px",
-                    fontFamily: "var(--tlx-font-sans)",
-                    fontSize: "0.95rem",
-                    color: active ? "var(--tlx-primary)" : "var(--tlx-text-emphasis-muted)",
-                    textDecoration: "none",
-                    borderRadius: "6px",
-                    background: active ? "var(--tlx-surface-2)" : "transparent",
-                  }}
+                  className={`block rounded-[6px] px-4 py-3 [font-family:var(--tlx-font-sans)] text-[0.95rem] no-underline ${
+                    active
+                      ? "bg-[var(--tlx-surface-2)] text-[var(--tlx-primary)]"
+                      : "text-[var(--tlx-text-emphasis-muted)]"
+                  }`}
                 >
                   {n.label}
                 </Link>
@@ -164,19 +125,7 @@ export default function Layout() {
             })}
             <Link
               to="/register"
-              style={{
-                display: "block",
-                marginTop: "12px",
-                padding: "12px",
-                background: "var(--tlx-accent)",
-                color: "var(--tlx-primary-contrast)",
-                fontFamily: "var(--tlx-font-display)",
-                fontWeight: 700,
-                fontSize: "0.85rem",
-                textAlign: "center",
-                borderRadius: "6px",
-                textDecoration: "none",
-              }}
+              className="mt-3 block rounded-[6px] bg-[var(--tlx-accent)] p-3 text-center [font-family:var(--tlx-font-display)] text-[0.85rem] font-bold text-[var(--tlx-primary-contrast)] no-underline"
             >
               GET CONNECTED
             </Link>
@@ -190,35 +139,31 @@ export default function Layout() {
       </main>
 
       {/* ─── FOOTER ─── */}
-      <footer
-        className="relative z-10"
-        style={{
-          borderTop: "1px solid var(--tlx-border)",
-          background: "var(--tlx-bg-elevated)",
-          backdropFilter: "blur(12px)",
-        }}
-      >
+      <footer className="relative z-10 border-t border-[var(--tlx-border)] bg-[var(--tlx-bg-elevated)] [backdrop-filter:blur(12px)]">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 py-12">
           <div className="grid grid-cols-1 md:grid-cols-4 gap-8 mb-8">
             {/* Brand */}
             <div>
-              <img src="/Logo.svg" alt="Tellinex" style={{ height: "2.2rem", marginBottom: "12px", filter: "drop-shadow(0 0 8px var(--tlx-glow-primary-soft))" }} />
-              <p style={{ fontFamily: "var(--tlx-font-sans)", fontSize: "0.8rem", color: "var(--tlx-text-faint)", lineHeight: 1.6 }}>
+              <img
+                src="/Logo.svg"
+                alt="Tellinex"
+                className="mb-3 h-[2.2rem]"
+                style={{ filter: "drop-shadow(0 0 8px var(--tlx-glow-primary-soft))" }}
+              />
+              <p className="[font-family:var(--tlx-font-sans)] text-[0.8rem] leading-[1.6] text-[var(--tlx-text-faint)]">
                 Building resilient digital infrastructure in Jamaica. Network design principle: underground-first fibre. Not a live national service.
               </p>
             </div>
 
             {/* Quick links */}
             <nav aria-label="Footer navigation">
-              <h4 style={{ fontFamily: "var(--tlx-font-display)", fontWeight: 600, fontSize: "0.8rem", color: "var(--tlx-primary)", letterSpacing: "0.12em", textTransform: "uppercase", marginBottom: "12px" }}>Navigation</h4>
+              <h4 className={FOOTER_HEADING_CLASS}>Navigation</h4>
               {NAV.map((n) => (
                 <Link
                   key={n.to}
                   to={n.to}
                   aria-current={location.pathname === n.to ? "page" : undefined}
-                  style={{ display: "block", fontFamily: "var(--tlx-font-sans)", fontSize: "0.8rem", color: "var(--tlx-text-soft)", textDecoration: "none", padding: "3px 0", transition: "color 0.2s" }}
-                  onMouseEnter={(e) => (e.currentTarget.style.color = "var(--tlx-text)")}
-                  onMouseLeave={(e) => (e.currentTarget.style.color = "var(--tlx-text-soft)")}
+                  className={FOOTER_LINK_CLASS}
                 >
                   {n.label}
                 </Link>
@@ -227,15 +172,9 @@ export default function Layout() {
 
             {/* Services */}
             <div>
-              <h4 style={{ fontFamily: "var(--tlx-font-display)", fontWeight: 600, fontSize: "0.8rem", color: "var(--tlx-primary)", letterSpacing: "0.12em", textTransform: "uppercase", marginBottom: "12px" }}>Services</h4>
+              <h4 className={FOOTER_HEADING_CLASS}>Services</h4>
               {["Residential Fibre", "Business Fibre", "Enterprise Solutions", "Wholesale & Backhaul"].map((s) => (
-                <Link
-                  key={s}
-                  to="/services"
-                  style={{ display: "block", fontFamily: "var(--tlx-font-sans)", fontSize: "0.8rem", color: "var(--tlx-text-soft)", textDecoration: "none", padding: "3px 0", transition: "color 0.2s" }}
-                  onMouseEnter={(e) => (e.currentTarget.style.color = "var(--tlx-text)")}
-                  onMouseLeave={(e) => (e.currentTarget.style.color = "var(--tlx-text-soft)")}
-                >
+                <Link key={s} to="/services" className={FOOTER_LINK_CLASS}>
                   {s}
                 </Link>
               ))}
@@ -243,8 +182,8 @@ export default function Layout() {
 
             {/* Contact */}
             <div>
-              <h4 style={{ fontFamily: "var(--tlx-font-display)", fontWeight: 600, fontSize: "0.8rem", color: "var(--tlx-primary)", letterSpacing: "0.12em", textTransform: "uppercase", marginBottom: "12px" }}>Contact</h4>
-              <p style={{ fontFamily: "var(--tlx-font-sans)", fontSize: "0.8rem", color: "var(--tlx-text-soft)", lineHeight: 1.8 }}>
+              <h4 className={FOOTER_HEADING_CLASS}>Contact</h4>
+              <p className="[font-family:var(--tlx-font-sans)] text-[0.8rem] leading-[1.8] text-[var(--tlx-text-soft)]">
                 info@tellinex.com<br />
                 Kingston, Jamaica<br />
                 tellinex.com
@@ -253,23 +192,13 @@ export default function Layout() {
           </div>
 
           {/* Bottom bar */}
-          <div
-            style={{
-              borderTop: "1px solid var(--tlx-border-soft)",
-              paddingTop: "20px",
-              display: "flex",
-              justifyContent: "space-between",
-              alignItems: "center",
-              flexWrap: "wrap",
-              gap: "8px",
-            }}
-          >
-            <p style={{ fontFamily: "var(--tlx-font-sans)", fontSize: "0.65rem", color: "var(--tlx-text-ghost)", letterSpacing: "0.12em", textTransform: "uppercase" }}>
+          <div className="flex flex-wrap items-center justify-between gap-2 border-t border-[var(--tlx-border-soft)] pt-5">
+            <p className="[font-family:var(--tlx-font-sans)] text-[0.65rem] uppercase tracking-[0.12em] text-[var(--tlx-text-ghost)]">
               © 2026 Tellinex Limited · BUILDING_NETWORK
             </p>
-            <div style={{ display: "flex", gap: "16px" }}>
-              <Link to="/privacy" style={{ fontFamily: "var(--tlx-font-sans)", fontSize: "0.75rem", color: "var(--tlx-text-caption)", textDecoration: "none" }}>Privacy (draft)</Link>
-              <Link to="/terms" style={{ fontFamily: "var(--tlx-font-sans)", fontSize: "0.75rem", color: "var(--tlx-text-caption)", textDecoration: "none" }}>Terms (draft)</Link>
+            <div className="flex gap-4">
+              <Link to="/privacy" className="[font-family:var(--tlx-font-sans)] text-xs text-[var(--tlx-text-caption)] no-underline">Privacy (draft)</Link>
+              <Link to="/terms" className="[font-family:var(--tlx-font-sans)] text-xs text-[var(--tlx-text-caption)] no-underline">Terms (draft)</Link>
             </div>
             <div
               style={{

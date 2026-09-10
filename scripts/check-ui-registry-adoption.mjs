@@ -9,6 +9,13 @@ const layout = fs.readFileSync(path.join(root, 'src/app/components/Layout.tsx'),
 
 const errors = []
 
+function consumersFor(adoption) {
+  const consumers = []
+  if (typeof adoption.consumer === 'string') consumers.push(adoption.consumer)
+  if (Array.isArray(adoption.consumers)) consumers.push(...adoption.consumers)
+  return [...new Set(consumers)]
+}
+
 if (manifest.authority !== 'TXS / Quiet Instrument') errors.push('Unexpected UI authority')
 if (manifest.mode !== 'NORMALIZE_EXISTING') errors.push('Website adoption mode must remain NORMALIZE_EXISTING')
 if (manifest.direct21stImportsAllowed !== false) errors.push('Direct 21st.dev imports must remain disabled')
@@ -53,8 +60,13 @@ for (const adoption of manifest.adoptions ?? []) {
   if (!fs.existsSync(path.join(root, adoption.localEquivalent))) {
     errors.push(`${adoption.registryComponent}: local equivalent missing`)
   }
-  if (!fs.existsSync(path.join(root, adoption.consumer))) {
-    errors.push(`${adoption.registryComponent}: consumer missing`)
+
+  const consumers = consumersFor(adoption)
+  if (consumers.length === 0) errors.push(`${adoption.registryComponent}: at least one consumer is required`)
+  for (const consumer of consumers) {
+    if (!fs.existsSync(path.join(root, consumer))) {
+      errors.push(`${adoption.registryComponent}: consumer missing: ${consumer}`)
+    }
   }
 }
 
@@ -82,6 +94,7 @@ if (networkStatus.includes('background: "rgba(0,199,177,0.04)"')) {
 }
 
 for (const token of [
+  'import { Button } from "./ui/button";',
   'aria-label="Primary"',
   'aria-current={active ? "page" : undefined}',
   'type="button"',
@@ -95,14 +108,22 @@ for (const token of [
   if (!layout.includes(token)) errors.push(`Public navigation missing contract token: ${token}`)
 }
 
+if (/<button\b/.test(layout)) {
+  errors.push('Governed Website navigation must not regress to a raw native button')
+}
+
 const navigationAdoption = (manifest.adoptions ?? []).find((item) => item.registryComponent === 'tlx-navigation')
 if (navigationAdoption?.implementation !== 'native-react-router-navigation') {
   errors.push('Website navigation must remain a native React Router normalisation')
 }
 
 const buttonAdoption = (manifest.adoptions ?? []).find((item) => item.registryComponent === 'tlx-button')
-if (buttonAdoption?.semanticScope !== 'ai-chat-controls') {
-  errors.push('Website button adoption must remain scoped to governed AI chat controls in this wave')
+const buttonConsumers = new Set(consumersFor(buttonAdoption ?? {}))
+if (buttonAdoption?.semanticScope !== 'shared-public-controls') {
+  errors.push('Website Button adoption must remain scoped to shared public controls')
+}
+for (const consumer of ['src/app/components/AIChatWidget.tsx', 'src/app/components/Layout.tsx']) {
+  if (!buttonConsumers.has(consumer)) errors.push(`Website Button adoption missing consumer: ${consumer}`)
 }
 
 const alertAdoption = (manifest.adoptions ?? []).find((item) => item.registryComponent === 'tlx-alert-banner')
@@ -115,4 +136,4 @@ if (errors.length) {
   process.exit(1)
 }
 
-console.log('Website UI registry adoption contract valid: Card + Badge + Navigation + AI Button/Alert normalised and public truth retained.')
+console.log('Website UI registry adoption contract valid: Card + Badge + Navigation + shared Button + AI Alert normalised and public truth retained.')

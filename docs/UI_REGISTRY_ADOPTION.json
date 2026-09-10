@@ -19,11 +19,19 @@
       "localEquivalent": "src/app/components/ui/badge.tsx",
       "consumer": "src/app/components/NetworkBuildStatus.tsx",
       "state": "CONSUMED"
+    },
+    {
+      "registryComponent": "tlx-navigation",
+      "registrySourceBlob": "35da63babf8c9cd8e290aa55ee3a61bd0ed6ed00",
+      "localEquivalent": "src/app/components/Layout.tsx",
+      "consumer": "src/app/components/Layout.tsx",
+      "implementation": "native-react-router-navigation",
+      "state": "CONSUMED"
     }
   ],
   "nextTargets": [
-    "Public navigation semantic normalisation",
     "AI chat status and surface normalisation",
-    "Tellinex TXS token aliases for public web"
+    "Tellinex TXS token aliases for public web",
+    "Automated measurement of remaining bespoke UI"
   ]
 }

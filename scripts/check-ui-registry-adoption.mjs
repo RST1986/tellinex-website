@@ -87,7 +87,8 @@ for (const token of [
   if (!layout.includes(token)) errors.push(`Public navigation missing contract token: ${token}`)
 }
 
-if (!layout.includes('implementation') && manifest.adoptions.find((item) => item.registryComponent === 'tlx-navigation')?.implementation !== 'native-react-router-navigation') {
+const navigationAdoption = (manifest.adoptions ?? []).find((item) => item.registryComponent === 'tlx-navigation')
+if (navigationAdoption?.implementation !== 'native-react-router-navigation') {
   errors.push('Website navigation must remain a native React Router normalisation')
 }
 

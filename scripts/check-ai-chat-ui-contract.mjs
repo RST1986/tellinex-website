@@ -25,6 +25,10 @@ for (const token of [
   'aria-label={isOpen ? "Close Tellinex assistant" : "Open Tellinex assistant"}',
   'disabled={!turnstileToken}',
   'maxLength={4000}',
+  'className="fixed bottom-[90px]',
+  'bg-[var(--tlx-bg-dialog)]',
+  'bg-[var(--tlx-accent-surface)]',
+  'bg-[var(--tlx-surface-message)]',
 ]) {
   if (!source.includes(token)) errors.push(`AI chat UI contract missing: ${token}`)
 }
@@ -41,9 +45,13 @@ if (!source.includes('if (!normalized || isTyping || !privacyAccepted || !turnst
   errors.push('AI chat send guard must require content, idle state, privacy acknowledgement and a security token')
 }
 
+if (source.includes('style={{')) {
+  errors.push('AIChatWidget must keep static presentation in shared utilities/TXS tokens instead of inline style objects')
+}
+
 if (errors.length) {
   console.error(errors.join('\n'))
   process.exit(1)
 }
 
-console.log('Website AI chat UI contract valid: authority, security-token, fail-closed and accessibility semantics retained.')
+console.log('Website AI chat UI contract valid: authority, security-token, fail-closed, accessibility and utility-normalisation semantics retained.')

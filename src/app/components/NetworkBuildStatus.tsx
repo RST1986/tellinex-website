@@ -13,7 +13,7 @@ export default function NetworkBuildStatus() {
       aria-labelledby="network-build-status-heading"
       className="reveal-safe px-4 sm:px-6 py-16 max-w-5xl mx-auto"
     >
-      <Card className="gap-0 border-[rgba(0,199,177,0.2)] bg-[rgba(0,199,177,0.04)] text-white shadow-none">
+      <Card className="gap-0 border-[var(--tlx-border-interactive)] bg-[var(--tlx-surface)] text-white shadow-none">
         <CardHeader className="gap-3 px-7 pt-7">
           <Badge
             variant="outline"

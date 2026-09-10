@@ -57,7 +57,8 @@
       "src/app/components/Layout.tsx",
       "src/app/components/AIChatWidget.tsx",
       "src/app/components/SpaceBackground.tsx",
-      "src/app/components/LegalNoticeLinks.tsx"
+      "src/app/components/LegalNoticeLinks.tsx",
+      "src/app/components/NetworkBuildStatus.tsx"
     ],
     "policy": "brand identity values use --tlx-* aliases; generic shadcn tokens remain independent"
   },
@@ -82,6 +83,15 @@
     "gsapColourLiteralExceptionMaximum": 2,
     "policy": "static presentation uses TXS/Tailwind utilities; two GSAP shadow interpolation literals remain bounded until animation equivalence is separately proven"
   },
+  "networkBuildStatusPresentation": {
+    "component": "src/app/components/NetworkBuildStatus.tsx",
+    "state": "NORMALISED",
+    "surfaceTokens": [
+      "--tlx-border-interactive",
+      "--tlx-surface"
+    ],
+    "truthPolicy": "COMMERCIAL_LIVE=NO, governed coverage/corridor fields and unapproved public launch date semantics must remain unchanged"
+  },
   "measurement": {
     "script": "scripts/measure-ui-bespoke.mjs",
     "mode": "MEASURE_AND_PREVENT_GOVERNED_REGRESSION",
@@ -93,8 +103,8 @@
     ]
   },
   "nextTargets": [
-    "Re-measure Layout after final static utility normalisation",
-    "Replace NetworkBuildStatus arbitrary colour literals with TXS aliases if visual equivalence is exact",
-    "Keep the two bounded Layout GSAP interpolation literals unless a separate animation-equivalence test proves token substitution safe"
+    "Re-measure NetworkBuildStatus after final surface token cleanup",
+    "Keep the two bounded Layout GSAP interpolation literals unless a separate animation-equivalence test proves token substitution safe",
+    "Treat any future bespoke-UI increase as a measured regression rather than reopening already-normalised surfaces"
   ]
 }

@@ -94,17 +94,20 @@
   },
   "measurement": {
     "script": "scripts/measure-ui-bespoke.mjs",
+    "schemaVersion": 2,
     "mode": "MEASURE_AND_PREVENT_GOVERNED_REGRESSION",
     "artifact": "website-ui-bespoke-report",
     "scope": "src/app/components excluding src/app/components/ui",
+    "targetActionableScore": 0,
+    "exceptionPolicy": "raw heuristic debt remains visible; only explicit contract-backed technical exceptions are subtracted from actionableScore",
     "governedRegressionPolicy": [
       "inlineStyles must not increase in governed consumers",
       "rawButtons must not increase in governed consumers"
     ]
   },
   "nextTargets": [
-    "Re-measure NetworkBuildStatus after final surface token cleanup",
-    "Keep the two bounded Layout GSAP interpolation literals unless a separate animation-equivalence test proves token substitution safe",
-    "Treat any future bespoke-UI increase as a measured regression rather than reopening already-normalised surfaces"
+    "Confirm actionableScore=0 through the Wave 14 CI artifact",
+    "Keep the two bounded Layout GSAP interpolation literals visible as documented exceptions unless animation-equivalence testing justifies removal",
+    "Use future bespoke-UI reports to detect new actionable debt rather than reopening converged surfaces"
   ]
 }

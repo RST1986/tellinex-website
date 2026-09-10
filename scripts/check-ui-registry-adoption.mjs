@@ -27,6 +27,14 @@ const expected = new Map([
     localEquivalent: 'src/app/components/Layout.tsx',
     registrySourceBlob: '35da63babf8c9cd8e290aa55ee3a61bd0ed6ed00',
   }],
+  ['tlx-button', {
+    localEquivalent: 'src/app/components/ui/button.tsx',
+    registrySourceBlob: '6482e2f7db8e1d62ca6172bee1b344bef0929605',
+  }],
+  ['tlx-alert-banner', {
+    localEquivalent: 'src/app/components/ui/alert.tsx',
+    registrySourceBlob: '53723643e7ac7afb1a57ebea4e250f1c2bdae00c',
+  }],
 ])
 
 for (const adoption of manifest.adoptions ?? []) {
@@ -92,9 +100,19 @@ if (navigationAdoption?.implementation !== 'native-react-router-navigation') {
   errors.push('Website navigation must remain a native React Router normalisation')
 }
 
+const buttonAdoption = (manifest.adoptions ?? []).find((item) => item.registryComponent === 'tlx-button')
+if (buttonAdoption?.semanticScope !== 'ai-chat-controls') {
+  errors.push('Website button adoption must remain scoped to governed AI chat controls in this wave')
+}
+
+const alertAdoption = (manifest.adoptions ?? []).find((item) => item.registryComponent === 'tlx-alert-banner')
+if (alertAdoption?.semanticScope !== 'ai-chat-error-only') {
+  errors.push('Website alert adoption must remain scoped to AI chat errors in this wave')
+}
+
 if (errors.length) {
   console.error(errors.join('\n'))
   process.exit(1)
 }
 
-console.log('Website UI registry adoption contract valid: Card + Badge + Navigation normalised and public truth retained.')
+console.log('Website UI registry adoption contract valid: Card + Badge + Navigation + AI Button/Alert normalised and public truth retained.')

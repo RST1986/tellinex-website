@@ -6,6 +6,7 @@ on:
       - 'src/**'
       - 'scripts/check-ui-registry-boundary.mjs'
       - 'scripts/check-ui-registry-adoption.mjs'
+      - 'scripts/check-ai-chat-ui-contract.mjs'
       - 'docs/UI_REGISTRY_ABSORPTION_WAVE_01.md'
       - 'docs/UI_REGISTRY_ADOPTION.json'
       - '.github/workflows/ui-registry-boundary.yml'
@@ -15,6 +16,7 @@ on:
       - 'src/**'
       - 'scripts/check-ui-registry-boundary.mjs'
       - 'scripts/check-ui-registry-adoption.mjs'
+      - 'scripts/check-ai-chat-ui-contract.mjs'
       - 'docs/UI_REGISTRY_ADOPTION.json'
       - '.github/workflows/ui-registry-boundary.yml'
 
@@ -33,3 +35,5 @@ jobs:
         run: node scripts/check-ui-registry-boundary.mjs
       - name: Validate governed UI registry adoption
         run: node scripts/check-ui-registry-adoption.mjs
+      - name: Validate governed AI chat UI
+        run: node scripts/check-ai-chat-ui-contract.mjs

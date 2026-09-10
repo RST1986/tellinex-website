@@ -81,6 +81,8 @@ for (const token of [
   'import { Card, CardContent, CardHeader, CardTitle } from "./ui/card";',
   '<Card ',
   '<Badge',
+  'border-[var(--tlx-border-interactive)]',
+  'bg-[var(--tlx-surface)]',
   'COMMERCIAL_LIVE=NO',
   'CURRENT_COVERAGE.value',
   'PILOT_CORRIDOR.value',
@@ -89,8 +91,8 @@ for (const token of [
   if (!networkStatus.includes(token)) errors.push(`NetworkBuildStatus missing contract token: ${token}`)
 }
 
-if (networkStatus.includes('background: "rgba(0,199,177,0.04)"')) {
-  errors.push('NetworkBuildStatus still contains the retired bespoke surface implementation')
+if (/#[0-9a-fA-F]{3,8}\b|rgba?\(/.test(networkStatus)) {
+  errors.push('NetworkBuildStatus must not contain direct colour literals after TXS surface normalisation')
 }
 
 for (const token of [

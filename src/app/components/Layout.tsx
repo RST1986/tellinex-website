@@ -27,7 +27,7 @@ export default function Layout() {
   }, [location.pathname]);
 
   return (
-    <div className="relative min-h-screen w-full" style={{ background: "#040d14" }}>
+    <div className="relative min-h-screen w-full" style={{ background: "var(--tlx-bg)" }}>
       <SpaceBackground />
 
       {/* ─── NAVBAR ─── */}
@@ -35,9 +35,9 @@ export default function Layout() {
         aria-label="Primary"
         className="fixed top-0 left-0 right-0 z-50"
         style={{
-          background: "rgba(4,13,20,0.75)",
+          background: "var(--tlx-bg-nav)",
           backdropFilter: "blur(16px)",
-          borderBottom: "1px solid rgba(0,199,177,0.12)",
+          borderBottom: "1px solid var(--tlx-border)",
         }}
       >
         <div className="max-w-7xl mx-auto px-4 sm:px-6 flex items-center justify-between h-16">
@@ -48,7 +48,7 @@ export default function Layout() {
               alt="Tellinex"
               style={{
                 height: "clamp(2rem, 4vw, 2.8rem)",
-                filter: "drop-shadow(0 0 10px rgba(0,199,177,0.35))",
+                filter: "drop-shadow(0 0 10px var(--tlx-glow-primary))",
               }}
             />
           </Link>
@@ -63,22 +63,22 @@ export default function Layout() {
                   to={n.to}
                   aria-current={active ? "page" : undefined}
                   style={{
-                    fontFamily: '"Nunito", sans-serif',
+                    fontFamily: "var(--tlx-font-sans)",
                     fontSize: "0.82rem",
                     letterSpacing: "0.05em",
                     padding: "6px 14px",
                     borderRadius: "4px",
-                    color: active ? "#00C7B1" : "rgba(255,255,255,0.6)",
-                    background: active ? "rgba(0,199,177,0.08)" : "transparent",
-                    borderBottom: active ? "2px solid #00C7B1" : "2px solid transparent",
+                    color: active ? "var(--tlx-primary)" : "var(--tlx-text-muted)",
+                    background: active ? "var(--tlx-surface-2)" : "transparent",
+                    borderBottom: active ? "2px solid var(--tlx-primary)" : "2px solid transparent",
                     transition: "all 0.2s",
                     textDecoration: "none",
                   }}
                   onMouseEnter={(e) => {
-                    if (!active) e.currentTarget.style.color = "#fff";
+                    if (!active) e.currentTarget.style.color = "var(--tlx-text)";
                   }}
                   onMouseLeave={(e) => {
-                    if (!active) e.currentTarget.style.color = "rgba(255,255,255,0.6)";
+                    if (!active) e.currentTarget.style.color = "var(--tlx-text-muted)";
                   }}
                 >
                   {n.label}
@@ -93,16 +93,16 @@ export default function Layout() {
             className="hidden md:block"
             style={{
               padding: "8px 20px",
-              background: "#A3E635",
-              color: "#040d14",
-              fontFamily: '"Poppins", sans-serif',
+              background: "var(--tlx-accent)",
+              color: "var(--tlx-primary-contrast)",
+              fontFamily: "var(--tlx-font-display)",
               fontWeight: 700,
               fontSize: "0.75rem",
               letterSpacing: "0.1em",
               textTransform: "uppercase",
               borderRadius: "5px",
               textDecoration: "none",
-              boxShadow: "0 0 14px rgba(163,230,53,0.3)",
+              boxShadow: "0 0 14px var(--tlx-glow-accent)",
               transition: "transform 0.15s, box-shadow 0.15s",
             }}
             onMouseEnter={(e) => {
@@ -135,8 +135,8 @@ export default function Layout() {
             id="mobile-primary-navigation"
             className="md:hidden"
             style={{
-              background: "rgba(4,13,20,0.95)",
-              borderTop: "1px solid rgba(0,199,177,0.15)",
+              background: "var(--tlx-bg-overlay)",
+              borderTop: "1px solid var(--tlx-border-medium)",
               padding: "16px",
             }}
           >
@@ -150,12 +150,12 @@ export default function Layout() {
                   style={{
                     display: "block",
                     padding: "12px 16px",
-                    fontFamily: '"Nunito", sans-serif',
+                    fontFamily: "var(--tlx-font-sans)",
                     fontSize: "0.95rem",
-                    color: active ? "#00C7B1" : "rgba(255,255,255,0.7)",
+                    color: active ? "var(--tlx-primary)" : "var(--tlx-text-emphasis-muted)",
                     textDecoration: "none",
                     borderRadius: "6px",
-                    background: active ? "rgba(0,199,177,0.08)" : "transparent",
+                    background: active ? "var(--tlx-surface-2)" : "transparent",
                   }}
                 >
                   {n.label}
@@ -168,9 +168,9 @@ export default function Layout() {
                 display: "block",
                 marginTop: "12px",
                 padding: "12px",
-                background: "#A3E635",
-                color: "#040d14",
-                fontFamily: '"Poppins", sans-serif',
+                background: "var(--tlx-accent)",
+                color: "var(--tlx-primary-contrast)",
+                fontFamily: "var(--tlx-font-display)",
                 fontWeight: 700,
                 fontSize: "0.85rem",
                 textAlign: "center",
@@ -193,8 +193,8 @@ export default function Layout() {
       <footer
         className="relative z-10"
         style={{
-          borderTop: "1px solid rgba(0,199,177,0.12)",
-          background: "rgba(4,13,20,0.85)",
+          borderTop: "1px solid var(--tlx-border)",
+          background: "var(--tlx-bg-elevated)",
           backdropFilter: "blur(12px)",
         }}
       >
@@ -202,23 +202,23 @@ export default function Layout() {
           <div className="grid grid-cols-1 md:grid-cols-4 gap-8 mb-8">
             {/* Brand */}
             <div>
-              <img src="/Logo.svg" alt="Tellinex" style={{ height: "2.2rem", marginBottom: "12px", filter: "drop-shadow(0 0 8px rgba(0,199,177,0.3))" }} />
-              <p style={{ fontFamily: '"Nunito", sans-serif', fontSize: "0.8rem", color: "rgba(255,255,255,0.4)", lineHeight: 1.6 }}>
+              <img src="/Logo.svg" alt="Tellinex" style={{ height: "2.2rem", marginBottom: "12px", filter: "drop-shadow(0 0 8px var(--tlx-glow-primary-soft))" }} />
+              <p style={{ fontFamily: "var(--tlx-font-sans)", fontSize: "0.8rem", color: "var(--tlx-text-faint)", lineHeight: 1.6 }}>
                 Building resilient digital infrastructure in Jamaica. Network design principle: underground-first fibre. Not a live national service.
               </p>
             </div>
 
             {/* Quick links */}
             <nav aria-label="Footer navigation">
-              <h4 style={{ fontFamily: '"Poppins", sans-serif', fontWeight: 600, fontSize: "0.8rem", color: "#00C7B1", letterSpacing: "0.12em", textTransform: "uppercase", marginBottom: "12px" }}>Navigation</h4>
+              <h4 style={{ fontFamily: "var(--tlx-font-display)", fontWeight: 600, fontSize: "0.8rem", color: "var(--tlx-primary)", letterSpacing: "0.12em", textTransform: "uppercase", marginBottom: "12px" }}>Navigation</h4>
               {NAV.map((n) => (
                 <Link
                   key={n.to}
                   to={n.to}
                   aria-current={location.pathname === n.to ? "page" : undefined}
-                  style={{ display: "block", fontFamily: '"Nunito", sans-serif', fontSize: "0.8rem", color: "rgba(255,255,255,0.5)", textDecoration: "none", padding: "3px 0", transition: "color 0.2s" }}
-                  onMouseEnter={(e) => (e.currentTarget.style.color = "#fff")}
-                  onMouseLeave={(e) => (e.currentTarget.style.color = "rgba(255,255,255,0.5)")}
+                  style={{ display: "block", fontFamily: "var(--tlx-font-sans)", fontSize: "0.8rem", color: "var(--tlx-text-soft)", textDecoration: "none", padding: "3px 0", transition: "color 0.2s" }}
+                  onMouseEnter={(e) => (e.currentTarget.style.color = "var(--tlx-text)")}
+                  onMouseLeave={(e) => (e.currentTarget.style.color = "var(--tlx-text-soft)")}
                 >
                   {n.label}
                 </Link>
@@ -227,14 +227,14 @@ export default function Layout() {
 
             {/* Services */}
             <div>
-              <h4 style={{ fontFamily: '"Poppins", sans-serif', fontWeight: 600, fontSize: "0.8rem", color: "#00C7B1", letterSpacing: "0.12em", textTransform: "uppercase", marginBottom: "12px" }}>Services</h4>
+              <h4 style={{ fontFamily: "var(--tlx-font-display)", fontWeight: 600, fontSize: "0.8rem", color: "var(--tlx-primary)", letterSpacing: "0.12em", textTransform: "uppercase", marginBottom: "12px" }}>Services</h4>
               {["Residential Fibre", "Business Fibre", "Enterprise Solutions", "Wholesale & Backhaul"].map((s) => (
                 <Link
                   key={s}
                   to="/services"
-                  style={{ display: "block", fontFamily: '"Nunito", sans-serif', fontSize: "0.8rem", color: "rgba(255,255,255,0.5)", textDecoration: "none", padding: "3px 0", transition: "color 0.2s" }}
-                  onMouseEnter={(e) => (e.currentTarget.style.color = "#fff")}
-                  onMouseLeave={(e) => (e.currentTarget.style.color = "rgba(255,255,255,0.5)")}
+                  style={{ display: "block", fontFamily: "var(--tlx-font-sans)", fontSize: "0.8rem", color: "var(--tlx-text-soft)", textDecoration: "none", padding: "3px 0", transition: "color 0.2s" }}
+                  onMouseEnter={(e) => (e.currentTarget.style.color = "var(--tlx-text)")}
+                  onMouseLeave={(e) => (e.currentTarget.style.color = "var(--tlx-text-soft)")}
                 >
                   {s}
                 </Link>
@@ -243,8 +243,8 @@ export default function Layout() {
 
             {/* Contact */}
             <div>
-              <h4 style={{ fontFamily: '"Poppins", sans-serif', fontWeight: 600, fontSize: "0.8rem", color: "#00C7B1", letterSpacing: "0.12em", textTransform: "uppercase", marginBottom: "12px" }}>Contact</h4>
-              <p style={{ fontFamily: '"Nunito", sans-serif', fontSize: "0.8rem", color: "rgba(255,255,255,0.5)", lineHeight: 1.8 }}>
+              <h4 style={{ fontFamily: "var(--tlx-font-display)", fontWeight: 600, fontSize: "0.8rem", color: "var(--tlx-primary)", letterSpacing: "0.12em", textTransform: "uppercase", marginBottom: "12px" }}>Contact</h4>
+              <p style={{ fontFamily: "var(--tlx-font-sans)", fontSize: "0.8rem", color: "var(--tlx-text-soft)", lineHeight: 1.8 }}>
                 info@tellinex.com<br />
                 Kingston, Jamaica<br />
                 tellinex.com
@@ -255,7 +255,7 @@ export default function Layout() {
           {/* Bottom bar */}
           <div
             style={{
-              borderTop: "1px solid rgba(0,199,177,0.1)",
+              borderTop: "1px solid var(--tlx-border-soft)",
               paddingTop: "20px",
               display: "flex",
               justifyContent: "space-between",
@@ -264,20 +264,20 @@ export default function Layout() {
               gap: "8px",
             }}
           >
-            <p style={{ fontFamily: '"Nunito", sans-serif', fontSize: "0.65rem", color: "rgba(255,255,255,0.2)", letterSpacing: "0.12em", textTransform: "uppercase" }}>
+            <p style={{ fontFamily: "var(--tlx-font-sans)", fontSize: "0.65rem", color: "var(--tlx-text-ghost)", letterSpacing: "0.12em", textTransform: "uppercase" }}>
               © 2026 Tellinex Limited · BUILDING_NETWORK
             </p>
             <div style={{ display: "flex", gap: "16px" }}>
-              <Link to="/privacy" style={{ fontFamily: '"Nunito", sans-serif', fontSize: "0.75rem", color: "rgba(255,255,255,0.45)", textDecoration: "none" }}>Privacy (draft)</Link>
-              <Link to="/terms" style={{ fontFamily: '"Nunito", sans-serif', fontSize: "0.75rem", color: "rgba(255,255,255,0.45)", textDecoration: "none" }}>Terms (draft)</Link>
+              <Link to="/privacy" style={{ fontFamily: "var(--tlx-font-sans)", fontSize: "0.75rem", color: "var(--tlx-text-caption)", textDecoration: "none" }}>Privacy (draft)</Link>
+              <Link to="/terms" style={{ fontFamily: "var(--tlx-font-sans)", fontSize: "0.75rem", color: "var(--tlx-text-caption)", textDecoration: "none" }}>Terms (draft)</Link>
             </div>
             <div
               style={{
                 height: "3px",
                 width: "3rem",
-                background: "linear-gradient(90deg, #00C7B1, #A3E635)",
+                background: "linear-gradient(90deg, var(--tlx-primary), var(--tlx-accent))",
                 borderRadius: "2px",
-                boxShadow: "0 0 8px rgba(163,230,53,0.4)",
+                boxShadow: "0 0 8px var(--tlx-glow-accent-soft)",
               }}
             />
           </div>

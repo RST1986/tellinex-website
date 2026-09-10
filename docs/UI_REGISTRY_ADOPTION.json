@@ -50,7 +50,10 @@
     "loader": "src/styles/index.css",
     "state": "ACTIVE",
     "authority": "TXS / Quiet Instrument",
-    "initialConsumer": "src/app/components/Layout.tsx",
+    "consumers": [
+      "src/app/components/Layout.tsx",
+      "src/app/components/AIChatWidget.tsx"
+    ],
     "policy": "brand identity values use --tlx-* aliases; generic shadcn tokens remain independent"
   },
   "measurement": {
@@ -64,8 +67,8 @@
     ]
   },
   "nextTargets": [
-    "Re-measure Layout hotspot after TXS tokenisation",
-    "Apply TXS aliases to AIChatWidget without changing AI authority or security semantics",
-    "Reduce the final raw navigation control with the existing Button primitive"
+    "Re-measure AIChatWidget after TXS tokenisation",
+    "Reduce the final raw navigation control with the existing Button primitive",
+    "Use hotspot ranking to choose between Layout utility normalisation and SpaceBackground tokenisation"
   ]
 }

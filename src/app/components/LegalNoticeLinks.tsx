@@ -1,22 +1,14 @@
 export default function LegalNoticeLinks() {
   return (
-    <p
-      style={{
-        fontFamily: '"Nunito", sans-serif',
-        fontSize: "0.75rem",
-        color: "rgba(255,255,255,0.35)",
-        textAlign: "center",
-        marginTop: "24px",
-      }}
-    >
-      <a href="/privacy" style={{ color: "#00C7B1", textDecoration: "none" }}>
+    <p className="mt-6 text-center [font-family:var(--tlx-font-sans)] text-xs text-[var(--tlx-text-low)]">
+      <a href="/privacy" className="text-[var(--tlx-primary)] no-underline">
         Privacy
       </a>
-      <span style={{ margin: "0 8px" }}>·</span>
-      <a href="/terms" style={{ color: "#00C7B1", textDecoration: "none" }}>
+      <span className="mx-2">·</span>
+      <a href="/terms" className="text-[var(--tlx-primary)] no-underline">
         Terms
       </a>
-      <span style={{ margin: "0 8px" }}>·</span>
+      <span className="mx-2">·</span>
       <span>Draft — legal review required</span>
     </p>
   );

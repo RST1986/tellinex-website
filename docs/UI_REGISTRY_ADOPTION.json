@@ -27,11 +27,27 @@
       "consumer": "src/app/components/Layout.tsx",
       "implementation": "native-react-router-navigation",
       "state": "CONSUMED"
+    },
+    {
+      "registryComponent": "tlx-button",
+      "registrySourceBlob": "6482e2f7db8e1d62ca6172bee1b344bef0929605",
+      "localEquivalent": "src/app/components/ui/button.tsx",
+      "consumer": "src/app/components/AIChatWidget.tsx",
+      "semanticScope": "ai-chat-controls",
+      "state": "CONSUMED"
+    },
+    {
+      "registryComponent": "tlx-alert-banner",
+      "registrySourceBlob": "53723643e7ac7afb1a57ebea4e250f1c2bdae00c",
+      "localEquivalent": "src/app/components/ui/alert.tsx",
+      "consumer": "src/app/components/AIChatWidget.tsx",
+      "semanticScope": "ai-chat-error-only",
+      "state": "CONSUMED"
     }
   ],
   "nextTargets": [
-    "AI chat status and surface normalisation",
     "Tellinex TXS token aliases for public web",
-    "Automated measurement of remaining bespoke UI"
+    "Automated measurement of remaining bespoke UI",
+    "AI chat loading-state normalisation without inflating the conversation surface"
   ]
 }

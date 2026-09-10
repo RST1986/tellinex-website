@@ -45,9 +45,19 @@
       "state": "CONSUMED"
     }
   ],
+  "measurement": {
+    "script": "scripts/measure-ui-bespoke.mjs",
+    "mode": "MEASURE_AND_PREVENT_GOVERNED_REGRESSION",
+    "artifact": "website-ui-bespoke-report",
+    "scope": "src/app/components excluding src/app/components/ui",
+    "governedRegressionPolicy": [
+      "inlineStyles must not increase in governed consumers",
+      "rawButtons must not increase in governed consumers"
+    ]
+  },
   "nextTargets": [
+    "Use bespoke UI hotspot ranking to select the next absorption slice",
     "Tellinex TXS token aliases for public web",
-    "Automated measurement of remaining bespoke UI",
     "AI chat loading-state normalisation without inflating the conversation surface"
   ]
 }

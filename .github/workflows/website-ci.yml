@@ -42,4 +42,4 @@ jobs:
         run: npm run release:check
 
       - name: Pages Functions compile (no deploy)
-        run: npx --yes wrangler@4 pages functions build --outdir=.wrangler-pages-functions-check
+        run: npx --no-install wrangler pages functions build --outdir=.wrangler-pages-functions-check
